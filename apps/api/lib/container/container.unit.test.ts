@@ -5,85 +5,14 @@
  * Note: Some tests require Docker to be running.
  */
 
-import { describe, expect, mock, test } from 'bun:test'
-import type { PoolId, WorkloadId, WorkloadSpec } from '@boilerhouse/core'
+import { describe, expect, type mock, test } from 'bun:test'
 import { ContainerManager, ContainerPool, type ContainerRuntime, DEFAULT_SECURITY_CONFIG } from '.'
-
-/**
- * Create a test workload spec with sensible defaults.
- */
-function createTestWorkload(overrides?: Partial<WorkloadSpec>): WorkloadSpec {
-  return {
-    id: 'test-workload' as WorkloadId,
-    name: 'Test Workload',
-    image: 'alpine:latest',
-    volumes: {
-      state: { containerPath: '/state', mode: 'rw' },
-      secrets: { containerPath: '/secrets', mode: 'ro' },
-      comm: { containerPath: '/comm', mode: 'rw' },
-    },
-    environment: {
-      STATE_DIR: '/state',
-      SOCKET_PATH: '/comm/app.sock',
-    },
-    healthCheck: {
-      command: ['true'],
-      intervalMs: 30000,
-      timeoutMs: 5000,
-      retries: 3,
-    },
-    ...overrides,
-  }
-}
-
-const TEST_POOL_ID = 'test-pool' as PoolId
-
-// Mock ContainerRuntime for unit tests
-function createMockRuntime(): ContainerRuntime {
-  let containerCount = 0
-
-  return {
-    name: 'mock',
-
-    createContainer: mock(async (spec) => {
-      containerCount++
-      return {
-        id: `mock-container-${containerCount}`,
-        name: spec.name,
-        status: 'running' as const,
-        createdAt: new Date(),
-        startedAt: new Date(),
-        labels: spec.labels,
-      }
-    }),
-
-    stopContainer: mock(async () => {}),
-
-    removeContainer: mock(async () => {}),
-
-    destroyContainer: mock(async () => {}),
-
-    getContainer: mock(async (id) => ({
-      id,
-      name: `container-${id}`,
-      status: 'running' as const,
-      createdAt: new Date(),
-      startedAt: new Date(),
-      labels: {},
-    })),
-
-    isHealthy: mock(async () => true),
-
-    listContainers: mock(async () => []),
-
-    exec: mock(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
-  }
-}
+import { createMockContainerRuntime, createPoolId, createWorkloadSpec } from '../../test/fixtures'
 
 describe('ContainerManager', () => {
   describe('Unit Tests (mocked runtime)', () => {
     test('generateContainerId creates unique IDs', () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
@@ -103,16 +32,16 @@ describe('ContainerManager', () => {
     })
 
     test('getContainersByStatus filters correctly', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
-      // Create a container
-      const workload = createTestWorkload()
-      const container = await manager.createContainer(workload, TEST_POOL_ID)
+      const poolId = createPoolId()
+      const workload = createWorkloadSpec()
+      const container = await manager.createContainer(workload, poolId)
       expect(container.status).toBe('idle')
 
       const idleContainers = manager.getContainersByStatus('idle')
@@ -124,15 +53,16 @@ describe('ContainerManager', () => {
     })
 
     test('assignToTenant updates container state', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
-      const workload = createTestWorkload()
-      const container = await manager.createContainer(workload, TEST_POOL_ID)
+      const poolId = createPoolId()
+      const workload = createWorkloadSpec()
+      const container = await manager.createContainer(workload, poolId)
       expect(container.tenantId).toBeNull()
 
       await manager.assignToTenant(container.containerId, 'tenant-123')
@@ -143,15 +73,16 @@ describe('ContainerManager', () => {
     })
 
     test('getContainerByTenant finds correct container', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
-      const workload = createTestWorkload()
-      const container = await manager.createContainer(workload, TEST_POOL_ID)
+      const poolId = createPoolId()
+      const workload = createWorkloadSpec()
+      const container = await manager.createContainer(workload, poolId)
       await manager.assignToTenant(container.containerId, 'tenant-456')
 
       const found = manager.getContainerByTenant('tenant-456')
@@ -162,15 +93,16 @@ describe('ContainerManager', () => {
     })
 
     test('recordActivity updates lastActivity', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
-      const workload = createTestWorkload()
-      const container = await manager.createContainer(workload, TEST_POOL_ID)
+      const poolId = createPoolId()
+      const workload = createWorkloadSpec()
+      const container = await manager.createContainer(workload, poolId)
       const originalTime = container.lastActivity.getTime()
 
       // Wait a bit
@@ -183,15 +115,16 @@ describe('ContainerManager', () => {
     })
 
     test('getStaleContainers returns containers exceeding idle timeout', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
-      const workload = createTestWorkload()
-      const container = await manager.createContainer(workload, TEST_POOL_ID)
+      const poolId = createPoolId()
+      const workload = createWorkloadSpec()
+      const container = await manager.createContainer(workload, poolId)
       await manager.assignToTenant(container.containerId, 'tenant-stale')
 
       // Set lastActivity to past
@@ -209,7 +142,7 @@ describe('ContainerManager', () => {
     })
 
     test('getRuntime returns the runtime instance', () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
@@ -225,16 +158,17 @@ describe('ContainerManager', () => {
 describe('ContainerPool', () => {
   describe('Unit Tests (mocked runtime)', () => {
     test('acquireForTenant returns same container for same tenant', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
+      const poolId = createPoolId()
       const pool = new ContainerPool(manager, {
-        workload: createTestWorkload(),
-        poolId: TEST_POOL_ID,
+        workload: createWorkloadSpec(),
+        poolId,
         minSize: 0,
         maxSize: 5,
         idleTimeoutMs: 60000,
@@ -251,16 +185,17 @@ describe('ContainerPool', () => {
     })
 
     test('acquireForTenant returns different containers for different tenants', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
+      const poolId = createPoolId()
       const pool = new ContainerPool(manager, {
-        workload: createTestWorkload(),
-        poolId: TEST_POOL_ID,
+        workload: createWorkloadSpec(),
+        poolId,
         minSize: 0,
         maxSize: 5,
         idleTimeoutMs: 60000,
@@ -277,16 +212,17 @@ describe('ContainerPool', () => {
     })
 
     test('hasTenant returns correct status', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
+      const poolId = createPoolId()
       const pool = new ContainerPool(manager, {
-        workload: createTestWorkload(),
-        poolId: TEST_POOL_ID,
+        workload: createWorkloadSpec(),
+        poolId,
         minSize: 0,
         maxSize: 5,
         idleTimeoutMs: 60000,
@@ -303,16 +239,17 @@ describe('ContainerPool', () => {
     })
 
     test('getStats returns pool statistics', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
+      const poolId = createPoolId()
       const pool = new ContainerPool(manager, {
-        workload: createTestWorkload(),
-        poolId: TEST_POOL_ID,
+        workload: createWorkloadSpec(),
+        poolId,
         minSize: 0,
         maxSize: 10,
         idleTimeoutMs: 60000,
@@ -331,16 +268,17 @@ describe('ContainerPool', () => {
     })
 
     test('getAssignedTenants returns all assigned tenant IDs', async () => {
-      const runtime = createMockRuntime()
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
       const manager = new ContainerManager(runtime, {
         stateBaseDir: '/tmp/test-states',
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       })
 
+      const poolId = createPoolId()
       const pool = new ContainerPool(manager, {
-        workload: createTestWorkload(),
-        poolId: TEST_POOL_ID,
+        workload: createWorkloadSpec(),
+        poolId,
         minSize: 0,
         maxSize: 5,
         idleTimeoutMs: 60000,
@@ -370,15 +308,16 @@ describe('Security Configuration', () => {
   })
 
   test('container spec includes security configuration', async () => {
-    const runtime = createMockRuntime()
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
     const manager = new ContainerManager(runtime, {
       stateBaseDir: '/tmp/test-states',
       secretsBaseDir: '/tmp/test-secrets',
       socketBaseDir: '/tmp/test-sockets',
     })
 
-    const workload = createTestWorkload()
-    await manager.createContainer(workload, TEST_POOL_ID)
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec()
+    await manager.createContainer(workload, poolId)
 
     // Verify createContainer was called with security config
     const createMock = runtime.createContainer as ReturnType<typeof mock>
@@ -391,15 +330,16 @@ describe('Security Configuration', () => {
   })
 
   test('container spec includes DNS configuration', async () => {
-    const runtime = createMockRuntime()
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
     const manager = new ContainerManager(runtime, {
       stateBaseDir: '/tmp/test-states',
       secretsBaseDir: '/tmp/test-secrets',
       socketBaseDir: '/tmp/test-sockets',
     })
 
-    const workload = createTestWorkload()
-    await manager.createContainer(workload, TEST_POOL_ID)
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec()
+    await manager.createContainer(workload, poolId)
 
     const createMock = runtime.createContainer as ReturnType<typeof mock>
     const callArgs = createMock.mock.calls[0][0]
@@ -409,20 +349,21 @@ describe('Security Configuration', () => {
   })
 
   test('workload can override security settings', async () => {
-    const runtime = createMockRuntime()
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
     const manager = new ContainerManager(runtime, {
       stateBaseDir: '/tmp/test-states',
       secretsBaseDir: '/tmp/test-secrets',
       socketBaseDir: '/tmp/test-sockets',
     })
 
-    const workload = createTestWorkload({
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec({
       security: {
         readOnlyRootFilesystem: false,
         runAsUser: 1000,
       },
     })
-    await manager.createContainer(workload, TEST_POOL_ID)
+    await manager.createContainer(workload, poolId)
 
     const createMock = runtime.createContainer as ReturnType<typeof mock>
     const callArgs = createMock.mock.calls[0][0]
@@ -432,20 +373,21 @@ describe('Security Configuration', () => {
   })
 
   test('workload environment variables are passed to container', async () => {
-    const runtime = createMockRuntime()
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
     const manager = new ContainerManager(runtime, {
       stateBaseDir: '/tmp/test-states',
       secretsBaseDir: '/tmp/test-secrets',
       socketBaseDir: '/tmp/test-sockets',
     })
 
-    const workload = createTestWorkload({
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec({
       environment: {
         MY_VAR: 'my-value',
         ANOTHER_VAR: 'another-value',
       },
     })
-    await manager.createContainer(workload, TEST_POOL_ID)
+    await manager.createContainer(workload, poolId)
 
     const createMock = runtime.createContainer as ReturnType<typeof mock>
     const callArgs = createMock.mock.calls[0][0]
@@ -484,8 +426,9 @@ describe('ContainerRuntime abstraction', () => {
 
     expect(manager.getRuntime().name).toBe('custom-runtime')
 
-    const workload = createTestWorkload()
-    const container = await manager.createContainer(workload, TEST_POOL_ID)
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec()
+    const container = await manager.createContainer(workload, poolId)
     expect(container.status).toBe('idle')
   })
 })

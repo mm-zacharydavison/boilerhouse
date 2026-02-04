@@ -984,24 +984,198 @@ This section tracks the work required to transform this project from an OpenClaw
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 3.1 | Define `SyncSpec` and `SyncMapping` types     | `packages/core/src/types.ts`                                                   | [ ]    |
-| 3.2 | Define `S3SinkConfig` type (v1 only)          | `packages/core/src/types.ts`                                                   | [ ]    |
-| 3.3 | Define `SyncPolicy` type                      | `packages/core/src/types.ts`                                                   | [ ]    |
-| 3.4 | Create SyncRegistry module                    | `apps/api/lib/sync/registry.ts` (new) - CRUD for SyncSpecs                     | [ ]    |
-| 3.5 | Create RcloneSyncExecutor                     | `apps/api/lib/sync/rclone.ts` (refactor existing)                              | [ ]    |
-| 3.6 | Implement upload sync (container → S3)        | `apps/api/lib/sync/rclone.ts`                                                  | [ ]    |
-| 3.7 | Implement download sync (S3 → container)      | `apps/api/lib/sync/rclone.ts`                                                  | [ ]    |
-| 3.8 | Implement bidirectional sync                  | `apps/api/lib/sync/rclone.ts`                                                  | [ ]    |
-| 3.9 | Add glob pattern support to sync mappings     | `apps/api/lib/sync/rclone.ts` (--include flag)                                 | [ ]    |
-| 3.10| Create SyncCoordinator                        | `apps/api/lib/sync/coordinator.ts` (new)                                       | [ ]    |
-| 3.11| Implement onClaim sync hook                   | `apps/api/lib/sync/coordinator.ts` - download on container claim               | [ ]    |
-| 3.12| Implement onRelease sync hook                 | `apps/api/lib/sync/coordinator.ts` - upload on container release               | [ ]    |
-| 3.13| Implement periodic sync scheduler             | `apps/api/lib/sync/coordinator.ts` - intervalMs support                        | [ ]    |
-| 3.14| Add path interpolation (${tenantId})          | `apps/api/lib/sync/rclone.ts`                                                  | [ ]    |
-| 3.15| Add sync status tracking                      | `apps/api/lib/sync/status.ts` (new) - lastSync, pending, errors                | [ ]    |
-| 3.16| Remove OpenClaw-specific state files          | `apps/api/lib/state/` (openclaw.json, sessions/*.jsonl)                        | [ ]    |
-| 3.17| Remove Fluent Bit integration (defer to v2)   | `apps/api/lib/state/fluent-bit.ts` - remove or stub                            | [ ]    |
-| 3.18| Generalize secrets provisioner                | `apps/api/lib/state/secrets.ts`                                                | [ ]    |
+| 3.1 | Define `SyncSpec` and `SyncMapping` types     | `packages/core/src/types.ts`                                                   | [x]    |
+| 3.2 | Define `S3SinkConfig` type (v1 only)          | `packages/core/src/types.ts`                                                   | [x]    |
+| 3.3 | Define `SyncPolicy` type                      | `packages/core/src/types.ts`                                                   | [x]    |
+| 3.4 | Create SyncRegistry module                    | `apps/api/lib/sync/registry.ts` (new) - CRUD for SyncSpecs                     | [x]    |
+| 3.5 | Create RcloneSyncExecutor                     | `apps/api/lib/sync/rclone.ts` (new)                                            | [x]    |
+| 3.6 | Implement upload sync (container → S3)        | `apps/api/lib/sync/rclone.ts`                                                  | [x]    |
+| 3.7 | Implement download sync (S3 → container)      | `apps/api/lib/sync/rclone.ts`                                                  | [x]    |
+| 3.8 | Implement bidirectional sync                  | `apps/api/lib/sync/rclone.ts`                                                  | [x]    |
+| 3.9 | Add glob pattern support to sync mappings     | `apps/api/lib/sync/rclone.ts` (--include flag)                                 | [x]    |
+| 3.10| Create SyncCoordinator                        | `apps/api/lib/sync/coordinator.ts` (new)                                       | [x]    |
+| 3.11| Implement onClaim sync hook                   | `apps/api/lib/sync/coordinator.ts` - download on container claim               | [x]    |
+| 3.12| Implement onRelease sync hook                 | `apps/api/lib/sync/coordinator.ts` - upload on container release               | [x]    |
+| 3.13| Implement periodic sync scheduler             | `apps/api/lib/sync/coordinator.ts` - intervalMs support                        | [x]    |
+| 3.14| Add path interpolation (${tenantId})          | `apps/api/lib/sync/rclone.ts`                                                  | [x]    |
+| 3.15| Add sync status tracking                      | `apps/api/lib/sync/status.ts` (new) - lastSync, pending, errors                | [x]    |
+| 3.16| Remove OpenClaw-specific state files          | `apps/api/lib/state/` (openclaw.json, sessions/*.jsonl)                        | [N/A]  |
+| 3.17| Remove Fluent Bit integration (defer to v2)   | `apps/api/lib/state/fluent-bit.ts` - remove or stub                            | [N/A]  |
+| 3.18| Generalize secrets provisioner                | `apps/api/lib/state/secrets.ts`                                                | [N/A]  |
+
+### Phase 3.1: Migrate Specs to YAML Configuration
+
+**Goal**: Externalize WorkloadSpec and SyncSpec definitions from TypeScript code to declarative YAML files with file-backed registries
+
+**Rationale**: Currently specs are defined inline in TypeScript or stored only in memory. Moving to YAML provides:
+- Declarative configuration that operators can modify without code changes
+- Persistence across restarts without a database
+- Validation via JSON Schema
+- Consistency with docker-compose mental model
+- API mutations write back to config files (GitOps friendly)
+
+**Design Principle**: Use docker-compose field names and conventions wherever possible to leverage existing user knowledge. Reuse schema types from the [Compose Specification](https://github.com/compose-spec/compose-spec/blob/master/schema/compose-spec.json) where applicable.
+
+#### WorkloadSpec YAML Migration
+
+| #     | Task                                          | Files Affected                                                                 | Status |
+|-------|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
+| 3.1.1 | Define YAML schema for WorkloadSpec           | `packages/core/src/schemas/workload.schema.json` (new) - reuse compose types   | [ ]    |
+| 3.1.2 | Create YAML loader utility                    | `apps/api/lib/workload/loader.ts` (new) - loads and validates YAML files       | [ ]    |
+| 3.1.3 | Create workloads config directory             | `config/workloads/` (new) - default location for workload YAML files           | [ ]    |
+| 3.1.4 | Migrate DEFAULT_WORKLOAD to YAML              | `config/workloads/default.yaml` (new) - move from `apps/api/src/index.ts`      | [ ]    |
+| 3.1.5 | Add BOILERHOUSE_WORKLOADS_DIR env var         | `apps/api/lib/config.ts` - configurable workload directory path                | [ ]    |
+| 3.1.6 | Update app startup to load from YAML          | `apps/api/src/index.ts` - use loader instead of inline spec                    | [ ]    |
+| 3.1.7 | Add workload reload capability                | `apps/api/lib/workload/loader.ts` - watch for file changes (optional)          | [ ]    |
+| 3.1.8 | Create example workload YAML files            | `config/workloads/examples/` - python-worker.yaml, node-api.yaml, etc.         | [ ]    |
+| 3.1.9 | Document YAML workload format                 | `docs/workload-spec.md` (new) - schema reference and examples                  | [ ]    |
+
+#### SyncSpec YAML Migration
+
+| #      | Task                                          | Files Affected                                                                 | Status |
+|--------|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
+| 3.1.10 | Define YAML schema for SyncSpec               | `packages/core/src/schemas/sync.schema.json` (new)                             | [ ]    |
+| 3.1.11 | Create sync config directory                  | `config/sync/` (new) - default location for sync YAML files                    | [ ]    |
+| 3.1.12 | Add BOILERHOUSE_SYNC_DIR env var              | `apps/api/lib/config.ts` - configurable sync config directory path             | [ ]    |
+| 3.1.13 | Create file-backed SyncRegistry               | `apps/api/lib/sync/registry.ts` - refactor to load from YAML on startup        | [ ]    |
+| 3.1.14 | Add YAML write-back on register()             | `apps/api/lib/sync/registry.ts` - write new spec to `config/sync/{id}.yaml`    | [ ]    |
+| 3.1.15 | Add YAML write-back on update()               | `apps/api/lib/sync/registry.ts` - update existing YAML file                    | [ ]    |
+| 3.1.16 | Add YAML deletion on remove()                 | `apps/api/lib/sync/registry.ts` - delete YAML file when spec removed           | [ ]    |
+| 3.1.17 | Add file watcher for external changes         | `apps/api/lib/sync/registry.ts` - reload on file changes (optional)            | [ ]    |
+| 3.1.18 | Create example sync YAML files                | `config/sync/examples/` - s3-state-sync.yaml, etc.                             | [ ]    |
+| 3.1.19 | Document YAML sync format                     | `docs/sync-spec.md` (new) - schema reference and examples                      | [ ]    |
+
+**Field mapping to docker-compose**:
+
+| Boilerhouse Field | Docker Compose Equivalent | Notes                                    |
+|-------------------|---------------------------|------------------------------------------|
+| `image`           | `image`                   | Identical                                |
+| `volumes`         | `volumes` (long syntax)   | Uses `target`, `read_only`               |
+| `environment`     | `environment`             | Map or list format supported             |
+| `healthcheck`     | `healthcheck`             | Uses `test`, `interval`, `timeout`, etc. |
+| `deploy.resources`| `deploy.resources.limits` | Uses `cpus`, `memory`                    |
+| `read_only`       | `read_only`               | Root filesystem read-only                |
+| `user`            | `user`                    | UID to run as                            |
+| `cap_drop`        | `cap_drop`                | Capabilities to drop                     |
+| `network_mode`    | `network_mode`            | Network mode                             |
+
+**Example workload YAML format** (docker-compose aligned):
+
+```yaml
+# config/workloads/python-worker.yaml
+# Boilerhouse workload spec - follows docker-compose conventions
+
+x-boilerhouse:
+  id: python-worker
+  name: Python ML Worker
+
+image: myregistry/python-worker:latest
+
+# Long-form volume syntax (docker-compose compatible)
+# source is managed by boilerhouse based on x-boilerhouse-role
+volumes:
+  - target: /state
+    read_only: false
+    x-boilerhouse-role: state
+  - target: /secrets
+    read_only: true
+    x-boilerhouse-role: secrets
+  - target: /comm
+    read_only: false
+    x-boilerhouse-role: comm
+
+environment:
+  STATE_DIR: /state
+  SECRETS_DIR: /secrets
+  SOCKET_PATH: /comm/app.sock
+  LOG_LEVEL: info
+
+# docker-compose healthcheck format
+healthcheck:
+  test: ["CMD", "python", "-c", "print('ok')"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 10s
+
+# docker-compose deploy.resources format
+deploy:
+  resources:
+    limits:
+      cpus: "2"
+      memory: 1024M
+    reservations:
+      cpus: "0.5"
+      memory: 256M
+
+# docker-compose security options
+read_only: true
+user: "1000"
+cap_drop:
+  - ALL
+security_opt:
+  - no-new-privileges:true
+network_mode: bridge
+```
+
+**Boilerhouse extensions** use the `x-` prefix (docker-compose extension mechanism):
+- `x-boilerhouse.id` - workload identifier (required)
+- `x-boilerhouse.name` - human-readable name
+- `x-boilerhouse-role` on volumes - volume role (state/secrets/comm)
+- `x-boilerhouse.config_schema` - JSON Schema for tenant config validation
+
+**Example SyncSpec YAML format**:
+
+```yaml
+# config/sync/ml-training-sync.yaml
+# Boilerhouse sync spec - defines what/where/when to sync
+
+id: ml-training-sync
+pool_id: ml-gpu-pool
+
+mappings:
+  # Checkpoints - bidirectional, restore on claim, save on release
+  - container_path: /data/checkpoints
+    pattern: "*.pt"
+    sink_path: checkpoints/
+    direction: bidirectional
+    mode: sync
+
+  # Logs - upload only, periodic
+  - container_path: /data/logs
+    pattern: "**/*.log"
+    sink_path: logs/
+    direction: upload
+    mode: copy    # Don't delete old logs from S3
+
+  # Config - download only on claim
+  - container_path: /config
+    sink_path: config/
+    direction: download
+    mode: sync
+
+sink:
+  type: s3
+  bucket: my-ml-data
+  region: us-west-2
+  prefix: workloads/ml/${tenantId}/   # Interpolated per-tenant
+  # credentials via env vars or IAM role
+
+policy:
+  on_claim: true       # Restore state when tenant claims container
+  on_release: true     # Save state when tenant releases container
+  interval: 5m         # Also sync every 5 minutes while running
+  allow_manual_trigger: true
+```
+
+**File-backed registry behavior**:
+- On startup: load all `*.yaml` files from `config/sync/`
+- On API `POST /sync-specs`: validate, register in memory, write to `config/sync/{id}.yaml`
+- On API `PUT /sync-specs/:id`: validate, update in memory, overwrite YAML file
+- On API `DELETE /sync-specs/:id`: remove from memory, delete YAML file
+- Optional: watch directory for external changes and reload
+
+---
 
 ### Phase 4: Update Docker Artifacts
 
@@ -1082,11 +1256,18 @@ This section tracks the work required to transform this project from an OpenClaw
 | `apps/api/lib/container/manager.ts`       | Major refactor - parameterize all OpenClaw specifics       |
 | `apps/api/lib/container/pool.ts`          | Minor updates for new types                                |
 | `apps/api/lib/state/*.ts`                 | Generalize state handling, remove OpenClaw specifics       |
-| `apps/api/lib/sync/registry.ts`           | New - SyncSpec CRUD operations                             |
+| `apps/api/lib/sync/registry.ts`           | Refactor - file-backed registry with YAML persistence      |
 | `apps/api/lib/sync/rclone.ts`             | Refactor - generic rclone executor                         |
 | `apps/api/lib/sync/coordinator.ts`        | New - sync lifecycle management                            |
 | `apps/api/lib/sync/status.ts`             | New - sync status tracking                                 |
-| `apps/api/src/routes/sync.ts`             | New - sync API endpoints                                   |
+| `apps/api/lib/workload/loader.ts`         | New - YAML workload loader and validator                   |
+| `packages/core/src/schemas/workload.schema.json` | New - JSON Schema for WorkloadSpec validation       |
+| `packages/core/src/schemas/sync.schema.json` | New - JSON Schema for SyncSpec validation               |
+| `config/workloads/*.yaml`                 | New - workload definition files                            |
+| `config/sync/*.yaml`                      | New - sync spec definition files (file-backed registry)    |
+| `docs/workload-spec.md`                   | New - workload YAML format documentation                   |
+| `docs/sync-spec.md`                       | New - sync YAML format documentation                       |
+| `apps/api/src/routes/sync.ts`             | New - sync API endpoints (writes back to YAML)             |
 | `apps/api/src/index.ts`                   | Update log messages                                        |
 | `docker/openclaw/*`                       | Rename/remove or convert to example                        |
 | `docker-compose.yml`                      | Update all names and networks                              |
@@ -1104,9 +1285,10 @@ This section tracks the work required to transform this project from an OpenClaw
 2. **Phase 1** next - defines the new type system (including SyncSpec, SinkConfig)
 3. **Phase 2** - core abstraction of container config
 4. **Phase 3** - rclone sync engine implementation (depends on Phase 1 types)
-5. **Phase 4** - Docker cleanup
-6. **Phase 5** - ensure tests pass after each phase
-7. **Phase 6** - documentation (can be done in parallel)
-8. **Phase 7** - plugin removal
-9. **Phase 8** - workload registry feature (builds on earlier phases)
-10. **Phase 9** - sync API endpoints (depends on Phase 3 sync engine)
+5. **Phase 3.1** - migrate specs to YAML (WorkloadSpec + SyncSpec with file-backed registry)
+6. **Phase 4** - Docker cleanup
+7. **Phase 5** - ensure tests pass after each phase
+8. **Phase 6** - documentation (can be done in parallel)
+9. **Phase 7** - plugin removal
+10. **Phase 8** - workload registry feature (builds on Phase 3.1 YAML loader)
+11. **Phase 9** - sync API endpoints (depends on Phase 3 sync engine)
