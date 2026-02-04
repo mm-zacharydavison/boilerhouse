@@ -13,6 +13,7 @@ import {
   type ContainerSpec,
   type ContainerStatus,
   DEFAULT_SECURITY_CONFIG,
+  type HealthCheckSpec,
   type PoolContainer,
   type PoolId,
   type ResourceLimits,
@@ -152,6 +153,16 @@ export class ContainerManager {
       runAsUser: workload.security?.runAsUser ?? DEFAULT_SECURITY_CONFIG.runAsUser,
     }
 
+    // Build health check from workload spec
+    const healthCheck: HealthCheckSpec | undefined = workload.healthCheck
+      ? {
+          command: workload.healthCheck.command,
+          intervalMs: workload.healthCheck.intervalMs,
+          timeoutMs: workload.healthCheck.timeoutMs,
+          retries: workload.healthCheck.retries,
+        }
+      : undefined
+
     // Create container spec
     const spec: ContainerSpec = {
       name: containerName,
@@ -184,6 +195,7 @@ export class ContainerManager {
         [`${this.config.labelPrefix}.workload-id`]: workload.id,
         [`${this.config.labelPrefix}.created-at`]: new Date().toISOString(),
       },
+      healthCheck,
     }
 
     // Create and start container via runtime

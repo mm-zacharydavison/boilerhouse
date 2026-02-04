@@ -938,47 +938,47 @@ This section tracks the work required to transform this project from an OpenClaw
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 0.1 | Rename root package                           | `package.json` (name: multiclaw → boilerhouse)                                 | [ ]    |
-| 0.2 | Rename core package                           | `packages/core/package.json` (@multiclaw/core → @boilerhouse/core)             | [ ]    |
-| 0.3 | Rename docker package                         | `packages/docker/package.json` (@multiclaw/docker → @boilerhouse/docker)       | [ ]    |
-| 0.4 | Rename api package                            | `apps/api/package.json` (@multiclaw/api → @boilerhouse/api)                    | [ ]    |
-| 0.5 | Update all import statements                  | All .ts files importing @multiclaw/*                                           | [ ]    |
-| 0.6 | Rename `MulticlawConfig` type                 | `packages/core/src/types.ts`                                                   | [ ]    |
-| 0.7 | Update environment variable prefix            | `apps/api/lib/config.ts` (MULTICLAW_* → BOILERHOUSE_*)                         | [ ]    |
-| 0.8 | Update docker-compose volume names            | `docker-compose.yml` (multiclaw-states → boilerhouse-states, etc.)             | [ ]    |
-| 0.9 | Update docker-compose network names           | `docker-compose.yml` (multiclaw-internal → boilerhouse-internal, etc.)         | [ ]    |
-| 0.10| Update network name in manager                | `apps/api/lib/container/manager.ts` (multiclaw-egress → boilerhouse-egress)    | [ ]    |
-| 0.11| Update container label prefix                 | `apps/api/lib/container/manager.ts` (multiclaw → boilerhouse)                  | [ ]    |
-| 0.12| Update host directory paths                   | `apps/api/lib/config.ts` (/var/lib/multiclaw → /var/lib/boilerhouse)           | [ ]    |
-| 0.13| Update console log messages                   | `apps/api/src/index.ts`                                                        | [ ]    |
+| 0.1 | Rename root package                           | `package.json` (name: multiclaw → boilerhouse)                                 | [x]    |
+| 0.2 | Rename core package                           | `packages/core/package.json` (@multiclaw/core → @boilerhouse/core)             | [x]    |
+| 0.3 | Rename docker package                         | `packages/docker/package.json` (@multiclaw/docker → @boilerhouse/docker)       | [x]    |
+| 0.4 | Rename api package                            | `apps/api/package.json` (@multiclaw/api → @boilerhouse/api)                    | [x]    |
+| 0.5 | Update all import statements                  | All .ts files importing @multiclaw/*                                           | [x]    |
+| 0.6 | Rename `MulticlawConfig` type                 | `packages/core/src/types.ts`                                                   | [x]    |
+| 0.7 | Update environment variable prefix            | `apps/api/lib/config.ts` (MULTICLAW_* → BOILERHOUSE_*)                         | [x]    |
+| 0.8 | Update docker-compose volume names            | `docker-compose.yml` (multiclaw-states → boilerhouse-states, etc.)             | [x]    |
+| 0.9 | Update docker-compose network names           | `docker-compose.yml` (multiclaw-internal → boilerhouse-internal, etc.)         | [x]    |
+| 0.10| Update network name in manager                | `apps/api/lib/container/manager.ts` (multiclaw-egress → boilerhouse-egress)    | [x]    |
+| 0.11| Update container label prefix                 | `apps/api/lib/container/manager.ts` (multiclaw → boilerhouse)                  | [x]    |
+| 0.12| Update host directory paths                   | `apps/api/lib/config.ts` (/var/lib/multiclaw → /var/lib/boilerhouse)           | [x]    |
+| 0.13| Update console log messages                   | `apps/api/src/index.ts`                                                        | [x]    |
 
 ### Phase 1: Remove OpenClaw-Specific Types & Interfaces
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 1.1 | Remove/rename `OpenClawContainer` interface   | `packages/core/src/types.ts` → generic `PoolContainer`                         | [ ]    |
-| 1.2 | Remove/rename `OpenClawConfig` interface      | `packages/core/src/types.ts` → generic `WorkloadConfig` or remove              | [ ]    |
-| 1.3 | Add `WorkloadSpec` interface                  | `packages/core/src/types.ts` (as defined in this plan)                         | [ ]    |
-| 1.4 | Add `PoolSpec` interface                      | `packages/core/src/types.ts`                                                   | [ ]    |
-| 1.5 | Add `SyncSpec` interface                      | `packages/core/src/types.ts`                                                   | [ ]    |
-| 1.6 | Add `SinkConfig` union type                   | `packages/core/src/types.ts`                                                   | [ ]    |
-| 1.7 | Add `TenantAssignment` interface              | `packages/core/src/types.ts`                                                   | [ ]    |
-| 1.8 | Remove plugin-specific types                  | `packages/core/src/types.ts` (multiclaw-tools references)                      | [ ]    |
-| 1.9 | Update all type imports in consuming files    | All files importing from @boilerhouse/core                                     | [ ]    |
+| 1.1 | Remove/rename `OpenClawContainer` interface   | `packages/core/src/types.ts` → generic `PoolContainer`                         | [x]    |
+| 1.2 | Remove/rename `OpenClawConfig` interface      | `packages/core/src/types.ts` → generic `WorkloadConfig` or remove              | [x]    |
+| 1.3 | Add `WorkloadSpec` interface                  | `packages/core/src/types.ts` (as defined in this plan)                         | [x]    |
+| 1.4 | Add `PoolSpec` interface                      | `packages/core/src/types.ts`                                                   | [x]    |
+| 1.5 | Add `SyncSpec` interface                      | `packages/core/src/types.ts`                                                   | [x]    |
+| 1.6 | Add `SinkConfig` union type                   | `packages/core/src/types.ts`                                                   | [x]    |
+| 1.7 | Add `TenantAssignment` interface              | `packages/core/src/types.ts`                                                   | [x]    |
+| 1.8 | Remove plugin-specific types                  | `packages/core/src/types.ts` (multiclaw-tools references)                      | [x]    |
+| 1.9 | Update all type imports in consuming files    | All files importing from @boilerhouse/core                                     | [x]    |
 
 ### Phase 2: Abstract Hardcoded Container Configuration
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 2.1 | Remove hardcoded volume paths                 | `apps/api/lib/container/manager.ts` (/state, /secrets, /comm)                  | [ ]    |
-| 2.2 | Make volume mounts configurable via WorkloadSpec | `apps/api/lib/container/manager.ts`                                         | [ ]    |
-| 2.3 | Remove OPENCLAW_* environment variables       | `apps/api/lib/container/manager.ts`                                            | [ ]    |
-| 2.4 | Make environment variables configurable       | `apps/api/lib/container/manager.ts` (use WorkloadSpec.environment)             | [ ]    |
-| 2.5 | Remove hardcoded health check                 | `apps/api/lib/container/manager.ts` (openclaw --version)                       | [ ]    |
-| 2.6 | Make health check configurable                | `apps/api/lib/container/manager.ts` (use WorkloadSpec.healthCheck)             | [ ]    |
-| 2.7 | Remove openclaw.sock naming                   | `apps/api/lib/container/manager.ts` → generic socket naming                    | [ ]    |
-| 2.8 | Rename container prefix                       | `apps/api/lib/container/manager.ts` (openclaw-${id} → container-${id})         | [ ]    |
-| 2.9 | Make network mode configurable                | `apps/api/lib/container/manager.ts` (via WorkloadSpec.security)                | [ ]    |
+| 2.1 | Remove hardcoded volume paths                 | `apps/api/lib/container/manager.ts` (/state, /secrets, /comm)                  | [x]    |
+| 2.2 | Make volume mounts configurable via WorkloadSpec | `apps/api/lib/container/manager.ts`                                         | [x]    |
+| 2.3 | Remove OPENCLAW_* environment variables       | `apps/api/lib/container/manager.ts`                                            | [x]    |
+| 2.4 | Make environment variables configurable       | `apps/api/lib/container/manager.ts` (use WorkloadSpec.environment)             | [x]    |
+| 2.5 | Remove hardcoded health check                 | `apps/api/lib/container/manager.ts` (openclaw --version)                       | [x]    |
+| 2.6 | Make health check configurable                | `apps/api/lib/container/manager.ts` (use WorkloadSpec.healthCheck)             | [x]    |
+| 2.7 | Remove openclaw.sock naming                   | `apps/api/lib/container/manager.ts` → generic socket naming                    | [x]    |
+| 2.8 | Rename container prefix                       | `apps/api/lib/container/manager.ts` (openclaw-${id} → container-${id})         | [x]    |
+| 2.9 | Make network mode configurable                | `apps/api/lib/container/manager.ts` (via WorkloadSpec.security)                | [x]    |
 
 ### Phase 3: Implement rclone-Based Sync Engine
 

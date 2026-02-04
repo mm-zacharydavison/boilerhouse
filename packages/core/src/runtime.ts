@@ -157,6 +157,43 @@ export interface EnvVar {
 }
 
 /**
+ * Health check configuration for containers.
+ * Maps to Docker HEALTHCHECK and Kubernetes liveness/readiness probes.
+ */
+export interface HealthCheckSpec {
+  /**
+   * Command to execute for health check.
+   * @example ['curl', '-f', 'http://localhost:8080/health']
+   * @example ['python', '-c', 'print("ok")']
+   */
+  command: string[]
+
+  /**
+   * Interval between health checks in milliseconds.
+   * @example 30000
+   */
+  intervalMs: number
+
+  /**
+   * Timeout for each health check in milliseconds.
+   * @example 5000
+   */
+  timeoutMs: number
+
+  /**
+   * Number of consecutive failures before marking unhealthy.
+   * @example 3
+   */
+  retries: number
+
+  /**
+   * Time to wait before starting health checks (startup grace period).
+   * @example 5000
+   */
+  startPeriodMs?: number
+}
+
+/**
  * Full container specification for creation.
  */
 export interface ContainerSpec {
@@ -219,6 +256,12 @@ export interface ContainerSpec {
    * @example { 'boilerhouse.managed': 'true', 'boilerhouse.tenant-id': 'tenant-123' }
    */
   labels: Record<string, string>
+
+  /**
+   * Health check configuration.
+   * If not provided, container is considered healthy when running.
+   */
+  healthCheck?: HealthCheckSpec
 }
 
 /**

@@ -56,6 +56,16 @@ export class DockerRuntime implements ContainerRuntime {
       Entrypoint: spec.command,
       Env: spec.env.map((e: { name: string; value: string }) => `${e.name}=${e.value}`),
       Labels: spec.labels,
+      // Health check configuration
+      Healthcheck: spec.healthCheck
+        ? {
+            Test: ['CMD', ...spec.healthCheck.command],
+            Interval: spec.healthCheck.intervalMs * 1_000_000, // Convert ms to nanoseconds
+            Timeout: spec.healthCheck.timeoutMs * 1_000_000,
+            Retries: spec.healthCheck.retries,
+            StartPeriod: (spec.healthCheck.startPeriodMs ?? 0) * 1_000_000,
+          }
+        : undefined,
       HostConfig: {
         // Security options
         ReadonlyRootfs: spec.security.readOnlyRootFilesystem,
