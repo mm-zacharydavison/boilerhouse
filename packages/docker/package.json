@@ -1,0 +1,24 @@
+{
+  "name": "@boilerhouse/docker",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@boilerhouse/core": "workspace:*",
+    "dockerode": "^4.0.4"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.34"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

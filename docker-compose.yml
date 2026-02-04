@@ -1,0 +1,56 @@
+services:
+  # Development API server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source for hot reload in development
+      - ./apps:/app/apps:ro
+      - ./packages:/app/packages:ro
+      # Host directories for container state management
+      # These are base directories - each container gets a subdirectory
+      - boilerhouse-states:/var/lib/boilerhouse/states
+      - boilerhouse-secrets:/var/lib/boilerhouse/secrets
+      - boilerhouse-sockets:/var/run/boilerhouse
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - BOILERHOUSE_API_PORT=3000
+      # Base directories for per-container state/secrets/sockets
+      - BOILERHOUSE_STATE_DIR=/var/lib/boilerhouse/states
+      - BOILERHOUSE_SECRETS_DIR=/var/lib/boilerhouse/secrets
+      - BOILERHOUSE_SOCKET_DIR=/var/run/boilerhouse
+      - BOILERHOUSE_POOL_SIZE=2
+      - BOILERHOUSE_MAX_CONTAINERS=10
+    networks:
+      - boilerhouse-internal
+    depends_on:
+      - redis
+
+  # Redis for distributed registry (future use)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - boilerhouse-internal
+
+networks:
+  # Internal network for API <-> Redis communication
+  boilerhouse-internal:
+    driver: bridge
+
+volumes:
+  # Per-container state directories (e.g., /states/{containerId}/)
+  boilerhouse-states:
+  # Per-container secrets directories (e.g., /secrets/{containerId}/)
+  boilerhouse-secrets:
+  # Per-container socket directories (e.g., /sockets/{containerId}/)
+  boilerhouse-sockets:
+  # Redis persistence
+  redis-data:

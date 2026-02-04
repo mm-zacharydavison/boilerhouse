@@ -1,0 +1,18 @@
+FROM oven/bun:1-alpine
+
+WORKDIR /app
+
+# Install Docker CLI for container management
+RUN apk add --no-cache docker-cli
+
+# Copy package files
+COPY package.json bun.lockb* ./
+
+# Install dependencies
+RUN bun install
+
+# Copy source
+COPY . .
+
+# Run in watch mode for development
+CMD ["bun", "run", "dev"]

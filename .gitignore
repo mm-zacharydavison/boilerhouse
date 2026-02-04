@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Bun
+bun.lockb
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local dev)
+.docker-data/
+
+# Test artifacts
+coverage/
+
+# Logs
+*.log
+logs/
+
+# Secrets (never commit)
+secrets/
+*.pem
+*.key

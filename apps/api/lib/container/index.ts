@@ -1,0 +1,20 @@
+// Re-export runtime types from @boilerhouse/core
+export type {
+  ContainerInfo,
+  ContainerRuntime,
+  ContainerSecurityConfig,
+  ContainerSpec,
+  EnvVar,
+  NetworkConfig,
+  RuntimeContainerId,
+  RuntimeContainerStatus,
+  TmpfsMount,
+  VolumeMount,
+} from '@boilerhouse/core'
+export { DEFAULT_NETWORK_CONFIG, DEFAULT_SECURITY_CONFIG } from '@boilerhouse/core'
+
+// Container manager (uses runtime interface)
+export { ContainerManager, type ContainerManagerConfig } from './manager'
+
+// Container pool (uses manager)
+export { ContainerPool, type ContainerPoolConfig, type PoolStats } from './pool'

@@ -1,0 +1,16 @@
+{
+  "name": "@boilerhouse/dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@boilerhouse/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.1"
+  }
+}

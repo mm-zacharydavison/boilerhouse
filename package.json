@@ -1,0 +1,22 @@
+{
+  "name": "boilerhouse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter '@boilerhouse/api' dev",
+    "dev:dashboard": "bun run --filter '@boilerhouse/dashboard' dev",
+    "build": "bun run --filter '*' build",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.2.1",
+    "typescript": "^5.7.3"
+  }
+}

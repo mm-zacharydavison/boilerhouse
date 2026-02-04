@@ -1,0 +1,23 @@
+{
+  "name": "@boilerhouse/api",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target node",
+    "start": "bun run dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.982.0",
+    "@boilerhouse/core": "workspace:*",
+    "@boilerhouse/docker": "workspace:*",
+    "elysia": "^1.2.25",
+    "generic-pool": "^3.9.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.1",
+    "@types/generic-pool": "^3.8.3"
+  }
+}
