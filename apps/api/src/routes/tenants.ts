@@ -164,7 +164,8 @@ export function tenantsController(deps: TenantsControllerDeps) {
           }
 
           // Restart container to get fresh process with synced data
-          await containerManager.restartContainer(container.containerId)
+          // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
+          await containerManager.restartContainer(container.containerId, 2)
 
           return {
             containerId: container.containerId,

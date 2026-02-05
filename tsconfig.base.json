@@ -18,6 +18,7 @@
     "baseUrl": ".",
     "paths": {
       "@boilerhouse/core": ["packages/core/src/index.ts"],
+      "@boilerhouse/db": ["packages/db/src/index.ts"],
       "@boilerhouse/docker": ["packages/docker/src/index.ts"]
     }
   }

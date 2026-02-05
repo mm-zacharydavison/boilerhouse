@@ -6,6 +6,7 @@
  */
 
 import type { PoolContainer, PoolId, TenantId, WorkloadSpec } from '@boilerhouse/core'
+import type { AffinityRepository } from '@boilerhouse/db'
 import { type Factory, type Pool, createPool } from 'generic-pool'
 import { config } from '../config'
 import type { ContainerManager } from './manager'
@@ -72,12 +73,15 @@ export class ContainerPool {
   /** Timeouts to return affinity containers to pool */
   private affinityTimeouts: Map<TenantId, ReturnType<typeof setTimeout>> = new Map()
   private _lastError: PoolError | null = null
+  private affinityRepo?: AffinityRepository
 
   constructor(
     manager: ContainerManager,
     poolConfig: Pick<ContainerPoolConfig, 'workload' | 'poolId'> & Partial<ContainerPoolConfig>,
+    affinityRepo?: AffinityRepository,
   ) {
     this.manager = manager
+    this.affinityRepo = affinityRepo
     this.poolConfig = {
       workload: poolConfig.workload,
       poolId: poolConfig.poolId,
@@ -177,6 +181,7 @@ export class ContainerPool {
         this.affinityTimeouts.delete(tenantId)
       }
       this.affinityContainers.delete(tenantId)
+      this.affinityRepo?.delete(tenantId)
 
       // Validate container is still healthy
       const healthy = await this.manager.isHealthy(affinityContainer.containerId)
@@ -243,9 +248,19 @@ export class ContainerPool {
     // Store in affinity map for potential quick return
     this.affinityContainers.set(tenantId, container)
 
+    // Persist affinity reservation
+    const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
+    this.affinityRepo?.save({
+      tenantId,
+      containerId: container.containerId,
+      poolId: this.poolConfig.poolId,
+      expiresAt,
+    })
+
     // Set timeout to return to pool if tenant doesn't come back
     const timeout = setTimeout(async () => {
       this.affinityTimeouts.delete(tenantId)
+      this.affinityRepo?.delete(tenantId)
       const affinityContainer = this.affinityContainers.get(tenantId)
       if (affinityContainer && affinityContainer.containerId === container.containerId) {
         this.affinityContainers.delete(tenantId)
@@ -513,9 +528,28 @@ export class ContainerPool {
   }
 
   /**
+   * Stop the pool without destroying containers.
+   *
+   * Clears timers and in-memory state but leaves Docker containers running.
+   * Use this for graceful shutdown when you want to recover state on restart.
+   */
+  stop(): void {
+    console.log('[Pool] Stopping pool (preserving containers)...')
+
+    // Clear all affinity timeouts (just the timers)
+    for (const timeout of this.affinityTimeouts.values()) {
+      clearTimeout(timeout)
+    }
+    this.affinityTimeouts.clear()
+
+    console.log('[Pool] Pool stopped')
+  }
+
+  /**
    * Gracefully drain the pool
    *
    * Releases all containers and waits for pool to drain.
+   * Use this for permanent shutdown when containers should be destroyed.
    */
   async drain(): Promise<void> {
     console.log('[Pool] Draining pool...')
@@ -571,5 +605,61 @@ export class ContainerPool {
         console.error('[Pool] Eviction error:', err)
       }
     }, interval)
+  }
+
+  /**
+   * Restore an affinity reservation from the database.
+   * Used during recovery to re-establish affinity timeouts.
+   */
+  restoreAffinity(tenantId: TenantId, container: PoolContainer, remainingMs: number): void {
+    if (remainingMs <= 0) {
+      // Already expired, flush to pool
+      this.flushAffinityToPool(container).catch((err) => {
+        console.error(`[Pool] Failed to flush expired affinity for ${tenantId}:`, err)
+      })
+      return
+    }
+
+    this.affinityContainers.set(tenantId, container)
+    this.allContainers.set(container.containerId, container)
+
+    const timeout = setTimeout(async () => {
+      this.affinityTimeouts.delete(tenantId)
+      this.affinityRepo?.delete(tenantId)
+      const affinityContainer = this.affinityContainers.get(tenantId)
+      if (affinityContainer && affinityContainer.containerId === container.containerId) {
+        this.affinityContainers.delete(tenantId)
+        await this.flushAffinityToPool(affinityContainer)
+      }
+    }, remainingMs)
+
+    this.affinityTimeouts.set(tenantId, timeout)
+    console.log(
+      `[Pool] Restored affinity for tenant ${tenantId}, container ${container.containerId}, expires in ${remainingMs}ms`,
+    )
+  }
+
+  /**
+   * Restore an assigned container from recovery.
+   * Used to add containers that were assigned at crash time back to tracking.
+   */
+  restoreAssigned(tenantId: TenantId, container: PoolContainer): void {
+    this.assignedContainers.set(tenantId, container)
+    this.allContainers.set(container.containerId, container)
+    console.log(
+      `[Pool] Restored assigned container ${container.containerId} for tenant ${tenantId}`,
+    )
+  }
+
+  /**
+   * Restore an idle container from recovery.
+   * Used to add containers that were idle at crash time back to the pool.
+   */
+  async restoreIdle(container: PoolContainer): Promise<void> {
+    this.allContainers.set(container.containerId, container)
+    // The container is already in the manager, we just need to track it
+    // Note: generic-pool doesn't have a method to add existing resources,
+    // so we'll just track it in allContainers for now
+    console.log(`[Pool] Restored idle container ${container.containerId}`)
   }
 }

@@ -5,9 +5,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { mkdir, writeFile, readdir } from 'node:fs/promises'
-import { createTestHarness, type TestHarness } from './harness'
+import { type TestHarness, createTestHarness } from './harness'
 
 describe('Container Claiming', () => {
   let harness: TestHarness

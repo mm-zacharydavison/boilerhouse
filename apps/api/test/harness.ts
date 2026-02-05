@@ -5,27 +5,27 @@
  * Supports both API calls and Docker state verification.
  */
 
-import type { Elysia } from 'elysia'
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type {
-  ContainerInfo as RuntimeContainerInfo,
   ContainerRuntime,
   PoolContainer,
+  ContainerInfo as RuntimeContainerInfo,
   TenantId,
   WorkloadSpec,
 } from '@boilerhouse/core'
 import { DockerRuntime } from '@boilerhouse/docker'
+import type { Elysia } from 'elysia'
+import { ActivityLog } from '../lib/activity'
 import { ContainerManager } from '../lib/container/manager'
 import { ContainerPool } from '../lib/container/pool'
 import { PoolRegistry } from '../lib/pool/registry'
-import { WorkloadRegistry } from '../lib/workload'
+import { SyncCoordinator } from '../lib/sync/coordinator'
 import { RcloneSyncExecutor } from '../lib/sync/rclone'
 import { SyncStatusTracker } from '../lib/sync/status'
-import { SyncCoordinator } from '../lib/sync/coordinator'
-import { ActivityLog } from '../lib/activity'
+import { WorkloadRegistry } from '../lib/workload'
 import { createServer } from '../src/server'
-import { mkdir, rm, readdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 /**
  * Test harness configuration
@@ -420,17 +420,14 @@ healthcheck:
   /**
    * Get file stats inside a container
    */
-  async stat(
-    containerId: string,
-    path: string,
-  ): Promise<{ size: number; mtime: string } | null> {
+  async stat(containerId: string, path: string): Promise<{ size: number; mtime: string } | null> {
     const result = await this.exec(containerId, ['stat', '-c', '%s %Y', path])
     if (result.exitCode !== 0) {
       return null
     }
     const [size, mtime] = result.stdout.trim().split(' ')
     return {
-      size: parseInt(size, 10),
+      size: Number.parseInt(size, 10),
       mtime,
     }
   }
@@ -638,7 +635,7 @@ function createMockRuntime(): ContainerRuntime {
         const match = command[2].match(/cat > ([^\s]+)/)
         if (match) {
           const path = match[1]
-          const content = command[2].split("TESTEOF\n")[1]?.split('\n')[0] ?? ''
+          const content = command[2].split('TESTEOF\n')[1]?.split('\n')[0] ?? ''
           container.files.set(path, content)
           return { exitCode: 0, stdout: '', stderr: '' }
         }

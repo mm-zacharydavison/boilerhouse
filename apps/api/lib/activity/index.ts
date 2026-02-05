@@ -6,6 +6,7 @@
  */
 
 import type { ContainerId, PoolId, TenantId } from '@boilerhouse/core'
+import type { ActivityRepository } from '@boilerhouse/db'
 
 /**
  * Activity event types
@@ -62,9 +63,11 @@ export class ActivityLog {
   private listeners: Set<ActivityEventListener> = new Set()
   private config: Required<ActivityLogConfig>
   private eventCounter = 0
+  private activityRepo?: ActivityRepository
 
-  constructor(config?: ActivityLogConfig) {
+  constructor(config?: ActivityLogConfig, activityRepo?: ActivityRepository) {
     this.config = { ...DEFAULT_CONFIG, ...config }
+    this.activityRepo = activityRepo
   }
 
   /**
@@ -94,6 +97,17 @@ export class ActivityLog {
     if (this.events.length > this.config.maxEvents) {
       this.events = this.events.slice(0, this.config.maxEvents)
     }
+
+    // Persist to database
+    this.activityRepo?.save({
+      eventType: type,
+      poolId: options?.poolId ?? null,
+      containerId: options?.containerId ?? null,
+      tenantId: options?.tenantId ?? null,
+      message,
+      metadata: options?.metadata ?? null,
+      timestamp: new Date(),
+    })
 
     // Notify listeners
     for (const listener of this.listeners) {

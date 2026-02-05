@@ -14,6 +14,7 @@ import type {
   WorkloadId,
   WorkloadSpec,
 } from '@boilerhouse/core'
+import type { AffinityRepository } from '@boilerhouse/db'
 import { type ActivityLog, getActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
@@ -154,15 +155,18 @@ export class PoolRegistry {
   private manager: ContainerManager
   private workloadRegistry: WorkloadRegistry
   private activityLog: ActivityLog
+  private affinityRepo?: AffinityRepository
 
   constructor(
     manager: ContainerManager,
     workloadRegistry: WorkloadRegistry,
     activityLog?: ActivityLog,
+    affinityRepo?: AffinityRepository,
   ) {
     this.manager = manager
     this.workloadRegistry = workloadRegistry
     this.activityLog = activityLog ?? getActivityLog()
+    this.affinityRepo = affinityRepo
   }
 
   /**
@@ -187,11 +191,15 @@ export class PoolRegistry {
       throw new Error(`Workload ${workloadId} not found`)
     }
 
-    const pool = new ContainerPool(this.manager, {
-      workload,
-      poolId,
-      ...config,
-    })
+    const pool = new ContainerPool(
+      this.manager,
+      {
+        workload,
+        poolId,
+        ...config,
+      },
+      this.affinityRepo,
+    )
 
     this.pools.set(poolId, pool)
     this.poolCreatedAt.set(poolId, new Date())
@@ -406,11 +414,14 @@ export class PoolRegistry {
   }
 
   /**
-   * Gracefully shutdown all pools
+   * Gracefully shutdown all pools.
+   *
+   * Stops pools without destroying containers so they can be recovered on restart.
    */
-  async shutdown(): Promise<void> {
-    const drainPromises = Array.from(this.pools.values()).map((pool) => pool.drain())
-    await Promise.all(drainPromises)
+  shutdown(): void {
+    for (const pool of this.pools.values()) {
+      pool.stop()
+    }
     this.pools.clear()
     this.poolCreatedAt.clear()
   }

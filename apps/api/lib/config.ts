@@ -18,8 +18,9 @@ function getEnvPath(key: string, defaultValue: string): string {
   return value.startsWith('/') ? value : resolve(process.cwd(), value)
 }
 
-export const config: BoilerhouseConfig & { workloadsDir: string } = {
+export const config: BoilerhouseConfig & { workloadsDir: string; dbPath: string } = {
   workloadsDir: getEnvPath('BOILERHOUSE_WORKLOADS_DIR', '/etc/boilerhouse/workloads'),
+  dbPath: getEnvPath('BOILERHOUSE_DB_PATH', 'data/boilerhouse.db'),
 
   pool: {
     minPoolSize: getEnvNumber('BOILERHOUSE_POOL_SIZE', 5),

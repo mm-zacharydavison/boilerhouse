@@ -1,8 +1,17 @@
+import {
+  ActivityRepository,
+  AffinityRepository,
+  ContainerRepository,
+  SyncStatusRepository,
+  closeDatabase,
+  initDatabase,
+} from '@boilerhouse/db'
 import { DockerRuntime } from '@boilerhouse/docker'
-import { getActivityLog } from '../lib/activity'
+import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
 import { ContainerManager } from '../lib/container'
 import { PoolRegistry } from '../lib/pool/registry'
+import { recoverState } from '../lib/recovery'
 import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
 import { createWorkloadRegistry } from '../lib/workload'
 import { createServer } from './server'
@@ -13,6 +22,29 @@ console.log(`  - Pool size: ${config.pool.minPoolSize}`)
 console.log(`  - Max containers: ${config.pool.maxContainersPerNode}`)
 console.log(`  - API: ${config.apiHost}:${config.apiPort}`)
 console.log(`  - Workloads dir: ${config.workloadsDir}`)
+console.log(`  - Database: ${config.dbPath}`)
+
+// Initialize SQLite database with WAL mode
+const db = initDatabase({ path: config.dbPath })
+
+// Create repositories
+const containerRepo = new ContainerRepository(db)
+const affinityRepo = new AffinityRepository(db)
+const syncStatusRepo = new SyncStatusRepository(db)
+const activityRepo = new ActivityRepository(db)
+
+// Initialize container runtime
+const runtime = new DockerRuntime()
+console.log(`  - Runtime: ${runtime.name}`)
+
+// Run recovery/reconciliation (DB vs Docker)
+const recoveryStats = await recoverState(runtime, containerRepo, affinityRepo, {
+  labelPrefix: 'boilerhouse',
+})
+console.log(
+  `  - Recovery: restored=${recoveryStats.restored}, orphaned=${recoveryStats.orphaned}, ` +
+    `stopped=${recoveryStats.stopped}, foreign=${recoveryStats.foreign}`,
+)
 
 // Load workloads from YAML files
 const workloadRegistry = createWorkloadRegistry(config.workloadsDir)
@@ -20,21 +52,37 @@ console.log(
   `  - Loaded ${workloadRegistry.size} workload(s): ${workloadRegistry.ids().join(', ') || '(none)'}`,
 )
 
-// Initialize container runtime
-const runtime = new DockerRuntime()
-console.log(`  - Runtime: ${runtime.name}`)
+// Initialize activity log with persistence
+const activityLog = new ActivityLog(undefined, activityRepo)
 
-// Initialize activity log
-const activityLog = getActivityLog()
+// Initialize container manager with persistence
+const manager = new ContainerManager(runtime, undefined, containerRepo)
 
-// Initialize container manager
-const manager = new ContainerManager(runtime)
+// Restore container state from database
+const restoredContainers = manager.restoreFromRepository()
+console.log(`  - Restored ${restoredContainers.length} containers from database`)
 
-// Initialize pool registry
-const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog)
+// Initialize pool registry with affinity persistence
+const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog, affinityRepo)
 
-// Initialize sync components
-const syncStatusTracker = new SyncStatusTracker()
+// Restore affinity reservations for each pool
+const activeAffinityReservations = affinityRepo.findActive()
+for (const reservation of activeAffinityReservations) {
+  const container = manager.getContainer(reservation.containerId)
+  if (container) {
+    const pool = poolRegistry.getPool(reservation.poolId)
+    if (pool) {
+      const remainingMs = reservation.expiresAt.getTime() - Date.now()
+      pool.restoreAffinity(reservation.tenantId, container, remainingMs)
+    }
+  }
+}
+if (activeAffinityReservations.length > 0) {
+  console.log(`  - Restored ${activeAffinityReservations.length} affinity reservations`)
+}
+
+// Initialize sync components with persistence
+const syncStatusTracker = new SyncStatusTracker(syncStatusRepo)
 const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
 const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
 
@@ -74,19 +122,15 @@ if (process.env.NODE_ENV !== 'production') {
   console.log('Watching for workload file changes...')
 }
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
+// Graceful shutdown - preserves containers for recovery on restart
+async function shutdown() {
   console.log('Shutting down...')
   workloadRegistry.stopWatching()
   await syncCoordinator.shutdown()
-  await poolRegistry.shutdown()
+  poolRegistry.shutdown()
+  closeDatabase(db)
   process.exit(0)
-})
+}
 
-process.on('SIGTERM', async () => {
-  console.log('Shutting down...')
-  workloadRegistry.stopWatching()
-  await syncCoordinator.shutdown()
-  await poolRegistry.shutdown()
-  process.exit(0)
-})
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)

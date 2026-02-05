@@ -21,6 +21,7 @@ import {
   type TenantId,
   type WorkloadSpec,
 } from '@boilerhouse/core'
+import type { ContainerRepository } from '@boilerhouse/db'
 import { config } from '../config'
 
 export interface ContainerManagerConfig {
@@ -56,10 +57,16 @@ export class ContainerManager {
   private runtime: ContainerRuntime
   private config: ContainerManagerConfig
   private containers: Map<ContainerId, PoolContainer> = new Map()
+  private containerRepo?: ContainerRepository
 
-  constructor(runtime: ContainerRuntime, managerConfig?: Partial<ContainerManagerConfig>) {
+  constructor(
+    runtime: ContainerRuntime,
+    managerConfig?: Partial<ContainerManagerConfig>,
+    containerRepo?: ContainerRepository,
+  ) {
     this.runtime = runtime
     this.config = { ...DEFAULT_CONFIG, ...managerConfig }
+    this.containerRepo = containerRepo
   }
 
   /**
@@ -224,6 +231,7 @@ export class ContainerManager {
     }
 
     this.containers.set(containerId, poolContainer)
+    this.containerRepo?.save(poolContainer)
     return poolContainer
   }
 
@@ -257,6 +265,7 @@ export class ContainerManager {
     container.status = 'assigned'
     container.lastActivity = new Date()
 
+    this.containerRepo?.updateTenant(containerId, tenantId, 'assigned')
     return container
   }
 
@@ -276,6 +285,9 @@ export class ContainerManager {
     container.tenantId = null
     container.status = 'idle'
     container.lastActivity = new Date()
+
+    this.containerRepo?.updateTenant(containerId, null, 'idle')
+    this.containerRepo?.updateLastTenantId(containerId, container.lastTenantId)
   }
 
   /**
@@ -297,20 +309,21 @@ export class ContainerManager {
 
     // Clear lastTenantId since we've wiped the state
     container.lastTenantId = null
+    this.containerRepo?.updateLastTenantId(containerId, null)
   }
 
   /**
    * Restart a container to get a fresh process.
    * Call this after sync to ensure the new tenant gets a clean process with their data.
    */
-  async restartContainer(containerId: ContainerId): Promise<void> {
+  async restartContainer(containerId: ContainerId, timeoutSeconds = 10): Promise<void> {
     const container = this.containers.get(containerId)
     if (!container) {
       throw new Error(`Container ${containerId} not found`)
     }
 
     const containerName = `container-${containerId}`
-    await this.runtime.restartContainer(containerName, 10)
+    await this.runtime.restartContainer(containerName, timeoutSeconds)
     container.lastActivity = new Date()
   }
 
@@ -337,6 +350,7 @@ export class ContainerManager {
     ])
 
     this.containers.delete(containerId)
+    this.containerRepo?.delete(containerId)
   }
 
   /**
@@ -399,6 +413,36 @@ export class ContainerManager {
       if (c.status !== 'assigned') return false
       return now - c.lastActivity.getTime() > maxIdleMs
     })
+  }
+
+  /**
+   * Restore container state from the repository (for recovery after restart).
+   * Only restores containers that still exist in Docker.
+   */
+  restoreFromRepository(): PoolContainer[] {
+    if (!this.containerRepo) {
+      return []
+    }
+
+    const containers = this.containerRepo.findAll()
+    for (const container of containers) {
+      this.containers.set(container.containerId, container)
+    }
+    return containers
+  }
+
+  /**
+   * Get the container repository (for recovery operations).
+   */
+  getContainerRepository(): ContainerRepository | undefined {
+    return this.containerRepo
+  }
+
+  /**
+   * Remove a container from in-memory tracking only (used during recovery).
+   */
+  removeFromMemory(containerId: ContainerId): void {
+    this.containers.delete(containerId)
   }
 
   /**

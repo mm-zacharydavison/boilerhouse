@@ -4,252 +4,301 @@ This document outlines how Boilerhouse can survive restarts and recover state fo
 
 ## Current State
 
-The following components hold in-memory state that would be lost on restart:
+### Implementation Status
 
-| Component         | State                          | Impact of Loss                            | Durability Strategy          |
-|-------------------|--------------------------------|-------------------------------------------|------------------------------|
-| SyncRegistry      | Registered SyncSpecs           | No sync operations possible               | YAML file-backed (Phase 3.1) |
-| WorkloadRegistry  | Registered WorkloadSpecs       | No workloads available                    | YAML file-backed (Phase 3.1) |
-| SyncStatusTracker | Sync status per tenant/spec    | Loss of error history, last sync times    | Optional SQLite (Phase 4)    |
-| SyncCoordinator   | Periodic sync timers           | Scheduled syncs stop running              | Rebuild from registry        |
-| ContainerManager  | Tenant → container assignments | Unknown which tenant owns which container | Docker labels                |
+| Feature                          | Status         | Notes                                                    |
+|----------------------------------|----------------|----------------------------------------------------------|
+| WorkloadRegistry YAML loading    | ✅ Implemented | Loads from `config/workloads/*.yaml` on startup          |
+| Docker labels on create          | ✅ Implemented | Sets `pool-id`, `managed`, `container-id`, `workload-id` |
+| Docker label for tenant-id       | ❌ Not done    | Not updated when container is assigned                   |
+| SyncRegistry                     | ❌ Not done    | Sync config embedded in WorkloadSpec.sync instead        |
+| Container state recovery         | ❌ Not done    | No recovery on restart                                   |
+| Graceful shutdown                | ❌ Not done    | No final sync on shutdown                                |
+
+### In-Memory State Inventory
+
+The following components hold state that would be lost on restart:
+
+| Component          | State                                   | Impact of Loss                                | Priority |
+|--------------------|-----------------------------------------|-----------------------------------------------|----------|
+| ContainerManager   | `containers` Map (all container state)  | All container metadata lost                   | Critical |
+| ContainerPool      | `assignedContainers` Map                | Unknown which tenant owns which container     | Critical |
+| ContainerPool      | `affinityContainers` Map                | Tenants can't return to previous containers   | Critical |
+| ContainerPool      | `affinityTimeouts` Map                  | Affinity reservation timers lost              | High     |
+| PoolRegistry       | `pools` Map, `poolCreatedAt` Map        | All pool instances and creation times lost    | Critical |
+| SyncCoordinator    | `periodicJobs` Map                      | All scheduled syncs stop                      | High     |
+| SyncCoordinator    | `pendingQueue` Array                    | Queued sync operations dropped                | Medium   |
+| SyncStatusTracker  | `statuses` Map                          | Sync history, errors, last sync times lost    | Medium   |
+| ActivityLog        | `events` Array (1000 events)            | Audit trail lost                              | Low      |
+| WorkloadRegistry   | `workloads` Map                         | Can reload from YAML                          | Low      |
+
+### Critical Gap: Docker Labels
+
+The document previously stated Docker labels for `tenant-id` were "already implemented" - this is incorrect.
+
+**Currently set on container creation (`manager.ts:202-207`):**
+- `boilerhouse.managed` ✓
+- `boilerhouse.container-id` ✓
+- `boilerhouse.pool-id` ✓
+- `boilerhouse.workload-id` ✓
+- `boilerhouse.created-at` ✓
+
+**NOT set (required for recovery):**
+- `boilerhouse.tenant-id` - not updated when `assignToTenant()` is called
+- `boilerhouse.claimed-at` - not set
+- `boilerhouse.last-tenant-id` - needed for affinity recovery
+
+The `syncFromRuntime()` method reads `tenant-id` back, but it's never written.
+
+## Database Recommendation
+
+### Why a Database?
+
+The current approach of "Docker labels + YAML files" has fundamental limitations:
+
+1. **Docker labels are immutable after creation** - You cannot update labels on a running container without recreating it. This means we can't track tenant assignments via labels.
+
+2. **Multiple sources of truth** - YAML files for config, Docker for containers, in-memory for runtime state creates complexity and inconsistency risks.
+
+3. **Affinity system needs persistence** - `affinityContainers` and `lastTenantId` are critical for the tenant experience but have no durable storage.
+
+4. **Sync status is valuable** - Last sync times enable catch-up syncs; error history enables debugging.
+
+### Recommendation: SQLite
+
+SQLite is the right choice for Boilerhouse:
+
+| Factor              | SQLite Advantage                                         |
+|---------------------|----------------------------------------------------------|
+| Deployment          | Single file, no separate process, embedded in app        |
+| Performance         | Fast for our scale (hundreds of containers, not millions)|
+| Durability          | ACID transactions, WAL mode for crash safety             |
+| Complexity          | Zero ops burden, no connection pooling needed            |
+| Bun support         | Native `bun:sqlite` with great performance               |
+
+**When SQLite is NOT right:**
+- Multi-node deployment (future) → would need PostgreSQL or shared storage
+- High write throughput → not our workload
+
+### Schema Design
+
+```sql
+-- Container state (source of truth for runtime state)
+CREATE TABLE containers (
+  container_id   TEXT PRIMARY KEY,
+  pool_id        TEXT NOT NULL,
+  workload_id    TEXT NOT NULL,
+  tenant_id      TEXT,                    -- NULL if idle
+  last_tenant_id TEXT,                    -- For affinity matching
+  status         TEXT NOT NULL DEFAULT 'idle',
+  socket_path    TEXT NOT NULL,
+  state_dir      TEXT NOT NULL,
+  secrets_dir    TEXT NOT NULL,
+  created_at     INTEGER NOT NULL,
+  claimed_at     INTEGER,
+  last_activity  INTEGER NOT NULL
+);
+
+CREATE INDEX idx_containers_pool ON containers(pool_id);
+CREATE INDEX idx_containers_tenant ON containers(tenant_id) WHERE tenant_id IS NOT NULL;
+CREATE INDEX idx_containers_last_tenant ON containers(last_tenant_id) WHERE last_tenant_id IS NOT NULL;
+
+-- Affinity reservations (containers held for returning tenants)
+CREATE TABLE affinity_reservations (
+  tenant_id      TEXT PRIMARY KEY,
+  container_id   TEXT NOT NULL REFERENCES containers(container_id),
+  reserved_at    INTEGER NOT NULL,
+  expires_at     INTEGER NOT NULL
+);
+
+-- Sync status tracking
+CREATE TABLE sync_status (
+  tenant_id      TEXT NOT NULL,
+  sync_id        TEXT NOT NULL,
+  last_sync_at   INTEGER,
+  pending_count  INTEGER NOT NULL DEFAULT 0,
+  state          TEXT NOT NULL DEFAULT 'idle',
+  PRIMARY KEY (tenant_id, sync_id)
+);
+
+-- Sync errors (recent history for debugging)
+CREATE TABLE sync_errors (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id      TEXT NOT NULL,
+  sync_id        TEXT NOT NULL,
+  timestamp      INTEGER NOT NULL,
+  message        TEXT NOT NULL,
+  mapping        TEXT
+);
+
+CREATE INDEX idx_sync_errors_tenant ON sync_errors(tenant_id, sync_id);
+
+-- Activity log (optional, for audit trail)
+CREATE TABLE activity_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type     TEXT NOT NULL,
+  pool_id        TEXT,
+  container_id   TEXT,
+  tenant_id      TEXT,
+  message        TEXT,
+  timestamp      INTEGER NOT NULL
+);
+
+CREATE INDEX idx_activity_timestamp ON activity_log(timestamp DESC);
+```
+
+### Migration Path
+
+1. **Add SQLite dependency** - Use `bun:sqlite` (built-in)
+2. **Create database layer** - Simple repository pattern
+3. **Dual-write during transition** - Write to both memory and SQLite
+4. **Switch to SQLite as source of truth** - Read from SQLite on startup
+5. **Remove in-memory maps** - Or keep as cache with SQLite backing
 
 ## Recovery Strategy
 
-### Phase 1: YAML File-Backed Registries
+### Phase 1: Workload Registry (Already Implemented)
 
-SyncSpecs and WorkloadSpecs are stored as YAML files in config directories (see [Phase 3.1](./boilerhouse-architecture.md#phase-31-migrate-specs-to-yaml-configuration)). The registries are file-backed, meaning:
+WorkloadSpecs load from YAML files at startup:
+- **Location**: `config/workloads/*.yaml`
+- **Status**: ✅ Implemented in `WorkloadRegistry.loadFromDirectory()`
 
-- **Startup**: Load all `*.yaml` files from config directories
-- **API writes**: Mutations persist to YAML files immediately
-- **Recovery**: Simply reload from config directories
+Sync configuration is embedded in `WorkloadSpec.sync` - there is no separate SyncRegistry.
 
-**Config Directories:**
-- `config/workloads/` - WorkloadSpec YAML files
-- `config/sync/` - SyncSpec YAML files
+### Phase 2: Docker Label Updates (Required for Label-Based Recovery)
 
-**Implementation:**
+If NOT using SQLite, we need to update Docker labels when state changes.
+
+**Problem:** Docker labels are immutable after container creation.
+
+**Workaround:** Use container environment or a sidecar file:
 ```typescript
-// Example: apps/api/lib/sync/registry.ts (file-backed)
-export class SyncRegistry {
-  constructor(private configDir: string) {}
-
-  async loadFromDisk(): Promise<void> {
-    const files = await glob('*.yaml', { cwd: this.configDir })
-    for (const file of files) {
-      const spec = await this.loadYamlFile(join(this.configDir, file))
-      this.specs.set(spec.id, spec)
-    }
-  }
-
-  async register(spec: SyncSpec): Promise<void> {
-    // Validate
-    this.validateSpec(spec)
-    // Persist to disk first (durability)
-    await this.writeYamlFile(spec)
-    // Then update in-memory
-    this.specs.set(spec.id, spec)
-  }
+// Write state to a file inside the container's state directory
+async function persistContainerState(container: PoolContainer): Promise<void> {
+  const statePath = join(container.stateDir, '.boilerhouse-state.json')
+  await writeFile(statePath, JSON.stringify({
+    tenantId: container.tenantId,
+    lastTenantId: container.lastTenantId,
+    claimedAt: container.claimedAt,
+    lastActivity: container.lastActivity,
+  }))
 }
 ```
 
-#### YAML File Durability
+**Recovery:** Read state files from each container's state directory on startup.
 
-To ensure YAML file writes survive crashes:
+### Phase 3: SQLite-Based Recovery (Recommended)
 
-**Atomic Writes:**
-```typescript
-async function atomicWriteYaml(filePath: string, data: object): Promise<void> {
-  const content = yaml.stringify(data)
-  const tempPath = `${filePath}.tmp.${process.pid}`
-
-  // Write to temp file
-  await writeFile(tempPath, content, 'utf-8')
-
-  // fsync to ensure data is on disk
-  const fd = await open(tempPath, 'r')
-  await fd.sync()
-  await fd.close()
-
-  // Atomic rename
-  await rename(tempPath, filePath)
-
-  // fsync parent directory (Linux requirement for rename durability)
-  const dirFd = await open(dirname(filePath), 'r')
-  await dirFd.sync()
-  await dirFd.close()
-}
-```
-
-**Backup on Modify:**
-```typescript
-async function writeWithBackup(filePath: string, data: object): Promise<void> {
-  // Keep one backup
-  if (await exists(filePath)) {
-    await copyFile(filePath, `${filePath}.bak`)
-  }
-  await atomicWriteYaml(filePath, data)
-}
-```
-
-**Validation Before Load:**
-```typescript
-async function loadYamlFile(filePath: string, schema: JSONSchema): Promise<SyncSpec> {
-  const content = await readFile(filePath, 'utf-8')
-  const data = yaml.parse(content)
-
-  // Validate against schema
-  const valid = ajv.validate(schema, data)
-  if (!valid) {
-    throw new ValidationError(`Invalid spec in ${filePath}: ${ajv.errorsText()}`)
-  }
-
-  return data as SyncSpec
-}
-```
-
-### Phase 2: Docker State Recovery
-
-Tenant assignments can be recovered by querying Docker for running containers with Boilerhouse labels.
-
-**Container Labels (already implemented):**
-- `boilerhouse.pool-id`: Pool the container belongs to
-- `boilerhouse.tenant-id`: Tenant currently assigned (if claimed)
-- `boilerhouse.claimed-at`: When the container was claimed
-
-**Recovery Process:**
-1. Query Docker for all containers with `boilerhouse.pool-id` label
-2. Group containers by pool ID
-3. For each container:
-   - If `boilerhouse.tenant-id` is set → restore as claimed container
-   - Otherwise → return to pool as available
+With SQLite as the source of truth:
 
 ```typescript
-// Example: apps/api/lib/container/recovery.ts
-export async function recoverContainerState(
+// apps/api/lib/recovery.ts
+export async function recoverFromDatabase(
+  db: Database,
   runtime: ContainerRuntime,
-  pools: Map<PoolId, ContainerPool>
+  poolRegistry: PoolRegistry
 ): Promise<RecoveryResult> {
-  const containers = await runtime.list({
-    labels: { 'boilerhouse.pool-id': '*' }
+  // 1. Load containers from database
+  const dbContainers = db.query('SELECT * FROM containers').all()
+
+  // 2. Verify each container still exists in Docker
+  const dockerContainers = await runtime.list({
+    labels: { 'boilerhouse.managed': 'true' }
   })
+  const dockerIds = new Set(dockerContainers.map(c => c.labels['boilerhouse.container-id']))
 
-  const recovered: RecoveredContainer[] = []
-
-  for (const container of containers) {
-    const poolId = container.labels['boilerhouse.pool-id']
-    const tenantId = container.labels['boilerhouse.tenant-id']
-    const pool = pools.get(poolId)
-
-    if (!pool) {
-      // Pool no longer configured - stop container
-      await runtime.stop(container.id)
+  // 3. Reconcile
+  for (const dbContainer of dbContainers) {
+    if (!dockerIds.has(dbContainer.container_id)) {
+      // Container gone from Docker - mark as destroyed
+      db.run('DELETE FROM containers WHERE container_id = ?', dbContainer.container_id)
       continue
     }
 
-    if (tenantId) {
-      // Restore claimed container
-      pool.restoreClaimed(container, tenantId)
-      recovered.push({ container, tenantId, status: 'claimed' })
-    } else {
-      // Return to pool
-      pool.restoreAvailable(container)
-      recovered.push({ container, tenantId: null, status: 'available' })
+    // Restore to appropriate pool
+    const pool = poolRegistry.get(dbContainer.pool_id)
+    if (!pool) {
+      // Pool no longer configured - destroy container
+      await runtime.destroyContainer(dbContainer.container_id)
+      db.run('DELETE FROM containers WHERE container_id = ?', dbContainer.container_id)
+      continue
     }
+
+    pool.restoreContainer(dbContainer)
   }
 
-  return { recovered }
+  // 4. Restore affinity reservations (with valid expiry)
+  const now = Date.now()
+  db.run('DELETE FROM affinity_reservations WHERE expires_at < ?', now)
+  const reservations = db.query('SELECT * FROM affinity_reservations').all()
+  for (const res of reservations) {
+    const pool = poolRegistry.getByContainerId(res.container_id)
+    pool?.restoreAffinityReservation(res.tenant_id, res.container_id, res.expires_at)
+  }
+
+  // 5. Recover sync jobs for claimed containers
+  const claimedContainers = db.query(
+    'SELECT * FROM containers WHERE tenant_id IS NOT NULL'
+  ).all()
+  // ... restart periodic syncs
 }
 ```
 
-### Phase 3: Sync Job Recovery
+### Phase 4: Sync Job Recovery
 
-After recovering container assignments, restart periodic sync jobs for all claimed containers.
-
-**Recovery Process:**
-1. For each recovered claimed container:
-   - Look up SyncSpecs for its pool
-   - For specs with `policy.intervalMs`, restart periodic sync
-   - Execute immediate sync if `lastSyncAt` exceeds interval
+After container recovery, restart periodic sync jobs:
 
 ```typescript
-// Example: apps/api/lib/sync/recovery.ts
 export async function recoverSyncJobs(
   coordinator: SyncCoordinator,
-  registry: SyncRegistry,
-  claimedContainers: Array<{ tenantId: TenantId; container: PoolContainer }>
+  workloadRegistry: WorkloadRegistry,
+  claimedContainers: PoolContainer[]
 ): Promise<void> {
-  for (const { tenantId, container } of claimedContainers) {
-    const specs = registry.getByPoolId(container.poolId)
+  for (const container of claimedContainers) {
+    const workload = workloadRegistry.get(container.workloadId)
+    if (!workload?.sync) continue
 
-    for (const spec of specs) {
-      if (spec.policy.intervalMs) {
-        // Restart periodic sync
-        coordinator.startPeriodicSync(tenantId, spec, container)
+    for (const syncConfig of workload.sync) {
+      if (syncConfig.policy.intervalMs) {
+        coordinator.startPeriodicSync(container.tenantId!, syncConfig, container)
       }
     }
   }
 }
 ```
 
-### Phase 4: Optional Persistence (Future)
-
-For environments requiring stricter durability guarantees:
-
-**SQLite for Status Persistence:**
-```typescript
-// Schema
-CREATE TABLE sync_status (
-  tenant_id TEXT NOT NULL,
-  sync_id TEXT NOT NULL,
-  last_sync_at INTEGER,
-  state TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, sync_id)
-);
-
-CREATE TABLE sync_errors (
-  id INTEGER PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  sync_id TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
-  message TEXT NOT NULL,
-  mapping TEXT
-);
-```
-
-This allows recovery of:
-- Last sync times (to calculate catch-up syncs)
-- Error history for debugging
-- Sync state for status API
-
 ## Startup Sequence
 
 ```
-1. Load YAML registries
-   ├── Load WorkloadSpecs from config/workloads/*.yaml
-   ├── Validate each spec against JSON Schema
-   ├── Load SyncSpecs from config/sync/*.yaml
-   └── Validate each spec against JSON Schema
+1. Initialize database
+   ├── Open SQLite database (create if not exists)
+   ├── Run migrations if needed
+   └── Enable WAL mode for crash safety
 
-2. Initialize pools
+2. Load YAML registries
+   ├── Load WorkloadSpecs from config/workloads/*.yaml
+   └── Validate each spec against schema
+
+3. Initialize pool registry
    ├── Create ContainerPool for each WorkloadSpec
    └── Set min/max container counts from config
 
-3. Recover Docker state
-   ├── Query Docker for boilerhouse containers
-   ├── Restore claimed containers to pools
-   └── Return unclaimed containers to pools
+4. Recover state from database
+   ├── Load containers from database
+   ├── Verify each container exists in Docker
+   ├── Reconcile (remove stale DB entries, destroy orphaned containers)
+   ├── Restore containers to appropriate pools
+   └── Restore affinity reservations (filter expired)
 
-4. Recover sync jobs
+5. Recover sync jobs
    ├── For each claimed container
-   │   └── Start periodic sync jobs from SyncRegistry
-   └── Execute catch-up syncs if needed
+   │   └── Start periodic sync jobs based on WorkloadSpec.sync
+   └── Execute catch-up syncs if last_sync_at exceeds interval
 
-5. Start file watchers (optional)
-   ├── Watch config/workloads/ for changes
-   └── Watch config/sync/ for changes
+6. Start file watchers (optional)
+   └── Watch config/workloads/ for changes
 
-6. Start API server
+7. Start API server
    └── Accept new requests
 ```
 
@@ -288,77 +337,118 @@ async function gracefulShutdown(
 
 ## Tasks
 
-### YAML File Registry Durability
+### Phase 1: Database Layer
 
-- [ ] 4.1 Implement atomic YAML write utility (`atomicWriteYaml`)
-- [ ] 4.2 Add fsync for directory after rename (Linux durability)
-- [ ] 4.3 Implement backup-on-modify for YAML files
-- [ ] 4.4 Add JSON Schema validation on YAML load
-- [ ] 4.5 Handle corrupted YAML files gracefully (log error, skip, continue)
-- [ ] 4.6 Implement file watcher for external config changes (optional)
+- [ ] 1.1 Create `packages/db/` package with SQLite wrapper using `bun:sqlite`
+- [ ] 1.2 Implement schema migrations system
+- [ ] 1.3 Create initial schema (containers, affinity_reservations, sync_status, sync_errors)
+- [ ] 1.4 Add repository classes: `ContainerRepository`, `AffinityRepository`, `SyncStatusRepository`
+- [ ] 1.5 Add database initialization to API startup
 
-### Container State Recovery
+### Phase 2: Container Persistence
 
-- [ ] 4.7 Add `restoreClaimed` and `restoreAvailable` methods to ContainerPool
-- [ ] 4.8 Implement Docker state recovery in ContainerManager
-- [ ] 4.9 Handle orphaned containers (pool no longer configured)
+- [ ] 2.1 Update `ContainerManager.createContainer()` to insert into database
+- [ ] 2.2 Update `ContainerManager.assignToTenant()` to update database
+- [ ] 2.3 Update `ContainerManager.releaseContainer()` to update database
+- [ ] 2.4 Update `ContainerManager.destroyContainer()` to delete from database
+- [ ] 2.5 Add `ContainerPool.restoreContainer()` method for recovery
 
-### Sync Job Recovery
+### Phase 3: Affinity Persistence
 
-- [ ] 4.10 Add `startPeriodicSync` as public method (currently private)
-- [ ] 4.11 Implement sync job recovery function
-- [ ] 4.12 Add catch-up sync logic (sync immediately if interval exceeded)
+- [ ] 3.1 Update `ContainerPool` to persist affinity reservations to database
+- [ ] 3.2 Add `AffinityRepository.cleanupExpired()` for startup
+- [ ] 3.3 Add `ContainerPool.restoreAffinityReservation()` method
 
-### Startup & Shutdown
+### Phase 4: Sync Status Persistence
 
-- [ ] 4.13 Create startup orchestration that runs recovery sequence
-- [ ] 4.14 Implement graceful shutdown handler
-- [ ] 4.15 Final sync on shutdown for all claimed containers
+- [ ] 4.1 Update `SyncStatusTracker` to persist to database
+- [ ] 4.2 Add `SyncStatusRepository.getLastSyncTime()` for catch-up logic
+- [ ] 4.3 Implement catch-up sync (sync immediately if interval exceeded)
 
-### Optional Persistence
+### Phase 5: Recovery & Startup
 
-- [ ] 4.16 (Optional) Add SQLite persistence for sync status
-- [ ] 4.17 Write integration tests for recovery scenarios
+- [ ] 5.1 Implement `recoverFromDatabase()` function
+- [ ] 5.2 Add Docker reconciliation (verify containers still exist)
+- [ ] 5.3 Implement sync job recovery
+- [ ] 5.4 Create startup orchestration that runs recovery sequence
+- [ ] 5.5 Implement graceful shutdown handler
+- [ ] 5.6 Final sync on shutdown for all claimed containers
+
+### Phase 6: Testing
+
+- [ ] 6.1 Unit tests for repository classes
+- [ ] 6.2 Integration tests for recovery scenarios
+- [ ] 6.3 Test crash recovery (kill process, restart, verify state)
 
 ## Failure Scenarios
 
-### YAML File Corruption
+### Database Failures
 
-| Scenario | Detection | Recovery |
-|----------|-----------|----------|
-| Partial write (crash mid-write) | Temp file exists without main file | Delete orphaned `.tmp.*` files on startup |
-| Invalid YAML syntax | Parse error on load | Log error, skip file, continue startup |
-| Schema validation failure | Validation error on load | Log error, skip file, continue startup |
-| File deleted externally | File watcher detects removal | Remove from in-memory registry |
+| Scenario                     | Detection                  | Recovery                                      |
+|------------------------------|----------------------------|-----------------------------------------------|
+| Database file missing        | Open fails                 | Create new database, lose state (cold start)  |
+| Database corrupted           | SQLite integrity check     | Restore from backup or start fresh            |
+| Crash during transaction     | WAL recovery               | Automatic rollback on next open               |
+| Disk full                    | Write fails                | Return 500 error, operation not committed     |
 
-### API Write Failures
+### Docker/Database Inconsistency
 
-| Scenario | Behavior |
-|----------|----------|
-| Disk full | Return 500 error, do not update in-memory state |
-| Permission denied | Return 500 error, do not update in-memory state |
-| Concurrent writes to same spec | Last write wins (file-level atomicity) |
+| Scenario                     | Detection                  | Recovery                                      |
+|------------------------------|----------------------------|-----------------------------------------------|
+| Container in DB, not Docker  | Reconciliation on startup  | Delete from database                          |
+| Container in Docker, not DB  | Reconciliation on startup  | Destroy container (or add to DB if labeled)   |
+| Tenant claimed, Docker dead  | Health check failure       | Mark container unhealthy, reassign tenant     |
 
-### Recovery from Backup
+### YAML File Issues
 
-If a YAML file is corrupted:
+| Scenario                     | Detection                  | Recovery                                      |
+|------------------------------|----------------------------|-----------------------------------------------|
+| Invalid YAML syntax          | Parse error on load        | Log error, skip file, continue startup        |
+| Schema validation failure    | Validation error on load   | Log error, skip file, continue startup        |
+| File deleted externally      | File watcher               | Remove workload, drain associated pool        |
+
+### Recovery Commands
+
 ```bash
-# Check backup exists
-ls config/sync/my-spec.yaml.bak
+# Check database integrity
+sqlite3 data/boilerhouse.db "PRAGMA integrity_check;"
 
-# Restore from backup
-cp config/sync/my-spec.yaml.bak config/sync/my-spec.yaml
+# Backup database
+cp data/boilerhouse.db data/boilerhouse.db.bak
 
-# Restart or trigger reload
-kill -HUP $BOILERHOUSE_PID
+# View current containers
+sqlite3 data/boilerhouse.db "SELECT container_id, pool_id, tenant_id, status FROM containers;"
+
+# Clear all state (fresh start)
+rm data/boilerhouse.db
+# Boilerhouse will create new database on startup
+# Running containers will be destroyed during reconciliation
 ```
 
 ## Notes
 
-- **YAML files are the source of truth** for WorkloadSpecs and SyncSpecs
-- **Docker labels are the source of truth** for container assignments
-- Periodic sync jobs are stateless - they can be recreated from container assignments + SyncRegistry
-- Sync status (errors, last sync time) is nice-to-have but not critical for recovery
-- Atomic writes with fsync ensure YAML changes survive power loss
-- `.bak` files provide single-level rollback for manual recovery
-- Config directories should be on durable storage (not tmpfs)
+### Sources of Truth
+
+| Data                    | Source of Truth | Backup/Recovery                              |
+|-------------------------|-----------------|----------------------------------------------|
+| WorkloadSpecs           | YAML files      | Version control, reload from disk            |
+| Container state         | SQLite          | Reconcile with Docker on startup             |
+| Tenant assignments      | SQLite          | Lost if DB lost, containers reassigned       |
+| Affinity reservations   | SQLite          | Expires naturally, non-critical              |
+| Sync status/errors      | SQLite          | Nice-to-have, not critical                   |
+| Actual containers       | Docker          | Source for reconciliation                    |
+
+### Design Decisions
+
+- **SQLite is the primary state store** for runtime data (containers, assignments, affinity)
+- **YAML files are the config store** for workload definitions (version-controlled)
+- **Docker is verified on startup** - database state is reconciled with Docker reality
+- **WAL mode** ensures crash safety without explicit fsync on every write
+- **Affinity has TTL** - reservations expire, so losing them is recoverable
+- **Sync status is reconstructable** - worst case, we do a full sync on recovery
+
+### Future Considerations
+
+- **Multi-node**: SQLite works for single-node. Multi-node would need PostgreSQL or etcd.
+- **Backup strategy**: Consider periodic SQLite backups to object storage.
+- **Metrics**: Add Prometheus metrics for recovery events, reconciliation counts.

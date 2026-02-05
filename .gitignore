@@ -36,3 +36,9 @@ logs/
 secrets/
 *.pem
 *.key
+
+# SQLite databases
+data/
+*.db
+*.db-wal
+*.db-shm

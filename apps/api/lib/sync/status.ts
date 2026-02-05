@@ -6,6 +6,7 @@
  */
 
 import type { SyncId, SyncStatus, TenantId } from '@boilerhouse/core'
+import type { SyncStatusRepository } from '@boilerhouse/db'
 
 /**
  * Represents an error that occurred during a sync operation.
@@ -72,9 +73,14 @@ export interface SyncStatusEntry {
 
 export class SyncStatusTracker {
   private statuses: Map<string, SyncStatusEntry> = new Map()
+  private syncStatusRepo?: SyncStatusRepository
 
   /** Maximum number of errors to retain per tenant/sync */
   private maxErrors = 10
+
+  constructor(syncStatusRepo?: SyncStatusRepository) {
+    this.syncStatusRepo = syncStatusRepo
+  }
 
   /**
    * Create a unique key for tenant + sync spec combination.
@@ -146,6 +152,15 @@ export class SyncStatusTracker {
     const entry = this.getOrCreate(tenantId, syncId)
     entry.state = 'syncing'
     entry.pendingCount++
+
+    this.syncStatusRepo?.save({
+      tenantId,
+      syncId,
+      lastSyncAt: entry.lastSyncAt ?? null,
+      pendingCount: entry.pendingCount,
+      state: entry.state,
+      updatedAt: new Date(),
+    })
   }
 
   /**
@@ -160,7 +175,17 @@ export class SyncStatusTracker {
     // Clear errors on successful sync
     if (entry.state === 'idle') {
       entry.errors = []
+      this.syncStatusRepo?.clearErrors(tenantId, syncId)
     }
+
+    this.syncStatusRepo?.save({
+      tenantId,
+      syncId,
+      lastSyncAt: entry.lastSyncAt,
+      pendingCount: entry.pendingCount,
+      state: entry.state,
+      updatedAt: new Date(),
+    })
   }
 
   /**
@@ -181,6 +206,16 @@ export class SyncStatusTracker {
     if (entry.errors.length > this.maxErrors) {
       entry.errors = entry.errors.slice(-this.maxErrors)
     }
+
+    this.syncStatusRepo?.save({
+      tenantId,
+      syncId,
+      lastSyncAt: entry.lastSyncAt ?? null,
+      pendingCount: entry.pendingCount,
+      state: entry.state,
+      updatedAt: new Date(),
+    })
+    this.syncStatusRepo?.addError(tenantId, syncId, error, mapping)
   }
 
   /**
@@ -196,6 +231,7 @@ export class SyncStatusTracker {
     for (const key of keysToDelete) {
       this.statuses.delete(key)
     }
+    this.syncStatusRepo?.deleteByTenant(tenantId)
   }
 
   /**
