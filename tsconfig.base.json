@@ -12,7 +12,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "lib": ["ESNext"],
-    "types": ["bun"],
+    "types": ["bun", "node"],
     "composite": false,
     "incremental": false,
     "baseUrl": ".",

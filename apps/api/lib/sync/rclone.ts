@@ -5,7 +5,7 @@
  * Supports upload, download, and bidirectional sync with any rclone-supported sink.
  */
 
-import { spawn } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SinkConfig, SyncMapping, TenantId } from '@boilerhouse/core'
@@ -234,6 +234,48 @@ export class RcloneSyncExecutor {
     // Ensure local directory exists (bisync requires it)
     await mkdir(localPath, { recursive: true })
 
+    const result = await this.executeBisyncCommand(
+      localPath,
+      remotePath,
+      mapping,
+      sink,
+      startTime,
+      initialSync,
+    )
+
+    // If bisync failed due to corrupted state and we didn't already use --resync, retry with --resync
+    if (
+      !result.success &&
+      !initialSync &&
+      result.errors?.some((e) => e.includes('Must run --resync to recover'))
+    ) {
+      if (this.config.verbose) {
+        console.log('[rclone] Bisync state corrupted, retrying with --resync')
+      }
+      return this.executeBisyncCommand(
+        localPath,
+        remotePath,
+        mapping,
+        sink,
+        Date.now(),
+        true, // force resync
+      )
+    }
+
+    return result
+  }
+
+  /**
+   * Execute the actual bisync command.
+   */
+  private async executeBisyncCommand(
+    localPath: string,
+    remotePath: string,
+    mapping: SyncMapping,
+    sink: SinkConfig,
+    startTime: number,
+    useResync: boolean,
+  ): Promise<SyncResult> {
     const adapter = this.getAdapter(sink)
     const args: string[] = ['bisync', localPath, remotePath]
 
@@ -250,8 +292,7 @@ export class RcloneSyncExecutor {
     args.push('--create-empty-src-dirs')
 
     // --resync rebuilds bisync tracking state from scratch
-    // Only needed on first sync for a new container
-    if (initialSync) {
+    if (useResync) {
       args.push('--resync')
     }
 
@@ -276,7 +317,7 @@ export class RcloneSyncExecutor {
       let stdout = ''
       let stderr = ''
 
-      const proc = spawn(this.config.rclonePath, args, {
+      const proc: ChildProcess = spawn(this.config.rclonePath, args, {
         timeout: this.config.defaultTimeoutMs,
         env: {
           ...process.env,
@@ -293,7 +334,7 @@ export class RcloneSyncExecutor {
         stderr += data.toString()
       })
 
-      proc.on('close', (code) => {
+      proc.on('close', (code: number | null) => {
         const duration = Date.now() - startTime
         const combinedOutput = stdout + stderr
 
@@ -327,7 +368,7 @@ export class RcloneSyncExecutor {
         }
       })
 
-      proc.on('error', (err) => {
+      proc.on('error', (err: Error) => {
         resolve({
           success: false,
           errors: [err.message],
@@ -392,15 +433,15 @@ export class RcloneSyncExecutor {
    */
   async isAvailable(): Promise<boolean> {
     return new Promise((resolve) => {
-      const proc = spawn(this.config.rclonePath, ['version'], {
+      const proc: ChildProcess = spawn(this.config.rclonePath, ['version'], {
         timeout: 5000,
       })
 
-      proc.on('close', (code) => {
+      proc.on('close', (code: number | null) => {
         resolve(code === 0)
       })
 
-      proc.on('error', () => {
+      proc.on('error', (_err: Error) => {
         resolve(false)
       })
     })
@@ -413,7 +454,7 @@ export class RcloneSyncExecutor {
     return new Promise((resolve) => {
       let stdout = ''
 
-      const proc = spawn(this.config.rclonePath, ['version'], {
+      const proc: ChildProcess = spawn(this.config.rclonePath, ['version'], {
         timeout: 5000,
       })
 
@@ -421,7 +462,7 @@ export class RcloneSyncExecutor {
         stdout += data.toString()
       })
 
-      proc.on('close', (code) => {
+      proc.on('close', (code: number | null) => {
         if (code === 0) {
           const versionMatch = stdout.match(/rclone\s+v?([0-9.]+)/)
           resolve(versionMatch ? versionMatch[1] : stdout.split('\n')[0])
@@ -430,7 +471,7 @@ export class RcloneSyncExecutor {
         }
       })
 
-      proc.on('error', () => {
+      proc.on('error', (_err: Error) => {
         resolve(null)
       })
     })
