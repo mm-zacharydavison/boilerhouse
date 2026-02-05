@@ -136,6 +136,11 @@ export class DockerRuntime implements ContainerRuntime {
     await this.removeContainer(id)
   }
 
+  async restartContainer(id: RuntimeContainerId, timeoutSeconds = 10): Promise<void> {
+    const container = this.docker.getContainer(id)
+    await container.restart({ t: timeoutSeconds })
+  }
+
   async getContainer(id: RuntimeContainerId): Promise<ContainerInfo | null> {
     try {
       const container = this.docker.getContainer(id)

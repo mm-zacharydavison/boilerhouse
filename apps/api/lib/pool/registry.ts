@@ -14,8 +14,8 @@ import type {
   WorkloadId,
   WorkloadSpec,
 } from '@boilerhouse/core'
-import { logPoolCreated, logPoolScaled, type ActivityLog, getActivityLog } from '../activity'
-import { ContainerManager } from '../container/manager'
+import { type ActivityLog, getActivityLog, logPoolCreated, logPoolScaled } from '../activity'
+import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
 import type { WorkloadRegistry } from '../workload'
 
@@ -76,6 +76,14 @@ export interface PoolInfo {
    * @example '2024-01-15T10:00:00.000Z'
    */
   createdAt: string
+
+  /**
+   * Last error that occurred in this pool (if any).
+   */
+  lastError?: {
+    message: string
+    timestamp: string
+  }
 }
 
 /**
@@ -160,12 +168,16 @@ export class PoolRegistry {
   /**
    * Create a new pool for a workload
    */
-  createPool(poolId: PoolId, workloadId: WorkloadId, config?: Partial<{
-    minSize: number
-    maxSize: number
-    idleTimeoutMs: number
-    networkName: string
-  }>): ContainerPool {
+  createPool(
+    poolId: PoolId,
+    workloadId: WorkloadId,
+    config?: Partial<{
+      minSize: number
+      maxSize: number
+      idleTimeoutMs: number
+      networkName: string
+    }>,
+  ): ContainerPool {
     if (this.pools.has(poolId)) {
       throw new Error(`Pool ${poolId} already exists`)
     }
@@ -230,6 +242,8 @@ export class PoolRegistry {
       status = 'error'
     }
 
+    const lastError = pool.getLastError()
+
     return {
       id: poolId,
       workloadId: workload.id,
@@ -242,6 +256,9 @@ export class PoolRegistry {
       idleCount: stats.available,
       status,
       createdAt: createdAt.toISOString(),
+      lastError: lastError
+        ? { message: lastError.message, timestamp: lastError.timestamp.toISOString() }
+        : undefined,
     }
   }
 
@@ -300,9 +317,7 @@ export class PoolRegistry {
    * List all containers with info
    */
   listContainersInfo(poolId?: PoolId): ContainerInfo[] {
-    const containers = poolId
-      ? this.getContainersForPool(poolId)
-      : this.getAllContainers()
+    const containers = poolId ? this.getContainersForPool(poolId) : this.getAllContainers()
 
     const result: ContainerInfo[] = []
     for (const container of containers) {
@@ -310,6 +325,19 @@ export class PoolRegistry {
       if (info) result.push(info)
     }
     return result
+  }
+
+  /**
+   * Destroy a container by ID
+   */
+  async destroyContainer(containerId: ContainerId): Promise<boolean> {
+    const container = this.manager.getContainer(containerId)
+    if (!container) return false
+
+    const pool = this.pools.get(container.poolId)
+    if (!pool) return false
+
+    return pool.destroyContainer(containerId)
   }
 
   /**

@@ -7,6 +7,7 @@ import type {
   PoolMetrics,
   SyncJobInfo,
   TenantInfo,
+  WorkloadInfo,
 } from '@/api/types'
 import type { ContainerId, PoolId, TenantId } from '@boilerhouse/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -18,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 export const queryKeys = {
   stats: ['stats'] as const,
   activity: (limit?: number) => ['activity', limit] as const,
+  workloads: ['workloads'] as const,
   pools: ['pools'] as const,
   pool: (id: PoolId) => ['pools', id] as const,
   poolMetrics: (id: PoolId) => ['pools', id, 'metrics'] as const,
@@ -45,6 +47,17 @@ export function useActivity(limit = 50) {
   return useQuery<ActivityEvent[]>({
     queryKey: queryKeys.activity(limit),
     queryFn: () => api.getActivity(limit),
+  })
+}
+
+// =============================================================================
+// Workload Queries
+// =============================================================================
+
+export function useWorkloads() {
+  return useQuery<WorkloadInfo[]>({
+    queryKey: queryKeys.workloads,
+    queryFn: api.getWorkloads,
   })
 }
 
@@ -83,6 +96,29 @@ export function useScalePool() {
     onSuccess: (_, { poolId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.pool(poolId) })
       queryClient.invalidateQueries({ queryKey: queryKeys.pools })
+      queryClient.invalidateQueries({ queryKey: queryKeys.containers(poolId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.stats })
+    },
+  })
+}
+
+export function useCreatePool() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      poolId,
+      workloadId,
+      minSize,
+      maxSize,
+    }: {
+      poolId: string
+      workloadId: string
+      minSize?: number
+      maxSize?: number
+    }) => api.createPool(poolId, workloadId, { minSize, maxSize }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.pools })
+      queryClient.invalidateQueries({ queryKey: queryKeys.stats })
     },
   })
 }
@@ -111,8 +147,9 @@ export function useDestroyContainer() {
   return useMutation({
     mutationFn: (containerId: ContainerId) => api.destroyContainer(containerId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['containers'] })
-      queryClient.invalidateQueries({ queryKey: queryKeys.pools })
+      // Invalidate all container and pool queries
+      queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === 'containers' })
+      queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === 'pools' })
       queryClient.invalidateQueries({ queryKey: queryKeys.stats })
     },
   })

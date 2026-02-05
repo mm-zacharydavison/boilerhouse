@@ -14,7 +14,6 @@ import {
 } from '@/components/ui'
 import { useSyncHistory, useSyncJobs } from '@/hooks/useApi'
 import { formatBytes, formatRelativeTime } from '@/lib/utils'
-import { mockSyncJobs } from '@/mocks/data'
 import { Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -63,12 +62,11 @@ export function SyncPage() {
 
   // Combine running jobs with history for display
   const syncJobs = [...(runningJobsData ?? []), ...(historyData ?? [])]
-  const fallbackJobs = syncJobs.length > 0 ? syncJobs : mockSyncJobs
   const isLoading = jobsLoading || historyLoading
 
-  const runningJobs = fallbackJobs.filter((j) => j.status === 'running')
-  const completedJobs = fallbackJobs.filter((j) => j.status === 'completed')
-  const failedJobs = fallbackJobs.filter((j) => j.status === 'failed')
+  const runningJobs = syncJobs.filter((j) => j.status === 'running')
+  const completedJobs = syncJobs.filter((j) => j.status === 'completed')
+  const failedJobs = syncJobs.filter((j) => j.status === 'failed')
 
   if (isLoading && syncJobs.length === 0) {
     return (
@@ -214,6 +212,13 @@ export function SyncPage() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {syncJobs.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
+                      No sync history yet
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </CardContent>

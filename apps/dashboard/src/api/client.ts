@@ -12,6 +12,7 @@ import type {
   SyncJobInfo,
   SyncSpecInfo,
   TenantInfo,
+  WorkloadInfo,
 } from './types'
 
 const API_BASE = '/api/v1'
@@ -56,6 +57,14 @@ export async function getActivity(limit = 50): Promise<ActivityEvent[]> {
 }
 
 // =============================================================================
+// Workloads
+// =============================================================================
+
+export async function getWorkloads(): Promise<WorkloadInfo[]> {
+  return fetchApi<WorkloadInfo[]>('/workloads')
+}
+
+// =============================================================================
 // Pools
 // =============================================================================
 
@@ -75,6 +84,17 @@ export async function scalePool(poolId: PoolId, targetSize: number): Promise<voi
   await fetchApi(`/pools/${poolId}/scale`, {
     method: 'POST',
     body: JSON.stringify({ targetSize }),
+  })
+}
+
+export async function createPool(
+  poolId: string,
+  workloadId: string,
+  options?: { minSize?: number; maxSize?: number },
+): Promise<PoolInfo> {
+  return fetchApi<PoolInfo>('/pools', {
+    method: 'POST',
+    body: JSON.stringify({ poolId, workloadId, ...options }),
   })
 }
 
@@ -160,10 +180,12 @@ export async function getSyncHistory(tenantId?: TenantId, limit = 50): Promise<S
 export const api = {
   getStats,
   getActivity,
+  getWorkloads,
   getPools,
   getPool,
   getPoolMetrics,
   scalePool,
+  createPool,
   getContainers,
   getContainer,
   destroyContainer,

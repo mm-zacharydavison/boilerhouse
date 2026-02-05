@@ -7,6 +7,7 @@
 import { cors } from '@elysiajs/cors'
 import { Elysia } from 'elysia'
 import type { ActivityLog } from '../lib/activity'
+import type { ContainerManager } from '../lib/container'
 import type { PoolRegistry } from '../lib/pool/registry'
 import type { SyncCoordinator } from '../lib/sync'
 import type { SyncStatusTracker } from '../lib/sync/status'
@@ -26,6 +27,7 @@ import {
 export interface ServerDependencies {
   poolRegistry: PoolRegistry
   workloadRegistry: WorkloadRegistry
+  containerManager: ContainerManager
   syncCoordinator: SyncCoordinator
   syncStatusTracker: SyncStatusTracker
   activityLog: ActivityLog
@@ -35,7 +37,14 @@ export interface ServerDependencies {
  * Create the Elysia API server
  */
 export function createServer(deps: ServerDependencies) {
-  const { poolRegistry, workloadRegistry, syncCoordinator, syncStatusTracker, activityLog } = deps
+  const {
+    poolRegistry,
+    workloadRegistry,
+    containerManager,
+    syncCoordinator,
+    syncStatusTracker,
+    activityLog,
+  } = deps
 
   return new Elysia()
     .use(cors())
@@ -46,6 +55,7 @@ export function createServer(deps: ServerDependencies) {
     .use(
       tenantsController({
         poolRegistry,
+        containerManager,
         syncCoordinator,
         syncStatusTracker,
         activityLog,

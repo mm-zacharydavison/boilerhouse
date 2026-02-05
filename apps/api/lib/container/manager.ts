@@ -5,7 +5,8 @@
  * Uses the ContainerRuntime interface to support multiple backends (Docker, Kubernetes).
  */
 
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   type ContainerId,
@@ -176,6 +177,7 @@ export class ContainerManager {
     const spec: ContainerSpec = {
       name: containerName,
       image: workload.image,
+      command: workload.command,
       env,
       volumes,
       tmpfs: [
@@ -260,7 +262,7 @@ export class ContainerManager {
 
   /**
    * Release a container from a tenant and prepare for reuse.
-   * Wipes state and secrets directories for tenant isolation.
+   * Wipes state, secrets, and bisync cache for tenant isolation.
    */
   async releaseContainer(containerId: ContainerId): Promise<void> {
     const container = this.containers.get(containerId)
@@ -270,14 +272,30 @@ export class ContainerManager {
 
     container.status = 'stopping'
 
-    // Wipe state and secrets directories for tenant isolation
+    // Wipe state, secrets, and bisync cache for tenant isolation
     await Promise.all([
       this.wipeDirectory(container.stateDir),
       this.wipeDirectory(container.secretsDir),
+      this.wipeBisyncCache(container.stateDir),
     ])
 
     container.tenantId = null
     container.status = 'idle'
+    container.lastActivity = new Date()
+  }
+
+  /**
+   * Restart a container to get a fresh process.
+   * Call this after sync to ensure the new tenant gets a clean process with their data.
+   */
+  async restartContainer(containerId: ContainerId): Promise<void> {
+    const container = this.containers.get(containerId)
+    if (!container) {
+      throw new Error(`Container ${containerId} not found`)
+    }
+
+    const containerName = `container-${containerId}`
+    await this.runtime.restartContainer(containerName, 10)
     container.lastActivity = new Date()
   }
 
@@ -414,6 +432,28 @@ export class ContainerManager {
     } catch {
       // Directory might not exist, that's fine
       await mkdir(dir, { recursive: true })
+    }
+  }
+
+  /**
+   * Wipe rclone bisync cache files for a container.
+   * Bisync stores tracking files in ~/.cache/rclone/bisync/ with paths encoded in filenames.
+   */
+  private async wipeBisyncCache(stateDir: string): Promise<void> {
+    const bisyncCacheDir = join(homedir(), '.cache', 'rclone', 'bisync')
+
+    try {
+      const files = await readdir(bisyncCacheDir)
+      // Convert stateDir path to the format used in bisync filenames (slashes become underscores)
+      const stateDirPattern = stateDir.replace(/\//g, '_')
+
+      const deletions = files
+        .filter((file) => file.includes(stateDirPattern))
+        .map((file) => rm(join(bisyncCacheDir, file), { force: true }))
+
+      await Promise.all(deletions)
+    } catch {
+      // Cache directory might not exist, that's fine
     }
   }
 }

@@ -4,8 +4,8 @@
  * Endpoints for tenant operations: listing, claiming, releasing, and syncing.
  */
 
-import { Elysia, t } from 'elysia'
 import type { TenantId } from '@boilerhouse/core'
+import { Elysia, t } from 'elysia'
 import {
   type ActivityLog,
   logContainerClaimed,
@@ -14,19 +14,21 @@ import {
   logSyncFailed,
   logSyncStarted,
 } from '../../lib/activity'
+import type { ContainerManager } from '../../lib/container'
 import type { PoolRegistry } from '../../lib/pool/registry'
 import type { SyncCoordinator } from '../../lib/sync'
 import type { SyncStatusTracker } from '../../lib/sync/status'
 
 export interface TenantsControllerDeps {
   poolRegistry: PoolRegistry
+  containerManager: ContainerManager
   syncCoordinator: SyncCoordinator
   syncStatusTracker: SyncStatusTracker
   activityLog: ActivityLog
 }
 
 export function tenantsController(deps: TenantsControllerDeps) {
-  const { poolRegistry, syncCoordinator, syncStatusTracker, activityLog } = deps
+  const { poolRegistry, containerManager, syncCoordinator, syncStatusTracker, activityLog } = deps
 
   return new Elysia({ prefix: '/api/v1/tenants' })
     .get('/', () => {
@@ -148,6 +150,9 @@ export function tenantsController(deps: TenantsControllerDeps) {
               logSyncFailed(params.id, errors.join('; '), activityLog)
             }
           }
+
+          // Restart container to get fresh process with synced data
+          await containerManager.restartContainer(container.containerId)
 
           return {
             containerId: container.containerId,

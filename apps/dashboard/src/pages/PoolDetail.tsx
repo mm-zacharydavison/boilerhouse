@@ -13,9 +13,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import {
+  queryKeys,
+  useContainers,
+  useDestroyContainer,
+  usePool,
+  useScalePool,
+} from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
-import { mockContainers, mockPools } from '@/mocks/data'
-import { ArrowLeft, Minus, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import type { PoolId } from '@boilerhouse/core'
+import { useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 
 function ContainerStatusBadge({ status }: { status: string }) {
@@ -33,10 +41,46 @@ function ContainerStatusBadge({ status }: { status: string }) {
 
 export function PoolDetailPage() {
   const { poolId } = useParams<{ poolId: string }>()
-  const pool = mockPools.find((p) => p.id === poolId)
-  const containers = mockContainers.filter((c) => c.poolId === poolId)
+  const queryClient = useQueryClient()
+  const { data: pool, isLoading: poolLoading, error: poolError } = usePool(poolId as PoolId)
+  const { data: containers = [] } = useContainers(poolId as PoolId)
+  const scalePool = useScalePool()
+  const destroyContainer = useDestroyContainer()
 
-  if (!pool) {
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.pool(poolId as PoolId) })
+    queryClient.invalidateQueries({ queryKey: queryKeys.containers(poolId as PoolId) })
+  }
+
+  const handleScaleUp = () => {
+    if (pool && pool.currentSize < pool.maxSize) {
+      scalePool.mutate({ poolId: poolId as PoolId, targetSize: pool.currentSize + 1 })
+    }
+  }
+
+  const handleScaleDown = () => {
+    if (pool && pool.currentSize > pool.minSize) {
+      scalePool.mutate({ poolId: poolId as PoolId, targetSize: pool.currentSize - 1 })
+    }
+  }
+
+  const handleDeleteContainer = (containerId: string) => {
+    if (confirm('Are you sure you want to delete this container?')) {
+      destroyContainer.mutate(containerId)
+    }
+  }
+
+  if (poolLoading) {
+    return (
+      <Layout title="Loading...">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
+
+  if (poolError || !pool) {
     return (
       <Layout title="Pool Not Found">
         <div className="flex flex-col items-center justify-center py-12">
@@ -62,11 +106,29 @@ export function PoolDetailPage() {
             <h2 className="text-2xl font-bold">{pool.id}</h2>
             <p className="text-muted-foreground">{pool.workloadName}</p>
           </div>
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
         </div>
+
+        {/* Error Alert */}
+        {pool.lastError && (
+          <Card className="border-destructive bg-destructive/10">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                Pool Error
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="font-mono text-sm">{pool.lastError.message}</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Occurred at: {new Date(pool.lastError.timestamp).toLocaleString()}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Pool Stats */}
         <div className="grid gap-4 md:grid-cols-4">
@@ -124,11 +186,21 @@ export function PoolDetailPage() {
                 Current size: {pool.currentSize}
               </span>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon" disabled={pool.currentSize <= pool.minSize}>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={pool.currentSize <= pool.minSize || scalePool.isPending}
+                  onClick={handleScaleDown}
+                >
                   <Minus className="h-4 w-4" />
                 </Button>
                 <span className="w-12 text-center font-medium">{pool.currentSize}</span>
-                <Button variant="outline" size="icon" disabled={pool.currentSize >= pool.maxSize}>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={pool.currentSize >= pool.maxSize || scalePool.isPending}
+                  onClick={handleScaleUp}
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
@@ -189,7 +261,8 @@ export function PoolDetailPage() {
                         variant="ghost"
                         size="icon"
                         className="text-destructive hover:text-destructive"
-                        disabled={container.status === 'assigned'}
+                        disabled={container.status === 'assigned' || destroyContainer.isPending}
+                        onClick={() => handleDeleteContainer(container.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>

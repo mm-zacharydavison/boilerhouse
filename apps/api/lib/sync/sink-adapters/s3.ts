@@ -15,7 +15,8 @@ export class S3SinkAdapter implements SinkAdapter {
 
   buildRemotePath(sink: SinkConfig, tenantId: TenantId, sinkPath: string): string {
     const s3Sink = sink as S3SinkConfig
-    const prefix = this.interpolatePath(s3Sink.prefix, tenantId)
+    const prefixTemplate = s3Sink.prefix ?? 'tenants/${tenantId}'
+    const prefix = this.interpolatePath(prefixTemplate, tenantId)
     const fullPath = this.joinPath(prefix, sinkPath)
     return `:s3:${s3Sink.bucket}/${fullPath}`
   }
@@ -24,7 +25,14 @@ export class S3SinkAdapter implements SinkAdapter {
     const s3Sink = sink as S3SinkConfig
     const args: string[] = []
 
-    args.push('--s3-provider', 'AWS')
+    // Use 'Other' provider for S3-compatible services with custom endpoint
+    if (s3Sink.endpoint) {
+      args.push('--s3-provider', 'Other')
+      args.push('--s3-endpoint', s3Sink.endpoint)
+    } else {
+      args.push('--s3-provider', 'AWS')
+    }
+
     args.push('--s3-region', s3Sink.region)
 
     if (s3Sink.accessKeyId) {

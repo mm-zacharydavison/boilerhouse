@@ -327,6 +327,7 @@ export const workloadSpecSchema = z.object({
 
   // Container configuration (docker-compose compatible field names)
   image: z.string().describe('Docker image to use for this workload'),
+  command: z.array(z.string()).optional().describe('Command to run (overrides image entrypoint)'),
   volumes: volumesSchema.default({}).describe('Volume mount configuration'),
   environment: z.record(z.string(), z.string()).default({}).describe('Environment variables'),
   healthcheck: healthCheckConfigSchema.describe('Health check configuration'),

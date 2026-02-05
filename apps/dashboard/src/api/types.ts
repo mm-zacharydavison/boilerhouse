@@ -30,6 +30,16 @@ export interface DashboardStats {
 }
 
 // =============================================================================
+// Workload Types
+// =============================================================================
+
+export interface WorkloadInfo {
+  id: WorkloadId
+  name: string
+  image: string
+}
+
+// =============================================================================
 // Pool Types
 // =============================================================================
 
@@ -45,6 +55,10 @@ export interface PoolInfo {
   idleCount: number
   status: 'healthy' | 'degraded' | 'error'
   createdAt: string
+  lastError?: {
+    message: string
+    timestamp: string
+  }
 }
 
 export interface PoolMetrics {
@@ -83,7 +97,7 @@ export interface TenantInfo {
   id: TenantId
   poolId: PoolId | null
   containerId: ContainerId | null
-  status: 'active' | 'pending' | 'releasing' | 'idle'
+  status: 'active' | 'warm' | 'pending' | 'provisioning' | 'releasing' | 'idle' | 'cold'
   assignedAt: string | null
   lastActivityAt: string | null
   syncStatus: SyncStatus | null

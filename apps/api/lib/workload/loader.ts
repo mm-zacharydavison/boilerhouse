@@ -12,6 +12,21 @@ import {
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 /**
+ * Interpolate environment variables in a string
+ * Supports ${VAR} syntax, only replaces if the env var exists in process.env
+ * This preserves runtime variables like ${tenantId} that should be interpolated later
+ */
+function interpolateEnvVars(content: string): string {
+  return content.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+    // Only replace if the env var exists, otherwise keep the original ${VAR} syntax
+    if (varName in process.env) {
+      return process.env[varName] ?? ''
+    }
+    return match
+  })
+}
+
+/**
  * Workload validation error
  */
 export class WorkloadValidationError extends Error {
@@ -27,10 +42,12 @@ export class WorkloadValidationError extends Error {
 
 /**
  * Load and validate a single workload YAML file
+ * Environment variables in ${VAR} format are interpolated from process.env
  */
 export function loadWorkloadFile(filePath: string): WorkloadSpec {
   const content = readFileSync(filePath, 'utf-8')
-  const rawYaml = parseYaml(content)
+  const interpolated = interpolateEnvVars(content)
+  const rawYaml = parseYaml(interpolated)
 
   const result = safeParseWorkloadSpec(rawYaml)
   if (!result.success) {

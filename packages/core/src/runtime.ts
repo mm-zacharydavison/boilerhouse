@@ -383,6 +383,14 @@ export interface ContainerRuntime {
     id: RuntimeContainerId,
     command: string[],
   ): Promise<{ exitCode: number; stdout: string; stderr: string }>
+
+  /**
+   * Restart a container (stop + start).
+   * This re-runs the entrypoint with a fresh process.
+   * @param id Container ID
+   * @param timeoutSeconds Seconds to wait for stop before force kill
+   */
+  restartContainer(id: RuntimeContainerId, timeoutSeconds?: number): Promise<void>
 }
 
 /**

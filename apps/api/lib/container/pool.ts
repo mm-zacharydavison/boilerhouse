@@ -45,11 +45,19 @@ export interface PoolStats {
   max: number
 }
 
+export interface PoolError {
+  message: string
+  timestamp: Date
+}
+
 export class ContainerPool {
   private manager: ContainerManager
   private pool: Pool<PoolContainer>
   private poolConfig: ContainerPoolConfig
   private assignedContainers: Map<TenantId, PoolContainer> = new Map()
+  /** Track all containers by ID so we can destroy specific ones */
+  private allContainers: Map<string, PoolContainer> = new Map()
+  private _lastError: PoolError | null = null
 
   constructor(
     manager: ContainerManager,
@@ -70,18 +78,30 @@ export class ContainerPool {
     const factory: Factory<PoolContainer> = {
       create: async () => {
         console.log('[Pool] Creating new container')
-        const container = await this.manager.createContainer(
-          this.poolConfig.workload,
-          this.poolConfig.poolId,
-          this.poolConfig.networkName,
-        )
-        console.log(`[Pool] Created container ${container.containerId}`)
-        return container
+        try {
+          const container = await this.manager.createContainer(
+            this.poolConfig.workload,
+            this.poolConfig.poolId,
+            this.poolConfig.networkName,
+          )
+          console.log(`[Pool] Created container ${container.containerId}`)
+          this._lastError = null
+          // Track container for later lookup
+          this.allContainers.set(container.containerId, container)
+          return container
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error(`[Pool] Failed to create container: ${message}`)
+          this._lastError = { message, timestamp: new Date() }
+          throw err
+        }
       },
 
       destroy: async (container) => {
         console.log(`[Pool] Destroying container ${container.containerId}`)
         await this.manager.destroyContainer(container.containerId)
+        // Remove from tracking
+        this.allContainers.delete(container.containerId)
         console.log(`[Pool] Destroyed container ${container.containerId}`)
       },
 
@@ -181,6 +201,33 @@ export class ContainerPool {
   }
 
   /**
+   * Destroy a container by ID
+   *
+   * Works for both assigned and idle containers.
+   * Uses pool.destroy() so the pool knows to create a replacement.
+   */
+  async destroyContainer(containerId: string): Promise<boolean> {
+    // Check if it's assigned to a tenant
+    for (const [tenantId, container] of this.assignedContainers) {
+      if (container.containerId === containerId) {
+        await this.destroyForTenant(tenantId)
+        return true
+      }
+    }
+
+    // Look up the container in our tracking map
+    const container = this.allContainers.get(containerId)
+    if (!container) {
+      return false
+    }
+
+    // Use pool.destroy() so the pool creates a replacement
+    await this.pool.destroy(container)
+    console.log(`[Pool] Destroyed idle container ${containerId}`)
+    return true
+  }
+
+  /**
    * Get container for a tenant (if assigned)
    */
   getContainerForTenant(tenantId: TenantId): PoolContainer | undefined {
@@ -239,10 +286,116 @@ export class ContainerPool {
   }
 
   /**
+   * Scale the pool to a target size.
+   *
+   * - Scale up: Creates new containers by acquiring and releasing
+   * - Scale down: Destroys idle containers (assigned containers are preserved)
+   *
+   * @param targetSize - Desired number of total containers
+   * @returns Object with actual new size and any errors
+   */
+  async scaleTo(targetSize: number): Promise<{ newSize: number; message: string }> {
+    if (targetSize < 0) {
+      throw new Error('Target size cannot be negative')
+    }
+
+    if (targetSize > this.poolConfig.maxSize) {
+      throw new Error(`Cannot scale above max size ${this.poolConfig.maxSize}`)
+    }
+
+    const currentSize = this.pool.size
+    const assignedCount = this.assignedContainers.size
+
+    if (targetSize === currentSize) {
+      return { newSize: currentSize, message: 'Already at target size' }
+    }
+
+    if (targetSize > currentSize) {
+      // Scale up: first hold all idle containers, then acquire more to force creation
+      const toCreate = targetSize - currentSize
+      const tempContainers: PoolContainer[] = []
+
+      console.log(`[Pool] Scaling up: creating ${toCreate} containers`)
+
+      // First, acquire all currently idle containers to hold them
+      const idleCount = this.pool.available
+      for (let i = 0; i < idleCount; i++) {
+        try {
+          const container = await this.pool.acquire()
+          tempContainers.push(container)
+        } catch {
+          break
+        }
+      }
+
+      // Now acquire more - this will force creation since no idle containers exist
+      for (let i = 0; i < toCreate; i++) {
+        try {
+          const container = await this.pool.acquire()
+          tempContainers.push(container)
+        } catch (err) {
+          console.error('[Pool] Failed to create container during scale up:', err)
+          break
+        }
+      }
+
+      // Release them all back to idle
+      for (const container of tempContainers) {
+        await this.pool.release(container)
+      }
+
+      const newSize = this.pool.size
+      console.log(`[Pool] Scale up complete: ${currentSize} -> ${newSize}`)
+      return { newSize, message: `Scaled up from ${currentSize} to ${newSize}` }
+    }
+
+    // Scale down: destroy idle containers
+    if (targetSize < assignedCount) {
+      // Can't scale below assigned count
+      const minPossible = assignedCount
+      console.log(
+        `[Pool] Cannot scale to ${targetSize}, ${assignedCount} containers are assigned. Min possible: ${minPossible}`,
+      )
+      return {
+        newSize: currentSize,
+        message: `Cannot scale below ${assignedCount} assigned containers`,
+      }
+    }
+
+    const toDestroy = currentSize - targetSize
+    let destroyed = 0
+
+    console.log(`[Pool] Scaling down: destroying ${toDestroy} idle containers`)
+
+    // Destroy idle containers
+    while (destroyed < toDestroy && this.pool.available > 0) {
+      try {
+        const container = await this.pool.acquire()
+        await this.pool.destroy(container)
+        destroyed++
+      } catch (err) {
+        console.error('[Pool] Failed to destroy container during scale down:', err)
+        break
+      }
+    }
+
+    const newSize = this.pool.size
+    console.log(`[Pool] Scale down complete: ${currentSize} -> ${newSize}`)
+    return { newSize, message: `Scaled down from ${currentSize} to ${newSize}` }
+  }
+
+  /**
    * Get the pool ID
    */
   getPoolId(): PoolId {
     return this.poolConfig.poolId
+  }
+
+  /**
+   * Get the last error that occurred in this pool
+   */
+  getLastError(): PoolError | null {
+    return this._lastError
   }
 
   /**

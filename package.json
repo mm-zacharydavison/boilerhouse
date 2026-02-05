@@ -5,15 +5,16 @@
   "type": "module",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "bun run --filter '@boilerhouse/{api,dashboard}' dev",
-    "dev:api": "bun run --filter '@boilerhouse/api' dev",
+    "dev": "bun run --filter '@boilerhouse/dashboard' dev > /dev/null 2>&1 & cd apps/api && bun --env-file=../../.env run --watch src/index.ts",
+    "dev:api": "cd apps/api && bun --env-file=../../.env run --watch src/index.ts",
     "dev:dashboard": "bun run --filter '@boilerhouse/dashboard' dev",
     "build": "bun run --filter '*' build",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "cli": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

@@ -6,6 +6,15 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -13,9 +22,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
-import { usePools } from '@/hooks/useApi'
+import { useCreatePool, usePools, useWorkloads } from '@/hooks/useApi'
 import { mockPools } from '@/mocks/data'
 import { AlertTriangle, CheckCircle, Loader2, Plus, XCircle } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 function PoolStatusBadge({ status }: { status: 'healthy' | 'degraded' | 'error' }) {
@@ -58,7 +68,34 @@ function UtilizationBar({ current, max }: { current: number; max: number }) {
 
 export function PoolsPage() {
   const { data: poolsData, isLoading } = usePools()
+  const { data: workloads } = useWorkloads()
+  const createPool = useCreatePool()
   const pools = poolsData ?? mockPools
+
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [newPoolId, setNewPoolId] = useState('')
+  const [selectedWorkload, setSelectedWorkload] = useState('')
+  const [minSize, setMinSize] = useState('2')
+  const [maxSize, setMaxSize] = useState('10')
+
+  const handleCreatePool = async () => {
+    if (!newPoolId || !selectedWorkload) return
+    try {
+      await createPool.mutateAsync({
+        poolId: newPoolId,
+        workloadId: selectedWorkload,
+        minSize: Number.parseInt(minSize, 10),
+        maxSize: Number.parseInt(maxSize, 10),
+      })
+      setDialogOpen(false)
+      setNewPoolId('')
+      setSelectedWorkload('')
+      setMinSize('2')
+      setMaxSize('10')
+    } catch (err) {
+      console.error('Failed to create pool:', err)
+    }
+  }
 
   if (isLoading && !poolsData) {
     return (
@@ -75,11 +112,82 @@ export function PoolsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground">Manage container pools and their workloads</p>
-          <Button>
+          <Button onClick={() => setDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Pool
           </Button>
         </div>
+
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogHeader>
+            <DialogTitle>Create New Pool</DialogTitle>
+            <DialogDescription>
+              Create a new container pool from an available workload.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogContent>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="poolId">Pool ID</Label>
+                <Input
+                  id="poolId"
+                  placeholder="my-pool"
+                  value={newPoolId}
+                  onChange={(e) => setNewPoolId(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="workload">Workload</Label>
+                <Select
+                  id="workload"
+                  value={selectedWorkload}
+                  onChange={(e) => setSelectedWorkload(e.target.value)}
+                >
+                  <option value="">Select a workload...</option>
+                  {workloads?.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.image})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="minSize">Min Size</Label>
+                  <Input
+                    id="minSize"
+                    type="number"
+                    min="0"
+                    value={minSize}
+                    onChange={(e) => setMinSize(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="maxSize">Max Size</Label>
+                  <Input
+                    id="maxSize"
+                    type="number"
+                    min="1"
+                    value={maxSize}
+                    onChange={(e) => setMaxSize(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreatePool}
+              disabled={!newPoolId || !selectedWorkload || createPool.isPending}
+            >
+              {createPool.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Create Pool
+            </Button>
+          </DialogFooter>
+        </Dialog>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {pools.map((pool) => (

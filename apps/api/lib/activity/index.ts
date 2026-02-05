@@ -179,10 +179,14 @@ export function logContainerCreated(
   log?: ActivityLog,
 ): ActivityEvent {
   const activityLog = log ?? getActivityLog()
-  return activityLog.log('container.created', `Container ${containerId} created in pool ${poolId}`, {
-    containerId,
-    poolId,
-  })
+  return activityLog.log(
+    'container.created',
+    `Container ${containerId} created in pool ${poolId}`,
+    {
+      containerId,
+      poolId,
+    },
+  )
 }
 
 export function logContainerClaimed(
@@ -258,7 +262,11 @@ export function logSyncFailed(tenantId: TenantId, error: string, log?: ActivityL
   })
 }
 
-export function logPoolCreated(poolId: PoolId, workloadId: string, log?: ActivityLog): ActivityEvent {
+export function logPoolCreated(
+  poolId: PoolId,
+  workloadId: string,
+  log?: ActivityLog,
+): ActivityEvent {
   const activityLog = log ?? getActivityLog()
   return activityLog.log('pool.created', `Pool ${poolId} created for workload ${workloadId}`, {
     poolId,

@@ -107,15 +107,27 @@ export function poolsController(deps: PoolsControllerDeps) {
 
     .post(
       '/:id/scale',
-      async ({ params, set }) => {
+      async ({ params, body, set }) => {
         const pool = poolRegistry.getPool(params.id)
         if (!pool) {
           set.status = 404
           return { error: `Pool ${params.id} not found` }
         }
 
-        // Note: generic-pool doesn't support runtime resize.
-        return { success: true, message: 'Scaling not implemented yet' }
+        try {
+          const stats = pool.getStats()
+          const previousSize = stats.size
+          const result = await pool.scaleTo(body.targetSize)
+          return {
+            success: true,
+            previousSize,
+            newSize: result.newSize,
+            message: result.message,
+          }
+        } catch (err) {
+          set.status = 400
+          return { error: (err as Error).message }
+        }
       },
       {
         params: t.Object({

@@ -1,4 +1,3 @@
-import type { PoolId, WorkloadId } from '@boilerhouse/core'
 import { DockerRuntime } from '@boilerhouse/docker'
 import { getActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
@@ -7,9 +6,6 @@ import { PoolRegistry } from '../lib/pool/registry'
 import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
 import { createWorkloadRegistry } from '../lib/workload'
 import { createServer } from './server'
-
-const DEFAULT_POOL_ID = 'default-pool' as PoolId
-const DEFAULT_WORKLOAD_ID = 'default' as WorkloadId
 
 console.log('Starting Boilerhouse API server...')
 console.log('Configuration:')
@@ -20,17 +16,9 @@ console.log(`  - Workloads dir: ${config.workloadsDir}`)
 
 // Load workloads from YAML files
 const workloadRegistry = createWorkloadRegistry(config.workloadsDir)
-console.log(`  - Loaded ${workloadRegistry.size} workload(s): ${workloadRegistry.ids().join(', ')}`)
-
-const defaultWorkload = workloadRegistry.get(DEFAULT_WORKLOAD_ID)
-if (!defaultWorkload) {
-  console.error(
-    `Error: Default workload '${DEFAULT_WORKLOAD_ID}' not found in ${config.workloadsDir}`,
-  )
-  console.error('Please create a config/workloads/default.yaml file')
-  process.exit(1)
-}
-console.log(`  - Default workload: ${defaultWorkload.name} (${defaultWorkload.image})`)
+console.log(
+  `  - Loaded ${workloadRegistry.size} workload(s): ${workloadRegistry.ids().join(', ') || '(none)'}`,
+)
 
 // Initialize container runtime
 const runtime = new DockerRuntime()
@@ -45,19 +33,16 @@ const manager = new ContainerManager(runtime)
 // Initialize pool registry
 const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog)
 
-// Create default pool
-poolRegistry.createPool(DEFAULT_POOL_ID, DEFAULT_WORKLOAD_ID)
-console.log(`  - Created default pool: ${DEFAULT_POOL_ID}`)
-
 // Initialize sync components
 const syncStatusTracker = new SyncStatusTracker()
-const rcloneExecutor = new RcloneSyncExecutor()
+const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
 const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
 
 // Create and start Elysia server
 const server = createServer({
   poolRegistry,
   workloadRegistry,
+  containerManager: manager,
   syncCoordinator,
   syncStatusTracker,
   activityLog,

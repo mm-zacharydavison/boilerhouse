@@ -4,8 +4,8 @@
  * Endpoints for sync specifications, jobs, and history.
  */
 
-import { Elysia, t } from 'elysia'
 import type { TenantId } from '@boilerhouse/core'
+import { Elysia, t } from 'elysia'
 import type { ActivityLog } from '../../lib/activity'
 import type { PoolRegistry } from '../../lib/pool/registry'
 import type { SyncCoordinator } from '../../lib/sync'
@@ -225,18 +225,24 @@ export function syncController(deps: SyncControllerDeps) {
       '/sync/history',
       ({ query }) => {
         const limit = query.limit ? Number.parseInt(query.limit, 10) : 50
+        const tenantIdFilter = query.tenantId
 
         // Get sync-related activity events as history
         const events = activityLog.getEvents(limit * 2)
-        const syncEvents = events.filter(
+        let syncEvents = events.filter(
           (e) => e.type === 'sync.completed' || e.type === 'sync.failed',
         )
+
+        // Filter by tenantId if provided
+        if (tenantIdFilter) {
+          syncEvents = syncEvents.filter((e) => e.tenantId === tenantIdFilter)
+        }
 
         return syncEvents.slice(0, limit).map((e) => ({
           id: e.id,
           tenantId: e.tenantId ?? 'unknown',
           poolId: e.poolId ?? 'unknown',
-          direction: 'bidirectional',
+          direction: (e.metadata?.direction as string) ?? 'bidirectional',
           status: e.type === 'sync.completed' ? 'completed' : 'failed',
           bytesTransferred: (e.metadata?.bytesTransferred as number) ?? 0,
           startedAt: e.timestamp,

@@ -1,35 +1,4 @@
 services:
-  # Development API server
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    ports:
-      - "3000:3000"
-    volumes:
-      # Mount source for hot reload in development
-      - ./apps:/app/apps:ro
-      - ./packages:/app/packages:ro
-      # Host directories for container state management
-      # These are base directories - each container gets a subdirectory
-      - boilerhouse-states:/var/lib/boilerhouse/states
-      - boilerhouse-secrets:/var/lib/boilerhouse/secrets
-      - boilerhouse-sockets:/var/run/boilerhouse
-      # Docker socket for container management
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - BOILERHOUSE_API_PORT=3000
-      # Base directories for per-container state/secrets/sockets
-      - BOILERHOUSE_STATE_DIR=/var/lib/boilerhouse/states
-      - BOILERHOUSE_SECRETS_DIR=/var/lib/boilerhouse/secrets
-      - BOILERHOUSE_SOCKET_DIR=/var/run/boilerhouse
-      - BOILERHOUSE_POOL_SIZE=2
-      - BOILERHOUSE_MAX_CONTAINERS=10
-    networks:
-      - boilerhouse-internal
-    depends_on:
-      - redis
-
   # Redis for distributed registry (future use)
   redis:
     image: redis:7-alpine
@@ -37,6 +6,42 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    networks:
+      - boilerhouse-internal
+
+  # MinIO for S3-compatible state sync storage
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - boilerhouse-internal
+
+  # Create default buckets on startup
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/boilerhouse --ignore-existing;
+      echo 'Bucket boilerhouse created';
+      exit 0;
+      "
     networks:
       - boilerhouse-internal
 
@@ -54,3 +59,5 @@ volumes:
   boilerhouse-sockets:
   # Redis persistence
   redis-data:
+  # MinIO data
+  minio-data:

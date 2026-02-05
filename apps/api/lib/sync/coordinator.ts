@@ -151,7 +151,8 @@ export class SyncCoordinator {
     )
 
     for (const mapping of downloadMappings) {
-      const result = await this.executeSync(tenantId, syncConfig, mapping, container)
+      // initialSync=true for first sync on a newly claimed container
+      const result = await this.executeSync(tenantId, syncConfig, mapping, container, true)
       results.push(result)
     }
 
@@ -332,12 +333,15 @@ export class SyncCoordinator {
 
   /**
    * Execute a single sync operation with concurrency control.
+   *
+   * @param initialSync - If true, this is the first sync for a new container (uses --resync for bisync)
    */
   private async executeSync(
     tenantId: TenantId,
     syncConfig: WorkloadSyncConfig,
     mapping: WorkloadSyncMapping,
     container: PoolContainer,
+    initialSync = false,
   ): Promise<SyncResult> {
     // Wait for a slot if at max concurrency
     if (this.runningCount >= this.config.maxConcurrent) {
@@ -363,6 +367,7 @@ export class SyncCoordinator {
         execMapping,
         syncConfig.sink,
         container.stateDir,
+        initialSync,
       )
 
       if (result.success) {

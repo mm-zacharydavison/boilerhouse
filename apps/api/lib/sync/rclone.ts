@@ -6,6 +6,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SinkConfig, SyncMapping, TenantId } from '@boilerhouse/core'
 import {
@@ -106,12 +107,14 @@ export class RcloneSyncExecutor {
    * @param mapping - Sync mapping configuration
    * @param sink - Sink configuration
    * @param containerVolumePath - Host path to the container's mounted volume
+   * @param initialSync - If true, this is the first sync for a new container (uses --resync for bisync)
    */
   async sync(
     tenantId: TenantId,
     mapping: SyncMapping,
     sink: SinkConfig,
     containerVolumePath: string,
+    initialSync = false,
   ): Promise<SyncResult> {
     const startTime = Date.now()
     const adapter = this.getAdapter(sink)
@@ -135,7 +138,7 @@ export class RcloneSyncExecutor {
         break
       case 'bidirectional':
         // Bidirectional uses bisync command instead
-        return this.executeBisync(localPath, remotePath, mapping, sink, startTime)
+        return this.executeBisync(localPath, remotePath, mapping, sink, startTime, initialSync)
     }
 
     // Build rclone arguments
@@ -217,6 +220,8 @@ export class RcloneSyncExecutor {
 
   /**
    * Execute bidirectional sync using rclone bisync.
+   *
+   * @param initialSync - If true, uses --resync to initialize bisync state (required for first sync)
    */
   private async executeBisync(
     localPath: string,
@@ -224,22 +229,31 @@ export class RcloneSyncExecutor {
     mapping: SyncMapping,
     sink: SinkConfig,
     startTime: number,
+    initialSync: boolean,
   ): Promise<SyncResult> {
+    // Ensure local directory exists (bisync requires it)
+    await mkdir(localPath, { recursive: true })
+
     const adapter = this.getAdapter(sink)
     const args: string[] = ['bisync', localPath, remotePath]
 
     // Sink-specific configuration
     args.push(...adapter.getRcloneArgs(sink))
 
-    // Glob pattern support
+    // Filter pattern support (use --filter instead of --include/--exclude combo)
     if (mapping.pattern) {
-      args.push('--include', mapping.pattern)
-      args.push('--exclude', '*')
+      args.push('--filter', `+ ${mapping.pattern}`)
+      args.push('--filter', '- *')
     }
 
     // Bisync-specific flags
     args.push('--create-empty-src-dirs')
-    args.push('--resilient')
+
+    // --resync rebuilds bisync tracking state from scratch
+    // Only needed on first sync for a new container
+    if (initialSync) {
+      args.push('--resync')
+    }
 
     if (this.config.verbose) {
       args.push('-v')
@@ -281,9 +295,14 @@ export class RcloneSyncExecutor {
 
       proc.on('close', (code) => {
         const duration = Date.now() - startTime
+        const combinedOutput = stdout + stderr
+
+        if (this.config.verbose) {
+          console.log('[rclone] Output:', combinedOutput.slice(-500))
+        }
 
         if (code === 0) {
-          const stats = this.parseRcloneStats(stdout + stderr)
+          const stats = this.parseRcloneStats(combinedOutput)
           resolve({
             success: true,
             bytesTransferred: stats.bytes,
@@ -325,27 +344,44 @@ export class RcloneSyncExecutor {
     let bytes = 0
     let files = 0
 
+    const multipliers: Record<string, number> = {
+      b: 1,
+      kib: 1024,
+      mib: 1024 * 1024,
+      gib: 1024 * 1024 * 1024,
+      tib: 1024 * 1024 * 1024 * 1024,
+    }
+
     // Try to parse transferred stats
-    // Format: "Transferred: 1.234 GiB / 1.234 GiB, 100%, 10.000 MiB/s, ETA 0s"
-    const bytesMatch = output.match(/Transferred:\s*([0-9.]+)\s*(B|KiB|MiB|GiB|TiB)/i)
+    // Format 1 (sync): "Transferred: 1.234 GiB / 1.234 GiB, 100%, 10.000 MiB/s, ETA 0s"
+    // Format 2 (bisync): "16.054 KiB / 16.054 KiB, 100%, 0 B/s, ETA -"
+    const bytesMatch = output.match(
+      /(?:Transferred:\s*)?([0-9.]+)\s*(B|KiB|MiB|GiB|TiB)\s*\/\s*[0-9.]+\s*(B|KiB|MiB|GiB|TiB),\s*100%/i,
+    )
     if (bytesMatch) {
       const value = Number.parseFloat(bytesMatch[1])
       const unit = bytesMatch[2].toLowerCase()
-      const multipliers: Record<string, number> = {
-        b: 1,
-        kib: 1024,
-        mib: 1024 * 1024,
-        gib: 1024 * 1024 * 1024,
-        tib: 1024 * 1024 * 1024 * 1024,
-      }
       bytes = Math.floor(value * (multipliers[unit] || 1))
     }
 
-    // Try to parse file count
+    // Try to parse file count from "Transferred:" line
     // Format: "Transferred: 42 / 42, 100%"
     const filesMatch = output.match(/Transferred:\s*(\d+)\s*\/\s*\d+/)
     if (filesMatch) {
       files = Number.parseInt(filesMatch[1], 10)
+    }
+
+    // For bisync, count "Copied (new)" and "Copied (replaced)" lines
+    const copiedMatches = output.match(/: Copied \((new|replaced)\)/g)
+    if (copiedMatches) {
+      files = Math.max(files, copiedMatches.length)
+    }
+
+    // Also check "Checks:" line for total files processed
+    // Format: "Checks: 48 / 48, 100%"
+    const checksMatch = output.match(/Checks:\s*(\d+)\s*\/\s*\d+/)
+    if (checksMatch && files === 0) {
+      files = Number.parseInt(checksMatch[1], 10)
     }
 
     return { bytes, files }
