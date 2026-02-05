@@ -76,7 +76,7 @@ export class DockerRuntime implements ContainerRuntime {
 
         // Resource limits
         NanoCpus: spec.resources.cpus * 1e9,
-        Memory: spec.resources.memoryMb * 1024 * 1024,
+        Memory: spec.resources.memory * 1024 * 1024,
 
         // Tmpfs mounts
         Tmpfs: Object.fromEntries(

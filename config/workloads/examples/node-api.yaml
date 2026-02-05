@@ -1,0 +1,68 @@
+# Node.js API Server workload
+# A containerized Node.js environment for running API servers
+
+id: node-api
+name: Node.js API Server
+image: node:20-alpine
+
+volumes:
+  state:
+    target: /app/data
+  secrets:
+    target: /app/secrets
+    read_only: true
+  comm:
+    target: /app/comm
+
+environment:
+  NODE_ENV: production
+  STATE_DIR: /app/data
+  SECRETS_DIR: /app/secrets
+  PORT: "8080"
+
+healthcheck:
+  test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+  interval: 15s
+  timeout: 5s
+  retries: 3
+
+deploy:
+  resources:
+    limits:
+      cpus: "1"
+      memory: 512M
+
+read_only: true
+user: "1000"
+network_mode: bridge
+
+# Pool configuration (boilerhouse-specific)
+pool:
+  min_size: 3
+  max_size: 20
+  idle_timeout: 5m
+  network:
+    name: api-network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+# Sync configuration (boilerhouse-specific) - persist session data
+sync:
+  sink:
+    type: s3
+    bucket: api-state
+    region: us-east-1
+    prefix: tenants/${tenantId}/
+
+  mappings:
+    - path: /app/data
+      pattern: "*.json"
+      direction: bidirectional
+      mode: sync
+
+  policy:
+    on_claim: true
+    on_release: true
+    interval: 1m
+    manual: true

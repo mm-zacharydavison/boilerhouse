@@ -1,6 +1,29 @@
 /**
  * Core types for the Boilerhouse container pool orchestrator
+ *
+ * TypeScript code uses camelCase per JS conventions.
+ * YAML files use snake_case for docker-compose compatibility.
+ * Conversion happens at the loader boundary.
  */
+
+import type { CamelCasedPropertiesDeep } from 'type-fest'
+import type { z } from 'zod'
+import type {
+  deployConfigSchema,
+  healthCheckConfigSchema,
+  poolConfigSchema,
+  poolNetworkConfigSchema,
+  resourceLimitsSchema,
+  resourcesConfigSchema,
+  s3SinkConfigSchema,
+  securityConfigSchema,
+  sinkConfigSchema,
+  volumeConfigSchema,
+  workloadSpecSchema,
+  workloadSyncConfigSchema,
+  workloadSyncMappingSchema,
+  workloadSyncPolicySchema,
+} from './schemas/workload'
 
 // =============================================================================
 // Branded ID Types
@@ -62,264 +85,135 @@ export type ContainerStatus = 'idle' | 'assigned' | 'stopping'
  * Represents a running container instance in the pool.
  */
 export interface PoolContainer {
-  /**
-   * Unique identifier for this container.
-   * @example 'ml7wk37p-vbjcpb5g'
-   */
+  /** Unique identifier for this container. */
   containerId: ContainerId
-
-  /**
-   * ID of the tenant this container is assigned to.
-   * Null when container is pre-warmed and unassigned.
-   * @example 'tenant-12345'
-   */
+  /** ID of the tenant this container is assigned to. Null when pre-warmed and unassigned. */
   tenantId: TenantId | null
-
-  /**
-   * ID of the pool this container belongs to.
-   * @example 'prod-workers'
-   */
+  /** ID of the pool this container belongs to. */
   poolId: PoolId
-
-  /**
-   * Path to the Unix socket for communicating with the container.
-   * @example '/var/run/boilerhouse/ml7wk37p/app.sock'
-   */
+  /** Path to the Unix socket for communicating with the container. */
   socketPath: string
-
-  /**
-   * Host path to the container's mounted state directory.
-   * @example '/var/lib/boilerhouse/states/ml7wk37p'
-   */
+  /** Host path to the container's mounted state directory. */
   stateDir: string
-
-  /**
-   * Host path to the container's mounted secrets directory.
-   * @example '/var/lib/boilerhouse/secrets/ml7wk37p'
-   */
+  /** Host path to the container's mounted secrets directory. */
   secretsDir: string
-
-  /**
-   * Timestamp of the last activity on this container.
-   * Used for idle timeout and eviction decisions.
-   */
+  /** Timestamp of the last activity on this container. */
   lastActivity: Date
-
-  /**
-   * Current lifecycle status of the container.
-   */
+  /** Current lifecycle status of the container. */
   status: ContainerStatus
 }
 
 // =============================================================================
-// Workload Specification
+// Raw Workload Types (snake_case, directly from Zod schema / YAML)
 // =============================================================================
 
-/**
- * Volume mount configuration for a workload.
- */
-export interface VolumeConfig {
-  /**
-   * Path inside the container where the volume is mounted.
-   * @example '/data'
-   */
-  containerPath: string
+/** Raw volume config from YAML (snake_case). */
+export type VolumeConfigRaw = z.infer<typeof volumeConfigSchema>
 
-  /**
-   * Mount mode: read-write or read-only.
-   */
-  mode: 'rw' | 'ro'
-}
+/** Raw health check config from YAML (snake_case). */
+export type HealthCheckConfigRaw = z.infer<typeof healthCheckConfigSchema>
 
-/**
- * Health check configuration for containers.
- */
-export interface HealthCheckConfig {
-  /**
-   * Command to execute for health check.
-   * @example ['curl', '-f', 'http://localhost:8080/health']
-   * @example ['python', '-c', 'print("ok")']
-   */
-  command: string[]
+/** Raw resource limits from YAML (snake_case). */
+export type ResourceLimitsRaw = z.infer<typeof resourceLimitsSchema>
 
-  /**
-   * Interval between health checks in milliseconds.
-   * @example 30000
-   */
-  intervalMs: number
+/** Raw resources config from YAML (snake_case). */
+export type ResourcesConfigRaw = z.infer<typeof resourcesConfigSchema>
 
-  /**
-   * Timeout for each health check in milliseconds.
-   * @example 5000
-   */
-  timeoutMs: number
+/** Raw deploy config from YAML (snake_case). */
+export type DeployConfigRaw = z.infer<typeof deployConfigSchema>
 
-  /**
-   * Number of consecutive failures before marking unhealthy.
-   * @example 3
-   */
-  retries: number
-}
+/** Raw security config from YAML (snake_case). */
+export type SecurityConfigRaw = z.infer<typeof securityConfigSchema>
 
-/**
- * Security configuration for containers.
- */
-export interface SecurityConfig {
-  /**
-   * Whether the root filesystem is read-only.
-   * @default true
-   */
-  readOnlyRootFilesystem?: boolean
+/** Raw pool network config from YAML (snake_case). */
+export type PoolNetworkConfigRaw = z.infer<typeof poolNetworkConfigSchema>
 
-  /**
-   * User ID to run the container as.
-   * @example 1000
-   */
-  runAsUser?: number
+/** Raw pool config from YAML (snake_case). */
+export type PoolConfigRaw = z.infer<typeof poolConfigSchema>
 
-  /**
-   * Network mode for the container.
-   * @example 'none' for isolated containers
-   * @example 'bridge' for network access
-   */
-  networkMode?: 'none' | 'bridge' | 'host' | string
-}
+/** Raw sync mapping from YAML (snake_case). */
+export type WorkloadSyncMappingRaw = z.infer<typeof workloadSyncMappingSchema>
 
-/**
- * Workload specification - defines how to run a container type.
- * Developers using Boilerhouse define workloads to describe their container images.
- */
-export interface WorkloadSpec {
-  /**
-   * Unique identifier for this workload.
-   * @example 'python-worker'
-   */
-  id: WorkloadId
+/** Raw sync policy from YAML (snake_case). */
+export type WorkloadSyncPolicyRaw = z.infer<typeof workloadSyncPolicySchema>
 
-  /**
-   * Human-readable name for the workload.
-   * @example 'Python ML Worker'
-   */
-  name: string
+/** Raw S3 sink config from YAML (snake_case). */
+export type S3SinkConfigRaw = z.infer<typeof s3SinkConfigSchema>
 
-  /**
-   * Docker image to use for this workload.
-   * @example 'myregistry/python-worker:latest'
-   */
-  image: string
+/** Raw sink config from YAML (snake_case). */
+export type SinkConfigRaw = z.infer<typeof sinkConfigSchema>
 
-  /**
-   * Volume mount configuration.
-   */
-  volumes: {
-    /**
-     * State volume for persistent tenant data.
-     */
-    state?: VolumeConfig
+/** Raw sync config from YAML (snake_case). */
+export type WorkloadSyncConfigRaw = z.infer<typeof workloadSyncConfigSchema>
 
-    /**
-     * Secrets volume for credentials (typically read-only).
-     */
-    secrets?: VolumeConfig
+/** Raw workload spec from YAML (snake_case). */
+export type WorkloadSpecRaw = z.infer<typeof workloadSpecSchema>
 
-    /**
-     * Communication volume for IPC (sockets, etc.).
-     */
-    comm?: VolumeConfig
+// =============================================================================
+// Workload Specification Types (camelCase, for TypeScript code)
+// =============================================================================
 
-    /**
-     * Additional custom volumes.
-     */
-    custom?: Array<VolumeConfig & { name: string }>
-  }
+/** Volume mount configuration for a workload. */
+export type VolumeConfig = CamelCasedPropertiesDeep<VolumeConfigRaw>
 
-  /**
-   * Environment variables to set in containers.
-   * Supports ${VAR} substitution for dynamic values.
-   * @example { 'APP_STATE_DIR': '/data', 'LOG_LEVEL': 'info' }
-   */
-  environment: Record<string, string>
+/** Health check configuration for containers. */
+export type HealthCheckConfig = CamelCasedPropertiesDeep<HealthCheckConfigRaw>
 
-  /**
-   * Health check configuration.
-   */
-  healthCheck: HealthCheckConfig
+/** Resource limits for containers. */
+export type ResourceLimits = CamelCasedPropertiesDeep<ResourceLimitsRaw>
 
-  /**
-   * Resource limits (overrides pool defaults).
-   */
-  resources?: Partial<ResourceLimits>
+/** Resources configuration (limits and reservations). */
+export type ResourcesConfig = CamelCasedPropertiesDeep<ResourcesConfigRaw>
 
-  /**
-   * Security configuration (overrides defaults).
-   */
-  security?: SecurityConfig
+/** Deploy configuration for containers. */
+export type DeployConfig = CamelCasedPropertiesDeep<DeployConfigRaw>
 
-  /**
-   * JSON Schema for validating tenant config.
-   * When set, tenant configs are validated against this schema.
-   */
-  configSchema?: Record<string, unknown>
-}
+/** Security configuration for containers. */
+export type SecurityConfig = CamelCasedPropertiesDeep<SecurityConfigRaw>
+
+/** Network configuration for a pool. */
+export type PoolNetworkConfig = CamelCasedPropertiesDeep<PoolNetworkConfigRaw>
+
+/** Pool configuration - defines how many container instances to maintain. */
+export type PoolConfig = CamelCasedPropertiesDeep<PoolConfigRaw>
+
+/** Sync mapping for workload - defines what to sync. */
+export type WorkloadSyncMapping = CamelCasedPropertiesDeep<WorkloadSyncMappingRaw>
+
+/** Sync policy for workload - defines when to sync. */
+export type WorkloadSyncPolicy = CamelCasedPropertiesDeep<WorkloadSyncPolicyRaw>
+
+/** S3 sink configuration. */
+export type S3SinkConfig = CamelCasedPropertiesDeep<S3SinkConfigRaw>
+
+/** Sink configuration union type. */
+export type SinkConfig = CamelCasedPropertiesDeep<SinkConfigRaw>
+
+/** Workload sync configuration - embedded in WorkloadSpec. */
+export type WorkloadSyncConfig = CamelCasedPropertiesDeep<WorkloadSyncConfigRaw>
+
+/** Workload specification - defines a complete deployable unit. */
+export type WorkloadSpec = CamelCasedPropertiesDeep<WorkloadSpecRaw>
 
 // =============================================================================
 // Pool Specification
 // =============================================================================
 
 /**
- * Network configuration for a pool.
- */
-export interface PoolNetworkConfig {
-  /**
-   * Name of the Docker network to attach containers to.
-   * @example 'boilerhouse-egress'
-   */
-  name: string
-
-  /**
-   * Custom DNS servers for containers.
-   * @example ['8.8.8.8', '8.8.4.4']
-   */
-  dns?: string[]
-}
-
-/**
  * Pool specification - defines a pool of pre-warmed containers.
  */
 export interface PoolSpec {
-  /**
-   * Unique identifier for this pool.
-   * @example 'prod-workers'
-   */
+  /** Unique identifier for this pool. */
   id: PoolId
-
-  /**
-   * ID of the workload this pool runs.
-   * @example 'python-worker'
-   */
+  /** ID of the workload this pool runs. */
   workloadId: WorkloadId
-
-  /**
-   * Minimum number of idle containers to maintain.
-   * @example 5
-   */
+  /** Minimum number of idle containers to maintain. */
   minSize: number
-
-  /**
-   * Maximum total containers in this pool.
-   * @example 50
-   */
+  /** Maximum total containers in this pool. */
   maxSize: number
-
-  /**
-   * Time in milliseconds before an idle container is evicted.
-   * @example 300000
-   */
+  /** Time in milliseconds before an idle container is evicted. */
   idleTimeoutMs: number
-
-  /**
-   * Network configuration for containers in this pool.
-   */
+  /** Network configuration for containers in this pool. */
   network?: PoolNetworkConfig
 }
 
@@ -331,183 +225,42 @@ export interface PoolSpec {
  * Sync mapping - defines what data to sync and where.
  */
 export interface SyncMapping {
-  /**
-   * Source path inside the container.
-   * @example '/data/sessions'
-   */
+  /** Source path inside the container. */
   containerPath: string
-
-  /**
-   * Optional glob pattern to filter files.
-   * @example '*.json'
-   * @example '**\/*.log'
-   */
+  /** Optional glob pattern to filter files. */
   pattern?: string
-
-  /**
-   * Destination path prefix in the sink.
-   * @example 'sessions/'
-   */
+  /** Destination path prefix in the sink. */
   sinkPath: string
-
-  /**
-   * Direction of sync.
-   * - 'upload': Container to sink
-   * - 'download': Sink to container
-   * - 'bidirectional': Both directions
-   */
+  /** Direction of sync. */
   direction: 'upload' | 'download' | 'bidirectional'
-
-  /**
-   * Sync mode.
-   * - 'sync': Mirror source to destination (deletes removed files)
-   * - 'copy': Copy files without deleting
-   */
+  /** Sync mode. */
   mode: 'sync' | 'copy'
 }
 
 /**
- * Sync policy - defines when to sync.
+ * Sync status error entry.
  */
-export interface SyncPolicy {
-  /**
-   * Sync when a tenant claims a container (download state).
-   */
-  onClaim?: boolean
-
-  /**
-   * Sync when a tenant releases a container (upload state).
-   */
-  onRelease?: boolean
-
-  /**
-   * Periodic sync interval in milliseconds.
-   * @example 60000 for every minute
-   */
-  intervalMs?: number
-
-  /**
-   * Allow manual sync trigger via API.
-   */
-  allowManualTrigger?: boolean
-}
-
-/**
- * S3 sink configuration (v1 only sink type).
- */
-export interface S3SinkConfig {
-  type: 's3'
-
-  /**
-   * S3 bucket name.
-   * @example 'my-app-state'
-   */
-  bucket: string
-
-  /**
-   * AWS region.
-   * @example 'us-west-2'
-   */
-  region: string
-
-  /**
-   * Base path prefix in the bucket.
-   * Supports ${tenantId} interpolation.
-   * @example 'tenants/${tenantId}/'
-   */
-  prefix: string
-
-  /**
-   * AWS access key ID (optional if using IAM role).
-   */
-  accessKeyId?: string
-
-  /**
-   * AWS secret access key (optional if using IAM role).
-   */
-  secretAccessKey?: string
-
-  /**
-   * Additional rclone flags for S3 operations.
-   * @example ['--s3-upload-cutoff=100M']
-   */
-  rcloneFlags?: string[]
-}
-
-/**
- * Sink configuration union type.
- * v1 only supports S3. Future versions may add GCS, Azure, etc.
- */
-export type SinkConfig = S3SinkConfig
-
-/**
- * Sync specification - defines complete sync configuration for a pool.
- */
-export interface SyncSpec {
-  /**
-   * Unique identifier for this sync spec.
-   * @example 'worker-state-sync'
-   */
-  id: SyncId
-
-  /**
-   * ID of the pool this sync applies to.
-   * @example 'prod-workers'
-   */
-  poolId: PoolId
-
-  /**
-   * Sync mappings defining what to sync.
-   */
-  mappings: SyncMapping[]
-
-  /**
-   * Sink configuration (where to sync).
-   */
-  sink: SinkConfig
-
-  /**
-   * Sync policy (when to sync).
-   */
-  policy: SyncPolicy
+export interface SyncStatusError {
+  timestamp: Date
+  message: string
+  mapping?: string
 }
 
 /**
  * Status of a sync operation.
  */
 export interface SyncStatus {
-  /**
-   * ID of the sync spec.
-   */
+  /** ID of the sync spec. */
   syncId: SyncId
-
-  /**
-   * ID of the tenant.
-   */
+  /** ID of the tenant. */
   tenantId: TenantId
-
-  /**
-   * Timestamp of last successful sync.
-   */
+  /** Timestamp of last successful sync. */
   lastSyncAt?: Date
-
-  /**
-   * Number of pending sync operations.
-   */
+  /** Number of pending sync operations. */
   pendingCount: number
-
-  /**
-   * Recent sync errors.
-   */
-  errors: Array<{
-    timestamp: Date
-    message: string
-    mapping?: string
-  }>
-
-  /**
-   * Current sync state.
-   */
+  /** Recent sync errors. */
+  errors: SyncStatusError[]
+  /** Current sync state. */
   state: 'idle' | 'syncing' | 'error'
 }
 
@@ -524,43 +277,19 @@ export type TenantAssignmentState = 'pending' | 'assigned' | 'releasing'
  * Tenant assignment - tracks a tenant's container assignment.
  */
 export interface TenantAssignment {
-  /**
-   * ID of the tenant.
-   * @example 'tenant-12345'
-   */
+  /** ID of the tenant. */
   tenantId: TenantId
-
-  /**
-   * ID of the pool the tenant is assigned to.
-   * @example 'prod-workers'
-   */
+  /** ID of the pool the tenant is assigned to. */
   poolId: PoolId
-
-  /**
-   * ID of the assigned container (null if pending).
-   * @example 'ml7wk37p-vbjcpb5g'
-   */
+  /** ID of the assigned container (null if pending). */
   containerId: ContainerId | null
-
-  /**
-   * Current assignment state.
-   */
+  /** Current assignment state. */
   state: TenantAssignmentState
-
-  /**
-   * Tenant-specific metadata.
-   * Workload-specific data passed when claiming a container.
-   */
+  /** Tenant-specific metadata. */
   metadata?: Record<string, unknown>
-
-  /**
-   * Timestamp when the container was assigned.
-   */
+  /** Timestamp when the container was assigned. */
   assignedAt?: Date
-
-  /**
-   * Timestamp of last activity.
-   */
+  /** Timestamp of last activity. */
   lastActivityAt?: Date
 }
 
@@ -568,35 +297,15 @@ export interface TenantAssignment {
  * Status information about a tenant's container.
  */
 export interface TenantStatus {
-  /**
-   * Current status of the tenant's container.
-   * - `warm`: Container is running and assigned to this tenant
-   * - `cold`: No container assigned, will need cold start
-   * - `provisioning`: Container is being provisioned
-   * - `releasing`: Container is being released
-   */
+  /** Current status of the tenant's container. */
   status: 'warm' | 'cold' | 'provisioning' | 'releasing'
-
-  /**
-   * ID of the assigned container, if any.
-   * @example 'ml7wk37p-vbjcpb5g'
-   */
+  /** ID of the assigned container, if any. */
   containerId?: ContainerId
-
-  /**
-   * ID of the pool, if assigned.
-   */
+  /** ID of the pool, if assigned. */
   poolId?: PoolId
-
-  /**
-   * ISO 8601 timestamp of last activity.
-   * @example '2024-01-15T14:22:00Z'
-   */
+  /** ISO 8601 timestamp of last activity. */
   lastActivity?: string
-
-  /**
-   * Sync status for this tenant.
-   */
+  /** Sync status for this tenant. */
   syncStatus?: SyncStatus
 }
 
@@ -608,96 +317,45 @@ export interface TenantStatus {
  * Configuration for the container pool.
  */
 export interface ContainerPoolConfig {
-  /**
-   * Minimum number of pre-warmed containers to maintain.
-   * @example 5
-   */
+  /** Minimum number of pre-warmed containers to maintain. */
   minPoolSize: number
-
-  /**
-   * Maximum containers allowed per node.
-   * @example 50
-   */
+  /** Maximum containers allowed per node. */
   maxContainersPerNode: number
-
-  /**
-   * Time in milliseconds before an idle container is evicted.
-   * @example 300000
-   */
+  /** Time in milliseconds before an idle container is evicted. */
   containerIdleTimeoutMs: number
-
-  /**
-   * Maximum time in milliseconds to wait for container startup.
-   * @example 30000
-   */
+  /** Maximum time in milliseconds to wait for container startup. */
   containerStartTimeoutMs: number
 }
 
 /**
- * Resource limits for containers.
+ * Default resource limits for internal config (not YAML spec).
  */
-export interface ResourceLimits {
-  /**
-   * Number of CPUs allocated to the container.
-   * @example 1
-   */
+export interface DefaultResourceLimits {
+  /** Default CPU limit. */
   cpus: number
-
-  /**
-   * Memory limit in megabytes.
-   * @example 512
-   */
-  memoryMb: number
-
-  /**
-   * Tmpfs size limit in megabytes.
-   * @example 100
-   */
-  tmpfsSizeMb: number
+  /** Default memory limit in MB. */
+  memory: number
+  /** Default tmpfs size in MB. */
+  tmpfsSize: number
 }
 
 /**
  * Full Boilerhouse configuration.
  */
 export interface BoilerhouseConfig {
-  /**
-   * Container pool configuration.
-   */
+  /** Container pool configuration. */
   pool: ContainerPoolConfig
-
-  /**
-   * Default resource limits for containers.
-   */
-  resources: ResourceLimits
-
-  /**
-   * Base directory for tenant state on the host.
-   * @example '/var/lib/boilerhouse/states'
-   */
+  /** Default resource limits for containers. */
+  resources: DefaultResourceLimits
+  /** Base directory for tenant state on the host. */
   stateBaseDir: string
-
-  /**
-   * Base directory for tenant secrets on the host.
-   * @example '/var/lib/boilerhouse/secrets'
-   */
+  /** Base directory for tenant secrets on the host. */
   secretsBaseDir: string
-
-  /**
-   * Base directory for Unix sockets on the host.
-   * @example '/var/run/boilerhouse'
-   */
+  /** Base directory for Unix sockets on the host. */
   socketBaseDir: string
-
-  /**
-   * Port for the API server.
-   * @example 3000
-   */
+  /** Port for the API server. */
   apiPort: number
-
-  /**
-   * Host address for the API server.
-   * @example '0.0.0.0'
-   */
+  /** Host address for the API server. */
   apiHost: string
 }
 
@@ -709,15 +367,9 @@ export interface BoilerhouseConfig {
  * Request to claim a container for a tenant.
  */
 export interface ClaimContainerRequest {
-  /**
-   * ID of the pool to claim from.
-   */
+  /** ID of the pool to claim from. */
   poolId: PoolId
-
-  /**
-   * Tenant-specific metadata.
-   * Workload-specific data stored with the assignment.
-   */
+  /** Tenant-specific metadata. */
   metadata?: Record<string, unknown>
 }
 
@@ -725,23 +377,13 @@ export interface ClaimContainerRequest {
  * Response from claiming a container.
  */
 export interface ClaimContainerResponse {
-  /**
-   * ID of the assigned container.
-   */
+  /** ID of the assigned container. */
   containerId: ContainerId
-
-  /**
-   * Connection endpoints for the container.
-   */
+  /** Connection endpoints for the container. */
   endpoints: {
-    /**
-     * Unix socket path for IPC.
-     */
+    /** Unix socket path for IPC. */
     socket?: string
-
-    /**
-     * HTTP endpoint if exposed.
-     */
+    /** HTTP endpoint if exposed. */
     http?: string
   }
 }
@@ -750,9 +392,6 @@ export interface ClaimContainerResponse {
  * Request to release a container.
  */
 export interface ReleaseContainerRequest {
-  /**
-   * Whether to sync state before releasing.
-   * @default true
-   */
+  /** Whether to sync state before releasing. */
   sync?: boolean
 }

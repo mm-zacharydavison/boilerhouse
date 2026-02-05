@@ -3,30 +3,40 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import type { WorkloadSyncConfig } from '@boilerhouse/core'
 import {
   createMockRcloneExecutor,
   createPoolContainer,
-  createPoolId,
-  createSyncMapping,
-  createSyncSpec,
+  createS3SinkConfig,
   createTenantId,
+  createWorkloadSyncMapping,
 } from '../../test/fixtures'
 import { SyncCoordinator } from './coordinator'
 import type { RcloneSyncExecutor } from './rclone'
-import { SyncRegistry } from './registry'
 import { SyncStatusTracker } from './status'
 
+function createSyncConfig(overrides?: Partial<WorkloadSyncConfig>): WorkloadSyncConfig {
+  return {
+    sink: createS3SinkConfig(),
+    mappings: [createWorkloadSyncMapping()],
+    policy: {
+      onClaim: true,
+      onRelease: true,
+      manual: true,
+    },
+    ...overrides,
+  }
+}
+
 describe('SyncCoordinator', () => {
-  let registry: SyncRegistry
   let executor: RcloneSyncExecutor
   let statusTracker: SyncStatusTracker
   let coordinator: SyncCoordinator
 
   beforeEach(() => {
-    registry = new SyncRegistry()
     executor = createMockRcloneExecutor() as unknown as RcloneSyncExecutor
     statusTracker = new SyncStatusTracker()
-    coordinator = new SyncCoordinator(registry, executor, statusTracker, { verbose: false })
+    coordinator = new SyncCoordinator(executor, statusTracker, { verbose: false })
   })
 
   afterEach(async () => {
@@ -34,21 +44,23 @@ describe('SyncCoordinator', () => {
   })
 
   describe('onClaim', () => {
+    test('returns empty array when no sync config', async () => {
+      const container = createPoolContainer()
+      const results = await coordinator.onClaim(createTenantId(), container)
+      expect(results).toHaveLength(0)
+    })
+
     test('executes download mappings when onClaim is true', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
+      const syncConfig = createSyncConfig({
         mappings: [
-          createSyncMapping({ direction: 'download' }),
-          createSyncMapping({ direction: 'upload', containerPath: '/logs' }),
+          createWorkloadSyncMapping({ direction: 'download' }),
+          createWorkloadSyncMapping({ direction: 'upload', path: '/logs' }),
         ],
         policy: { onClaim: true, onRelease: false },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const tenantId = createTenantId()
-      const results = await coordinator.onClaim(tenantId, container)
+      const container = createPoolContainer()
+      const results = await coordinator.onClaim(createTenantId(), container, syncConfig)
 
       // Should only execute download mapping
       expect(results).toHaveLength(1)
@@ -56,166 +68,147 @@ describe('SyncCoordinator', () => {
     })
 
     test('executes bidirectional mappings on claim', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
-        mappings: [createSyncMapping({ direction: 'bidirectional' })],
+      const syncConfig = createSyncConfig({
+        mappings: [createWorkloadSyncMapping({ direction: 'bidirectional' })],
         policy: { onClaim: true },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.onClaim(createTenantId(), container)
+      const container = createPoolContainer()
+      const results = await coordinator.onClaim(createTenantId(), container, syncConfig)
 
       expect(results).toHaveLength(1)
     })
 
-    test('skips specs without onClaim', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
+    test('skips sync when onClaim is false', async () => {
+      const syncConfig = createSyncConfig({
         policy: { onClaim: false, onRelease: true },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.onClaim(createTenantId(), container)
+      const container = createPoolContainer()
+      const results = await coordinator.onClaim(createTenantId(), container, syncConfig)
 
       expect(results).toHaveLength(0)
+    })
+
+    test('starts periodic sync when interval is set', async () => {
+      const syncConfig = createSyncConfig({
+        policy: { onClaim: true, interval: 60000 },
+      })
+
+      const container = createPoolContainer()
+      await coordinator.onClaim(createTenantId(), container, syncConfig)
+
+      expect(coordinator.getStats().activeJobs).toBe(1)
     })
   })
 
   describe('onRelease', () => {
+    test('returns empty array when no sync config', async () => {
+      const container = createPoolContainer()
+      const results = await coordinator.onRelease(createTenantId(), container)
+      expect(results).toHaveLength(0)
+    })
+
     test('executes upload mappings when onRelease is true', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
+      const syncConfig = createSyncConfig({
         mappings: [
-          createSyncMapping({ direction: 'upload' }),
-          createSyncMapping({ direction: 'download', containerPath: '/config' }),
+          createWorkloadSyncMapping({ direction: 'upload' }),
+          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
         ],
         policy: { onClaim: false, onRelease: true },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.onRelease(createTenantId(), container)
+      const container = createPoolContainer()
+      const results = await coordinator.onRelease(createTenantId(), container, syncConfig)
 
       // Should only execute upload mapping
       expect(results).toHaveLength(1)
     })
 
     test('clears tenant status after release', async () => {
-      const poolId = createPoolId()
       const tenantId = createTenantId()
-      const spec = createSyncSpec({
-        poolId,
+      const syncConfig = createSyncConfig({
         policy: { onRelease: true },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
+      const container = createPoolContainer()
 
       // Create some status
-      statusTracker.markSyncStarted(tenantId, spec.id)
-      statusTracker.markSyncCompleted(tenantId, spec.id)
+      const syncId = `workload-sync-${container.poolId}`
+      statusTracker.markSyncStarted(tenantId, syncId)
+      statusTracker.markSyncCompleted(tenantId, syncId)
 
-      await coordinator.onRelease(tenantId, container)
+      await coordinator.onRelease(tenantId, container, syncConfig)
 
       // Status should be cleared
       const statuses = statusTracker.getStatusesForTenant(tenantId)
       expect(statuses).toHaveLength(0)
     })
+
+    test('stops periodic sync on release', async () => {
+      const tenantId = createTenantId()
+      const syncConfig = createSyncConfig({
+        policy: { onClaim: true, onRelease: true, interval: 60000 },
+      })
+
+      const container = createPoolContainer()
+
+      // Start periodic sync via onClaim
+      await coordinator.onClaim(tenantId, container, syncConfig)
+      expect(coordinator.getStats().activeJobs).toBe(1)
+
+      // Release should stop it
+      await coordinator.onRelease(tenantId, container, syncConfig)
+      expect(coordinator.getStats().activeJobs).toBe(0)
+    })
   })
 
   describe('triggerSync', () => {
-    test('executes all mappings with direction=both', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
-        mappings: [
-          createSyncMapping({ direction: 'upload' }),
-          createSyncMapping({ direction: 'download', containerPath: '/config' }),
-        ],
-        policy: { allowManualTrigger: true },
-      })
-      registry.register(spec)
+    test('returns empty array when no sync config', async () => {
+      const container = createPoolContainer()
+      const results = await coordinator.triggerSync(createTenantId(), container)
+      expect(results).toHaveLength(0)
+    })
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.triggerSync(createTenantId(), container, 'both')
+    test('executes all mappings with direction=both', async () => {
+      const syncConfig = createSyncConfig({
+        mappings: [
+          createWorkloadSyncMapping({ direction: 'upload' }),
+          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
+        ],
+        policy: { manual: true },
+      })
+
+      const container = createPoolContainer()
+      const results = await coordinator.triggerSync(createTenantId(), container, syncConfig, 'both')
 
       expect(results).toHaveLength(2)
     })
 
     test('executes only upload mappings with direction=upload', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
+      const syncConfig = createSyncConfig({
         mappings: [
-          createSyncMapping({ direction: 'upload' }),
-          createSyncMapping({ direction: 'download', containerPath: '/config' }),
+          createWorkloadSyncMapping({ direction: 'upload' }),
+          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
         ],
-        policy: { allowManualTrigger: true },
+        policy: { manual: true },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.triggerSync(createTenantId(), container, 'upload')
+      const container = createPoolContainer()
+      const results = await coordinator.triggerSync(createTenantId(), container, syncConfig, 'upload')
 
       expect(results).toHaveLength(1)
     })
 
-    test('skips specs without allowManualTrigger', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
-        policy: { allowManualTrigger: false },
+    test('returns empty when manual trigger not allowed', async () => {
+      const syncConfig = createSyncConfig({
+        policy: { manual: false },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.triggerSync(createTenantId(), container)
+      const container = createPoolContainer()
+      const results = await coordinator.triggerSync(createTenantId(), container, syncConfig)
 
       expect(results).toHaveLength(0)
-    })
-  })
-
-  describe('triggerSyncSpec', () => {
-    test('executes sync for specific spec', async () => {
-      const poolId = createPoolId()
-      const spec1 = createSyncSpec({ poolId, policy: { allowManualTrigger: true } })
-      const spec2 = createSyncSpec({ poolId, policy: { allowManualTrigger: true } })
-      registry.register(spec1)
-      registry.register(spec2)
-
-      const container = createPoolContainer({ poolId })
-      const results = await coordinator.triggerSyncSpec(createTenantId(), container, spec1.id)
-
-      expect(results).toHaveLength(1)
-      expect(executor.sync).toHaveBeenCalledTimes(1)
-    })
-
-    test('throws error for non-existent spec', async () => {
-      const container = createPoolContainer()
-
-      await expect(
-        coordinator.triggerSyncSpec(createTenantId(), container, 'non-existent'),
-      ).rejects.toThrow("SyncSpec 'non-existent' not found")
-    })
-
-    test('throws error if manual trigger not allowed', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
-        policy: { allowManualTrigger: false },
-      })
-      registry.register(spec)
-
-      const container = createPoolContainer({ poolId })
-
-      await expect(
-        coordinator.triggerSyncSpec(createTenantId(), container, spec.id),
-      ).rejects.toThrow('does not allow manual triggers')
     })
   })
 
@@ -231,15 +224,12 @@ describe('SyncCoordinator', () => {
 
   describe('shutdown', () => {
     test('clears all periodic jobs', async () => {
-      const poolId = createPoolId()
-      const spec = createSyncSpec({
-        poolId,
-        policy: { onClaim: true, intervalMs: 60000 },
+      const syncConfig = createSyncConfig({
+        policy: { onClaim: true, interval: 60000 },
       })
-      registry.register(spec)
 
-      const container = createPoolContainer({ poolId })
-      await coordinator.onClaim(createTenantId(), container)
+      const container = createPoolContainer()
+      await coordinator.onClaim(createTenantId(), container, syncConfig)
 
       // Should have an active job
       expect(coordinator.getStats().activeJobs).toBe(1)

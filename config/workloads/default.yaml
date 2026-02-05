@@ -1,0 +1,31 @@
+# Default workload specification for Boilerhouse
+# A minimal Alpine-based workload for development and testing
+
+id: default
+name: Default Workload
+image: alpine:latest
+
+volumes:
+  state:
+    target: /state
+  secrets:
+    target: /secrets
+    read_only: true
+  comm:
+    target: /comm
+
+environment:
+  STATE_DIR: /state
+  SECRETS_DIR: /secrets
+  SOCKET_PATH: /comm/app.sock
+
+healthcheck:
+  test: ["CMD", "true"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+pool:
+  min_size: 1
+  max_size: 10
+  idle_timeout: 5m

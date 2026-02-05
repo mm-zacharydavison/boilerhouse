@@ -1,0 +1,66 @@
+# Python ML Worker workload
+# A containerized Python environment for running ML inference tasks
+
+id: python-worker
+name: Python ML Worker
+image: python:3.11-slim
+
+volumes:
+  state:
+    target: /data
+  secrets:
+    target: /secrets
+    read_only: true
+  comm:
+    target: /comm
+  custom:
+    - name: models
+      target: /models
+      read_only: true
+
+environment:
+  PYTHONUNBUFFERED: "1"
+  STATE_DIR: /data
+  SECRETS_DIR: /secrets
+  MODEL_DIR: /models
+  SOCKET_PATH: /comm/worker.sock
+
+healthcheck:
+  test: ["CMD", "python", "-c", "print('ok')"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+deploy:
+  resources:
+    limits:
+      cpus: "2"
+      memory: 2G
+
+read_only: true
+user: "1000"
+network_mode: none
+
+# Pool configuration (boilerhouse-specific)
+pool:
+  min_size: 5
+  max_size: 50
+  idle_timeout: 10m
+
+# Sync configuration (boilerhouse-specific) - persist ML results to S3
+sync:
+  sink:
+    type: s3
+    bucket: ml-worker-state
+    region: us-west-2
+    prefix: tenants/${tenantId}/
+
+  mappings:
+    - path: /data
+      direction: bidirectional
+      mode: sync
+
+  policy:
+    on_claim: true
+    on_release: true
+    interval: 5m

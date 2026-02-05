@@ -11,7 +11,16 @@ function getEnvString(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue
 }
 
-export const config: BoilerhouseConfig = {
+function getEnvPath(key: string, defaultValue: string): string {
+  const value = process.env[key]
+  if (value === undefined) return defaultValue
+  // Resolve relative paths from cwd
+  return value.startsWith('/') ? value : `${process.cwd()}/${value}`
+}
+
+export const config: BoilerhouseConfig & { workloadsDir: string } = {
+  workloadsDir: getEnvPath('BOILERHOUSE_WORKLOADS_DIR', `${process.cwd()}/config/workloads`),
+
   pool: {
     minPoolSize: getEnvNumber('BOILERHOUSE_POOL_SIZE', 5),
     maxContainersPerNode: getEnvNumber('BOILERHOUSE_MAX_CONTAINERS', 50),
@@ -21,8 +30,8 @@ export const config: BoilerhouseConfig = {
 
   resources: {
     cpus: getEnvNumber('BOILERHOUSE_CONTAINER_CPUS', 1),
-    memoryMb: getEnvNumber('BOILERHOUSE_CONTAINER_MEMORY_MB', 512),
-    tmpfsSizeMb: getEnvNumber('BOILERHOUSE_CONTAINER_TMPFS_MB', 100),
+    memory: getEnvNumber('BOILERHOUSE_CONTAINER_MEMORY_MB', 512),
+    tmpfsSize: getEnvNumber('BOILERHOUSE_CONTAINER_TMPFS_MB', 100),
   },
 
   stateBaseDir: getEnvString('BOILERHOUSE_STATE_DIR', '/var/lib/boilerhouse/states'),

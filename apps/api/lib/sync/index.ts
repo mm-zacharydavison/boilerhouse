@@ -2,11 +2,8 @@
  * Sync Module
  *
  * Provides rclone-based state synchronization between containers and remote storage.
- * Supports any rclone-compatible sink through the adapter pattern.
+ * Sync configuration is defined in WorkloadSpec.sync - there is no separate sync registry.
  */
-
-// Registry for managing sync specifications
-export { SyncRegistry } from './registry'
 
 // Sink adapters for different storage backends
 export { type SinkAdapter, SinkAdapterRegistry, defaultSinkAdapterRegistry } from './sink-adapter'

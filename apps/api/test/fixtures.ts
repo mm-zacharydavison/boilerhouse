@@ -12,11 +12,11 @@ import type {
   S3SinkConfig,
   SyncId,
   SyncMapping,
-  SyncPolicy,
-  SyncSpec,
   TenantId,
   WorkloadId,
   WorkloadSpec,
+  WorkloadSyncMapping,
+  WorkloadSyncPolicy,
 } from '@boilerhouse/core'
 import { faker } from '@faker-js/faker'
 
@@ -33,15 +33,15 @@ export function createContainerId(): ContainerId {
 }
 
 export function createPoolId(): PoolId {
-  return `pool-${faker.string.alphanumeric(6)}` as PoolId
-}
-
-export function createSyncId(): SyncId {
-  return `sync-${faker.string.alphanumeric(6)}` as SyncId
+  return `pool-${faker.string.alphanumeric({ length: 6, casing: 'lower' })}` as PoolId
 }
 
 export function createWorkloadId(): WorkloadId {
-  return `workload-${faker.string.alphanumeric(6)}` as WorkloadId
+  return `workload-${faker.string.alphanumeric({ length: 6, casing: 'lower' })}` as WorkloadId
+}
+
+export function createSyncId(): SyncId {
+  return `sync-${faker.string.alphanumeric({ length: 6, casing: 'lower' })}` as SyncId
 }
 
 // =============================================================================
@@ -54,18 +54,18 @@ export function createWorkloadSpec(overrides?: Partial<WorkloadSpec>): WorkloadS
     name: faker.commerce.productName(),
     image: `${faker.internet.domainWord()}/${faker.internet.domainWord()}:${faker.system.semver()}`,
     volumes: {
-      state: { containerPath: '/state', mode: 'rw' },
-      secrets: { containerPath: '/secrets', mode: 'ro' },
-      comm: { containerPath: '/comm', mode: 'rw' },
+      state: { target: '/state', readOnly: false },
+      secrets: { target: '/secrets', readOnly: true },
+      comm: { target: '/comm', readOnly: false },
     },
     environment: {
       STATE_DIR: '/state',
       SOCKET_PATH: '/comm/app.sock',
     },
-    healthCheck: {
-      command: ['true'],
-      intervalMs: 30000,
-      timeoutMs: 5000,
+    healthcheck: {
+      test: ['true'],
+      interval: 30000,
+      timeout: 5000,
       retries: 3,
     },
     ...overrides,
@@ -92,7 +92,7 @@ export function createPoolContainer(overrides?: Partial<PoolContainer>): PoolCon
 }
 
 // =============================================================================
-// Sync Fixtures
+// Sync Fixtures (for WorkloadSpec.sync)
 // =============================================================================
 
 export function createS3SinkConfig(overrides?: Partial<S3SinkConfig>): S3SinkConfig {
@@ -107,6 +107,20 @@ export function createS3SinkConfig(overrides?: Partial<S3SinkConfig>): S3SinkCon
   }
 }
 
+export function createWorkloadSyncMapping(overrides?: Partial<WorkloadSyncMapping>): WorkloadSyncMapping {
+  return {
+    path: `/${faker.system.directoryPath().split('/').pop()}`,
+    sinkPath: `${faker.system.directoryPath().split('/').pop()}/`,
+    direction: faker.helpers.arrayElement(['upload', 'download', 'bidirectional']),
+    mode: faker.helpers.arrayElement(['sync', 'copy']),
+    ...overrides,
+  }
+}
+
+/**
+ * Create a SyncMapping for the rclone executor.
+ * This is the internal format used by the sync executor.
+ */
 export function createSyncMapping(overrides?: Partial<SyncMapping>): SyncMapping {
   return {
     containerPath: `/${faker.system.directoryPath().split('/').pop()}`,
@@ -117,23 +131,12 @@ export function createSyncMapping(overrides?: Partial<SyncMapping>): SyncMapping
   }
 }
 
-export function createSyncPolicy(overrides?: Partial<SyncPolicy>): SyncPolicy {
+export function createWorkloadSyncPolicy(overrides?: Partial<WorkloadSyncPolicy>): WorkloadSyncPolicy {
   return {
     onClaim: faker.datatype.boolean(),
     onRelease: faker.datatype.boolean(),
-    allowManualTrigger: faker.datatype.boolean(),
-    intervalMs: faker.helpers.arrayElement([undefined, 30000, 60000, 300000]),
-    ...overrides,
-  }
-}
-
-export function createSyncSpec(overrides?: Partial<SyncSpec>): SyncSpec {
-  return {
-    id: createSyncId(),
-    poolId: createPoolId(),
-    mappings: [createSyncMapping()],
-    sink: createS3SinkConfig(),
-    policy: createSyncPolicy(),
+    manual: faker.datatype.boolean(),
+    interval: faker.helpers.arrayElement([undefined, 30000, 60000, 300000]),
     ...overrides,
   }
 }

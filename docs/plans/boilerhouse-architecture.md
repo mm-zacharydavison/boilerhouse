@@ -1020,30 +1020,32 @@ This section tracks the work required to transform this project from an OpenClaw
 
 | #     | Task                                          | Files Affected                                                                 | Status |
 |-------|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 3.1.1 | Define YAML schema for WorkloadSpec           | `packages/core/src/schemas/workload.schema.json` (new) - reuse compose types   | [ ]    |
-| 3.1.2 | Create YAML loader utility                    | `apps/api/lib/workload/loader.ts` (new) - loads and validates YAML files       | [ ]    |
-| 3.1.3 | Create workloads config directory             | `config/workloads/` (new) - default location for workload YAML files           | [ ]    |
-| 3.1.4 | Migrate DEFAULT_WORKLOAD to YAML              | `config/workloads/default.yaml` (new) - move from `apps/api/src/index.ts`      | [ ]    |
-| 3.1.5 | Add BOILERHOUSE_WORKLOADS_DIR env var         | `apps/api/lib/config.ts` - configurable workload directory path                | [ ]    |
-| 3.1.6 | Update app startup to load from YAML          | `apps/api/src/index.ts` - use loader instead of inline spec                    | [ ]    |
-| 3.1.7 | Add workload reload capability                | `apps/api/lib/workload/loader.ts` - watch for file changes (optional)          | [ ]    |
-| 3.1.8 | Create example workload YAML files            | `config/workloads/examples/` - python-worker.yaml, node-api.yaml, etc.         | [ ]    |
-| 3.1.9 | Document YAML workload format                 | `docs/workload-spec.md` (new) - schema reference and examples                  | [ ]    |
+| 3.1.1 | Define YAML schema for WorkloadSpec           | `packages/core/src/schemas/workload.schema.json` (new) - reuse compose types   | [x]    |
+| 3.1.2 | Create YAML loader utility                    | `apps/api/lib/workload/loader.ts` (new) - loads and validates YAML files       | [x]    |
+| 3.1.3 | Create workloads config directory             | `config/workloads/` (new) - default location for workload YAML files           | [x]    |
+| 3.1.4 | Migrate DEFAULT_WORKLOAD to YAML              | `config/workloads/default.yaml` (new) - move from `apps/api/src/index.ts`      | [x]    |
+| 3.1.5 | Add BOILERHOUSE_WORKLOADS_DIR env var         | `apps/api/lib/config.ts` - configurable workload directory path                | [x]    |
+| 3.1.6 | Update app startup to load from YAML          | `apps/api/src/index.ts` - use loader instead of inline spec                    | [x]    |
+| 3.1.7 | Add workload reload capability                | `apps/api/lib/workload/loader.ts` - watch for file changes (optional)          | [x]    |
+| 3.1.8 | Create example workload YAML files            | `config/workloads/examples/` - python-worker.yaml, node-api.yaml, etc.         | [x]    |
+| 3.1.9 | Document YAML workload format                 | `docs/workload-spec.md` (new) - schema reference and examples                  | [x]    |
 
 #### SyncSpec YAML Migration
 
+**SIMPLIFIED**: Sync configuration is embedded in WorkloadSpec, not separate files. Tasks 3.1.10-3.1.19 are N/A.
+
 | #      | Task                                          | Files Affected                                                                 | Status |
 |--------|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 3.1.10 | Define YAML schema for SyncSpec               | `packages/core/src/schemas/sync.schema.json` (new)                             | [ ]    |
-| 3.1.11 | Create sync config directory                  | `config/sync/` (new) - default location for sync YAML files                    | [ ]    |
-| 3.1.12 | Add BOILERHOUSE_SYNC_DIR env var              | `apps/api/lib/config.ts` - configurable sync config directory path             | [ ]    |
-| 3.1.13 | Create file-backed SyncRegistry               | `apps/api/lib/sync/registry.ts` - refactor to load from YAML on startup        | [ ]    |
-| 3.1.14 | Add YAML write-back on register()             | `apps/api/lib/sync/registry.ts` - write new spec to `config/sync/{id}.yaml`    | [ ]    |
-| 3.1.15 | Add YAML write-back on update()               | `apps/api/lib/sync/registry.ts` - update existing YAML file                    | [ ]    |
-| 3.1.16 | Add YAML deletion on remove()                 | `apps/api/lib/sync/registry.ts` - delete YAML file when spec removed           | [ ]    |
-| 3.1.17 | Add file watcher for external changes         | `apps/api/lib/sync/registry.ts` - reload on file changes (optional)            | [ ]    |
-| 3.1.18 | Create example sync YAML files                | `config/sync/examples/` - s3-state-sync.yaml, etc.                             | [ ]    |
-| 3.1.19 | Document YAML sync format                     | `docs/sync-spec.md` (new) - schema reference and examples                      | [ ]    |
+| 3.1.10 | ~~Define YAML schema for SyncSpec~~           | N/A - sync config is embedded in WorkloadSpec                                  | [N/A]  |
+| 3.1.11 | ~~Create sync config directory~~              | N/A - no separate sync directory needed                                        | [N/A]  |
+| 3.1.12 | ~~Add BOILERHOUSE_SYNC_DIR env var~~          | N/A - sync config comes from workload files                                    | [N/A]  |
+| 3.1.13 | ~~Create file-backed SyncRegistry~~           | N/A - SyncCoordinator reads from WorkloadSpec.sync directly                    | [N/A]  |
+| 3.1.14 | ~~Add YAML write-back on register()~~         | N/A                                                                            | [N/A]  |
+| 3.1.15 | ~~Add YAML write-back on update()~~           | N/A                                                                            | [N/A]  |
+| 3.1.16 | ~~Add YAML deletion on remove()~~             | N/A                                                                            | [N/A]  |
+| 3.1.17 | ~~Add file watcher for external changes~~     | N/A                                                                            | [N/A]  |
+| 3.1.18 | ~~Create example sync YAML files~~            | N/A - see workload examples with sync config                                   | [N/A]  |
+| 3.1.19 | ~~Document YAML sync format~~                 | Sync config documented in `docs/workload-spec.md`                              | [x]    |
 
 **Field mapping to docker-compose**:
 
