@@ -2,10 +2,10 @@
   "extends": "./tsconfig.base.json",
   "include": [
     "packages/*/src/**/*",
-    "apps/*/src/**/*",
-    "apps/*/lib/**/*",
-    "apps/*/test/**/*",
+    "apps/api/src/**/*",
+    "apps/api/lib/**/*",
+    "apps/api/test/**/*",
     "test/**/*"
   ],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "apps/dashboard"]
 }

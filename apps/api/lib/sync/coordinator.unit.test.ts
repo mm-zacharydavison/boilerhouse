@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { WorkloadSyncConfig } from '@boilerhouse/core'
+import type { WorkloadSyncConfig, WorkloadSyncPolicy } from '@boilerhouse/core'
 import {
   createMockRcloneExecutor,
   createPoolContainer,
@@ -15,16 +15,26 @@ import { SyncCoordinator } from './coordinator'
 import type { RcloneSyncExecutor } from './rclone'
 import { SyncStatusTracker } from './status'
 
-function createSyncConfig(overrides?: Partial<WorkloadSyncConfig>): WorkloadSyncConfig {
+const DEFAULT_POLICY: WorkloadSyncPolicy = {
+  onClaim: true,
+  onRelease: true,
+  manual: true,
+}
+
+interface SyncConfigOverrides {
+  sink?: WorkloadSyncConfig['sink']
+  mappings?: WorkloadSyncConfig['mappings']
+  policy?: Partial<WorkloadSyncPolicy>
+}
+
+function createSyncConfig(overrides?: SyncConfigOverrides): WorkloadSyncConfig {
   return {
-    sink: createS3SinkConfig(),
-    mappings: [createWorkloadSyncMapping()],
+    sink: overrides?.sink ?? createS3SinkConfig(),
+    mappings: overrides?.mappings ?? [createWorkloadSyncMapping()],
     policy: {
-      onClaim: true,
-      onRelease: true,
-      manual: true,
+      ...DEFAULT_POLICY,
+      ...overrides?.policy,
     },
-    ...overrides,
   }
 }
 
@@ -195,7 +205,12 @@ describe('SyncCoordinator', () => {
       })
 
       const container = createPoolContainer()
-      const results = await coordinator.triggerSync(createTenantId(), container, syncConfig, 'upload')
+      const results = await coordinator.triggerSync(
+        createTenantId(),
+        container,
+        syncConfig,
+        'upload',
+      )
 
       expect(results).toHaveLength(1)
     })

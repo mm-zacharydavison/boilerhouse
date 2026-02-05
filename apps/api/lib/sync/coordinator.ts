@@ -12,6 +12,7 @@ import type {
   TenantId,
   WorkloadSyncConfig,
   WorkloadSyncMapping,
+  WorkloadSyncPolicy,
 } from '@boilerhouse/core'
 import type { RcloneSyncExecutor, SyncResult } from './rclone'
 import type { SyncStatusTracker } from './status'
@@ -45,6 +46,12 @@ const DEFAULT_CONFIG: Required<SyncCoordinatorConfig> = {
   minSyncInterval: 30 * 1000,
   maxConcurrent: 5,
   verbose: false,
+}
+
+const DEFAULT_POLICY: WorkloadSyncPolicy = {
+  onClaim: true,
+  onRelease: true,
+  manual: true,
 }
 
 /**
@@ -131,7 +138,7 @@ export class SyncCoordinator {
     }
 
     const results: SyncResult[] = []
-    const policy = syncConfig.policy ?? {}
+    const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
 
     if (!policy.onClaim) {
       return results
@@ -181,7 +188,7 @@ export class SyncCoordinator {
     }
 
     const results: SyncResult[] = []
-    const policy = syncConfig.policy ?? {}
+    const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
 
     if (!policy.onRelease) {
       this.statusTracker.clearTenant(tenantId)
@@ -224,7 +231,7 @@ export class SyncCoordinator {
       return []
     }
 
-    const policy = syncConfig.policy ?? {}
+    const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
     if (!policy.manual) {
       return []
     }
@@ -257,7 +264,7 @@ export class SyncCoordinator {
     syncConfig: WorkloadSyncConfig,
     container: PoolContainer,
   ): void {
-    const policy = syncConfig.policy ?? {}
+    const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
     const specInterval = policy.interval ?? 0
     const interval = Math.max(specInterval, this.config.minSyncInterval)
 
@@ -351,7 +358,12 @@ export class SyncCoordinator {
         mode: mapping.mode ?? 'sync',
       }
 
-      const result = await this.executor.sync(tenantId, execMapping, syncConfig.sink, container.stateDir)
+      const result = await this.executor.sync(
+        tenantId,
+        execMapping,
+        syncConfig.sink,
+        container.stateDir,
+      )
 
       if (result.success) {
         this.statusTracker.markSyncCompleted(tenantId, syncId)

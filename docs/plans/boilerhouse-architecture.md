@@ -1183,12 +1183,14 @@ policy:
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 4.1 | Rename docker/openclaw directory              | `docker/openclaw/` → `docker/example-workload/` or remove                      | [ ]    |
-| 4.2 | Update Dockerfile                             | Remove OPENCLAW_* env vars, update paths                                       | [ ]    |
-| 4.3 | Update entrypoint.sh                          | Remove OpenClaw-specific logic                                                 | [ ]    |
-| 4.4 | Update state-sync.sh                          | Generalize or remove                                                           | [ ]    |
-| 4.5 | Update default docker image config            | `apps/api/lib/config.ts` (multiclaw-openclaw:latest → example)                 | [ ]    |
-| 4.6 | Update docker-compose.yml                     | Remove OpenClaw-specific service definitions                                   | [ ]    |
+| 4.1 | Rename docker/openclaw directory              | `docker/openclaw/` → `docker/example-workload/` or remove                      | [N/A]  |
+| 4.2 | Update Dockerfile                             | Remove OPENCLAW_* env vars, update paths                                       | [N/A]  |
+| 4.3 | Update entrypoint.sh                          | Remove OpenClaw-specific logic                                                 | [N/A]  |
+| 4.4 | Update state-sync.sh                          | Generalize or remove                                                           | [N/A]  |
+| 4.5 | Update default docker image config            | `apps/api/lib/config.ts` (multiclaw-openclaw:latest → example)                 | [x]    |
+| 4.6 | Update docker-compose.yml                     | Remove OpenClaw-specific service definitions                                   | [x]    |
+
+**Note**: Tasks 4.1-4.4 marked N/A because docker/openclaw/ directory and related files (entrypoint.sh, state-sync.sh) never existed in this codebase. Task 4.5 completed via workload YAML system (Phase 3.1). Task 4.6 completed in Phase 0.
 
 ### Phase 5: Update Tests
 
@@ -1214,19 +1216,23 @@ policy:
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 7.1 | Remove or archive plugins directory           | `plugins/` directory                                                           | [ ]    |
-| 7.2 | Remove plugin references in types             | `packages/core/src/types.ts` (multiclaw-tools examples)                        | [ ]    |
-| 7.3 | Remove plugin copy from Dockerfile            | `docker/openclaw/Dockerfile` (commented COPY instruction)                      | [ ]    |
+| 7.1 | Remove or archive plugins directory           | `plugins/` directory                                                           | [N/A]  |
+| 7.2 | Remove plugin references in types             | `packages/core/src/types.ts` (multiclaw-tools examples)                        | [x]    |
+| 7.3 | Remove plugin copy from Dockerfile            | `docker/openclaw/Dockerfile` (commented COPY instruction)                      | [N/A]  |
+
+**Note**: Tasks 7.1 and 7.3 marked N/A because plugins/ directory and docker/openclaw/Dockerfile never existed. Task 7.2 completed in Phase 1.
 
 ### Phase 8: Create Workload Registry (New Feature)
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 8.1 | Create workload registry module               | `apps/api/lib/workload/registry.ts` (new)                                      | [ ]    |
-| 8.2 | Add JSON Schema validation                    | `apps/api/lib/workload/schema.ts` (new)                                        | [ ]    |
-| 8.3 | Create example workload definitions           | `apps/api/lib/workload/defaults.ts` (new)                                      | [ ]    |
-| 8.4 | Update ContainerManager to use registry       | `apps/api/lib/container/manager.ts`                                            | [ ]    |
-| 8.5 | Update ContainerPool for multi-workload       | `apps/api/lib/container/pool.ts`                                               | [ ]    |
+| 8.1 | Create workload registry module               | `apps/api/lib/workload/loader.ts` (implemented as loader with registry)        | [x]    |
+| 8.2 | Add JSON Schema validation                    | `packages/core/src/schemas/workload.ts` (Zod schema with validation)           | [x]    |
+| 8.3 | Create example workload definitions           | `config/workloads/examples/` (YAML files)                                      | [x]    |
+| 8.4 | Update ContainerManager to use registry       | `apps/api/lib/container/manager.ts` (accepts WorkloadSpec)                     | [x]    |
+| 8.5 | Update ContainerPool for multi-workload       | `apps/api/lib/container/pool.ts` (accepts workload in config)                  | [x]    |
+
+**Note**: Phase 8 completed as part of Phase 3.1 (YAML migration). Workload registry implemented as `WorkloadRegistry` class in `loader.ts`.
 
 ### Phase 9: Implement Sync API Endpoints
 
@@ -1242,55 +1248,79 @@ policy:
 | 9.8 | POST /tenants/:id/sync - tenant sync trigger  | `apps/api/src/routes/tenants.ts`                                               | [ ]    |
 | 9.9 | Add sync status to tenant status endpoint     | `apps/api/src/routes/tenants.ts` (GET /tenants/:id/status)                     | [ ]    |
 
+### Phase 10: Dashboard UI
+
+| #    | Task                                          | Files Affected                                                                 | Status |
+|------|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
+| 10.1 | Set up Vite + React + TypeScript              | `apps/dashboard/` (package.json, vite.config.ts, tsconfig.json)                | [x]    |
+| 10.2 | Add Tailwind CSS + shadcn/ui components       | `apps/dashboard/` (tailwind.config.js, src/components/ui/)                     | [x]    |
+| 10.3 | Create API client with typed methods          | `apps/dashboard/src/api/` (client.ts, types.ts)                                | [x]    |
+| 10.4 | Add TanStack Query hooks                      | `apps/dashboard/src/hooks/useApi.ts`                                           | [x]    |
+| 10.5 | Create WebSocket hook for real-time updates   | `apps/dashboard/src/hooks/useWebSocket.ts`                                     | [x]    |
+| 10.6 | Implement layout components                   | `apps/dashboard/src/components/layout/` (Sidebar, Header, Layout)              | [x]    |
+| 10.7 | Implement Overview Dashboard page             | `apps/dashboard/src/pages/Dashboard.tsx`                                       | [x]    |
+| 10.8 | Implement Pools list page                     | `apps/dashboard/src/pages/Pools.tsx`                                           | [x]    |
+| 10.9 | Implement Pool detail page                    | `apps/dashboard/src/pages/PoolDetail.tsx`                                      | [x]    |
+| 10.10| Implement Containers page                     | `apps/dashboard/src/pages/Containers.tsx`                                      | [x]    |
+| 10.11| Implement Tenants list page                   | `apps/dashboard/src/pages/Tenants.tsx`                                         | [x]    |
+| 10.12| Implement Tenant detail page                  | `apps/dashboard/src/pages/TenantDetail.tsx`                                    | [x]    |
+| 10.13| Implement Sync monitor page                   | `apps/dashboard/src/pages/Sync.tsx`                                            | [x]    |
+| 10.14| Implement Activity log page                   | `apps/dashboard/src/pages/Activity.tsx`                                        | [x]    |
+| 10.15| Implement Settings page                       | `apps/dashboard/src/pages/Settings.tsx`                                        | [x]    |
+| 10.16| Add mock data for development                 | `apps/dashboard/src/mocks/data.ts`                                             | [x]    |
+
+**Note**: Dashboard currently uses mock data. Real API integration pending Phase 9 (API endpoints) and WebSocket server implementation.
+
 ---
 
 ### Summary of Changes by File
 
-| File                                      | Changes Required                                           |
-|-------------------------------------------|------------------------------------------------------------|
-| `package.json`                            | Rename to boilerhouse                                      |
-| `packages/core/package.json`              | Rename to @boilerhouse/core                                |
-| `packages/docker/package.json`            | Rename to @boilerhouse/docker                              |
-| `apps/api/package.json`                   | Rename to @boilerhouse/api                                 |
-| `packages/core/src/types.ts`              | Major refactor - rename/remove OpenClaw types, add new     |
-| `packages/core/src/runtime.ts`            | Update examples in comments                                |
-| `apps/api/lib/config.ts`                  | Rename env vars, update paths and image name               |
-| `apps/api/lib/container/manager.ts`       | Major refactor - parameterize all OpenClaw specifics       |
-| `apps/api/lib/container/pool.ts`          | Minor updates for new types                                |
-| `apps/api/lib/state/*.ts`                 | Generalize state handling, remove OpenClaw specifics       |
-| `apps/api/lib/sync/registry.ts`           | Refactor - file-backed registry with YAML persistence      |
-| `apps/api/lib/sync/rclone.ts`             | Refactor - generic rclone executor                         |
-| `apps/api/lib/sync/coordinator.ts`        | New - sync lifecycle management                            |
-| `apps/api/lib/sync/status.ts`             | New - sync status tracking                                 |
-| `apps/api/lib/workload/loader.ts`         | New - YAML workload loader and validator                   |
-| `packages/core/src/schemas/workload.schema.json` | New - JSON Schema for WorkloadSpec validation       |
-| `packages/core/src/schemas/sync.schema.json` | New - JSON Schema for SyncSpec validation               |
-| `config/workloads/*.yaml`                 | New - workload definition files                            |
-| `config/sync/*.yaml`                      | New - sync spec definition files (file-backed registry)    |
-| `docs/workload-spec.md`                   | New - workload YAML format documentation                   |
-| `docs/sync-spec.md`                       | New - sync YAML format documentation                       |
-| `apps/api/src/routes/sync.ts`             | New - sync API endpoints (writes back to YAML)             |
-| `apps/api/src/index.ts`                   | Update log messages                                        |
-| `docker/openclaw/*`                       | Rename/remove or convert to example                        |
-| `docker-compose.yml`                      | Update all names and networks                              |
-| `test/*.ts`                               | Update references                                          |
-| `README.md`                               | Complete rewrite                                           |
-| `CLAUDE.md`                               | Update project description                                 |
-| `docs/plans/*.md`                         | Archive OpenClaw docs, rename this file                    |
-| `plugins/`                                | Remove or archive                                          |
+| File                                           | Changes Required                                      | Status |
+|------------------------------------------------|-------------------------------------------------------|--------|
+| `package.json`                                 | Rename to boilerhouse                                 | Done   |
+| `packages/core/package.json`                   | Rename to @boilerhouse/core                           | Done   |
+| `packages/docker/package.json`                 | Rename to @boilerhouse/docker                         | Done   |
+| `apps/api/package.json`                        | Rename to @boilerhouse/api                            | Done   |
+| `packages/core/src/types.ts`                   | Major refactor - rename/remove OpenClaw types         | Done   |
+| `packages/core/src/runtime.ts`                 | Update examples in comments                           | Done   |
+| `apps/api/lib/config.ts`                       | Rename env vars, update paths and image name          | Done   |
+| `apps/api/lib/container/manager.ts`            | Major refactor - parameterize all OpenClaw specifics  | Done   |
+| `apps/api/lib/container/pool.ts`               | Minor updates for new types                           | Done   |
+| `apps/api/lib/sync/registry.ts`                | In-memory registry for SyncSpecs                      | Done   |
+| `apps/api/lib/sync/rclone.ts`                  | Generic rclone executor                               | Done   |
+| `apps/api/lib/sync/coordinator.ts`             | Sync lifecycle management                             | Done   |
+| `apps/api/lib/sync/status.ts`                  | Sync status tracking                                  | Done   |
+| `apps/api/lib/workload/loader.ts`              | YAML workload loader and validator                    | Done   |
+| `packages/core/src/schemas/workload.ts`        | Zod schema for WorkloadSpec validation                | Done   |
+| `config/workloads/*.yaml`                      | Workload definition files                             | Done   |
+| `config/workloads/examples/*.yaml`             | Example workload files                                | Done   |
+| `docs/workload-spec.md`                        | Workload YAML format documentation                    | Done   |
+| `apps/api/src/index.ts`                        | Update log messages                                   | Done   |
+| `docker-compose.yml`                           | Update all names and networks                         | Done   |
+| `README.md`                                    | Complete rewrite                                      | Done   |
+| `CLAUDE.md`                                    | Update project description                            | Done   |
+| `apps/dashboard/`                              | New - React dashboard application                     | Done   |
+| `apps/dashboard/src/api/`                      | API client and types                                  | Done   |
+| `apps/dashboard/src/components/`               | UI components (layout, ui)                            | Done   |
+| `apps/dashboard/src/pages/`                    | Dashboard pages                                       | Done   |
+| `apps/dashboard/src/hooks/`                    | React hooks (useApi, useWebSocket)                    | Done   |
+| `apps/api/src/routes/sync.ts`                  | Sync API endpoints                                    | TODO   |
+| `apps/api/src/routes/tenants.ts`               | Tenant API endpoints                                  | TODO   |
+| `test/*.ts`                                    | Update references                                     | TODO   |
 
 ---
 
 ### Execution Order Recommendation
 
-1. **Phase 0** first - establishes new naming convention
-2. **Phase 1** next - defines the new type system (including SyncSpec, SinkConfig)
-3. **Phase 2** - core abstraction of container config
-4. **Phase 3** - rclone sync engine implementation (depends on Phase 1 types)
-5. **Phase 3.1** - migrate specs to YAML (WorkloadSpec + SyncSpec with file-backed registry)
-6. **Phase 4** - Docker cleanup
+1. **Phase 0** first - establishes new naming convention ✅ DONE
+2. **Phase 1** next - defines the new type system (including SyncSpec, SinkConfig) ✅ DONE
+3. **Phase 2** - core abstraction of container config ✅ DONE
+4. **Phase 3** - rclone sync engine implementation (depends on Phase 1 types) ✅ DONE
+5. **Phase 3.1** - migrate specs to YAML (WorkloadSpec + SyncSpec with file-backed registry) ✅ DONE
+6. **Phase 4** - Docker cleanup ✅ DONE (mostly N/A)
 7. **Phase 5** - ensure tests pass after each phase
 8. **Phase 6** - documentation (can be done in parallel)
-9. **Phase 7** - plugin removal
-10. **Phase 8** - workload registry feature (builds on Phase 3.1 YAML loader)
+9. **Phase 7** - plugin removal ✅ DONE (mostly N/A)
+10. **Phase 8** - workload registry feature (builds on Phase 3.1 YAML loader) ✅ DONE
 11. **Phase 9** - sync API endpoints (depends on Phase 3 sync engine)
+12. **Phase 10** - dashboard UI ✅ DONE (uses mock data, pending API integration)

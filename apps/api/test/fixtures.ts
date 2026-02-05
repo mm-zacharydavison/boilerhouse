@@ -107,7 +107,9 @@ export function createS3SinkConfig(overrides?: Partial<S3SinkConfig>): S3SinkCon
   }
 }
 
-export function createWorkloadSyncMapping(overrides?: Partial<WorkloadSyncMapping>): WorkloadSyncMapping {
+export function createWorkloadSyncMapping(
+  overrides?: Partial<WorkloadSyncMapping>,
+): WorkloadSyncMapping {
   return {
     path: `/${faker.system.directoryPath().split('/').pop()}`,
     sinkPath: `${faker.system.directoryPath().split('/').pop()}/`,
@@ -131,7 +133,9 @@ export function createSyncMapping(overrides?: Partial<SyncMapping>): SyncMapping
   }
 }
 
-export function createWorkloadSyncPolicy(overrides?: Partial<WorkloadSyncPolicy>): WorkloadSyncPolicy {
+export function createWorkloadSyncPolicy(
+  overrides?: Partial<WorkloadSyncPolicy>,
+): WorkloadSyncPolicy {
   return {
     onClaim: faker.datatype.boolean(),
     onRelease: faker.datatype.boolean(),

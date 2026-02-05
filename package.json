@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "bun run --filter '@boilerhouse/api' dev",
+    "dev": "bun run --filter '@boilerhouse/{api,dashboard}' dev",
+    "dev:api": "bun run --filter '@boilerhouse/api' dev",
     "dev:dashboard": "bun run --filter '@boilerhouse/dashboard' dev",
     "build": "bun run --filter '*' build",
     "test": "bun test",

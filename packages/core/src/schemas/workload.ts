@@ -332,7 +332,9 @@ export const workloadSpecSchema = z.object({
   healthcheck: healthCheckConfigSchema.describe('Health check configuration'),
 
   // Deploy configuration (docker-compose compatible)
-  deploy: deployConfigSchema.optional().describe('Deployment configuration including resource limits'),
+  deploy: deployConfigSchema
+    .optional()
+    .describe('Deployment configuration including resource limits'),
 
   // Security options (top-level like docker-compose)
   read_only: z.boolean().optional().describe('Mount root filesystem as read-only'),

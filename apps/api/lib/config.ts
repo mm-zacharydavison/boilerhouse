@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import type { BoilerhouseConfig } from '@boilerhouse/core'
 
 function getEnvNumber(key: string, defaultValue: number): number {
@@ -12,14 +13,13 @@ function getEnvString(key: string, defaultValue: string): string {
 }
 
 function getEnvPath(key: string, defaultValue: string): string {
-  const value = process.env[key]
-  if (value === undefined) return defaultValue
-  // Resolve relative paths from cwd
-  return value.startsWith('/') ? value : `${process.cwd()}/${value}`
+  const value = process.env[key] ?? defaultValue
+  // Resolve relative paths from current working directory
+  return value.startsWith('/') ? value : resolve(process.cwd(), value)
 }
 
 export const config: BoilerhouseConfig & { workloadsDir: string } = {
-  workloadsDir: getEnvPath('BOILERHOUSE_WORKLOADS_DIR', `${process.cwd()}/config/workloads`),
+  workloadsDir: getEnvPath('BOILERHOUSE_WORKLOADS_DIR', '/etc/boilerhouse/workloads'),
 
   pool: {
     minPoolSize: getEnvNumber('BOILERHOUSE_POOL_SIZE', 5),

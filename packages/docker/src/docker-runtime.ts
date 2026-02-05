@@ -78,11 +78,11 @@ export class DockerRuntime implements ContainerRuntime {
         NanoCpus: spec.resources.cpus * 1e9,
         Memory: spec.resources.memory * 1024 * 1024,
 
-        // Tmpfs mounts
+        // Tmpfs mounts (mode must be octal string, not decimal)
         Tmpfs: Object.fromEntries(
           spec.tmpfs.map((t: { target: string; sizeBytes: number; mode?: number }) => [
             t.target,
-            `size=${Math.floor(t.sizeBytes / (1024 * 1024))}m${t.mode ? `,mode=${t.mode}` : ''}`,
+            `size=${Math.floor(t.sizeBytes / (1024 * 1024))}m${t.mode !== undefined ? `,mode=${t.mode.toString(8)}` : ''}`,
           ]),
         ),
 
