@@ -81,11 +81,11 @@ describe('SyncRegistry', () => {
       registry.register(spec)
 
       const updated = registry.update(spec.id, {
-        policy: { ...spec.policy, intervalMs: 60000 },
+        policy: { ...spec.policy, interval: 60000 },
       })
 
-      expect(updated.policy.intervalMs).toBe(60000)
-      expect(registry.get(spec.id)?.policy.intervalMs).toBe(60000)
+      expect(updated.policy.interval).toBe(60000)
+      expect(registry.get(spec.id)?.policy.interval).toBe(60000)
     })
 
     test('throws error for non-existent ID', () => {

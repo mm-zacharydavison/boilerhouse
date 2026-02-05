@@ -19,7 +19,7 @@ export interface SyncCoordinatorConfig {
    * Prevents sync specs from configuring excessively frequent syncs.
    * @default 30000
    */
-  minSyncIntervalMs?: number
+  minSyncInterval?: number
 
   /**
    * Maximum number of concurrent sync operations.
@@ -36,7 +36,7 @@ export interface SyncCoordinatorConfig {
 }
 
 const DEFAULT_CONFIG: Required<SyncCoordinatorConfig> = {
-  minSyncIntervalMs: 30 * 1000,
+  minSyncInterval: 30 * 1000,
   maxConcurrent: 5,
   verbose: false,
 }
@@ -66,7 +66,7 @@ interface PeriodicSyncJob {
    * Interval between syncs in milliseconds.
    * @example 300000
    */
-  intervalMs: number
+  interval: number
 
   /**
    * Timestamp of the last sync execution (ms since epoch).
@@ -134,7 +134,7 @@ export class SyncCoordinator {
       }
 
       // Start periodic sync if configured
-      if (spec.policy.intervalMs) {
+      if (spec.policy.interval) {
         this.startPeriodicSync(tenantId, spec, container)
       }
     }
@@ -254,14 +254,14 @@ export class SyncCoordinator {
    * Start periodic sync for a tenant.
    */
   private startPeriodicSync(tenantId: TenantId, spec: SyncSpec, container: PoolContainer): void {
-    const specInterval = spec.policy.intervalMs ?? 0
-    const intervalMs = Math.max(specInterval, this.config.minSyncIntervalMs)
+    const specInterval = spec.policy.interval ?? 0
+    const interval = Math.max(specInterval, this.config.minSyncInterval)
 
     const job: PeriodicSyncJob = {
       tenantId,
       syncSpec: spec,
       container,
-      intervalMs,
+      interval,
       lastSyncAt: Date.now(),
     }
 
@@ -278,7 +278,7 @@ export class SyncCoordinator {
     jobList.push(job)
 
     this.log(
-      `[Sync] Started periodic sync for tenant ${tenantId}, spec ${spec.id} (${intervalMs}ms)`,
+      `[Sync] Started periodic sync for tenant ${tenantId}, spec ${spec.id} (${interval}ms)`,
     )
   }
 
@@ -287,7 +287,7 @@ export class SyncCoordinator {
    */
   private schedulePeriodicSync(job: PeriodicSyncJob): void {
     const elapsed = Date.now() - job.lastSyncAt
-    const delay = Math.max(0, job.intervalMs - elapsed)
+    const delay = Math.max(0, job.interval - elapsed)
 
     job.timerId = setTimeout(async () => {
       await this.executePeriodicSync(job)
@@ -424,14 +424,14 @@ export class SyncCoordinator {
     tenantId: TenantId
     syncId: string
     poolId: PoolId
-    intervalMs: number
+    interval: number
     lastSyncAt: Date
   }> {
     const jobs: Array<{
       tenantId: TenantId
       syncId: string
       poolId: PoolId
-      intervalMs: number
+      interval: number
       lastSyncAt: Date
     }> = []
 
@@ -441,7 +441,7 @@ export class SyncCoordinator {
           tenantId: job.tenantId,
           syncId: job.syncSpec.id,
           poolId: job.syncSpec.poolId,
-          intervalMs: job.intervalMs,
+          interval: job.interval,
           lastSyncAt: new Date(job.lastSyncAt),
         })
       }

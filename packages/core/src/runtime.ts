@@ -9,7 +9,16 @@
  * allowing the runtime to be swapped without changing higher-level logic.
  */
 
-import type { ResourceLimits } from './types'
+/**
+ * Resource limits for a container (required fields for runtime).
+ * This is separate from the YAML spec ResourceLimits which has optional fields.
+ */
+export interface ContainerResourceLimits {
+  /** CPU limit (number of cores). */
+  cpus: number
+  /** Memory limit in megabytes. */
+  memory: number
+}
 
 /**
  * Unique identifier for a container instance.
@@ -239,7 +248,7 @@ export interface ContainerSpec {
   /**
    * Resource limits.
    */
-  resources: ResourceLimits
+  resources: ContainerResourceLimits
 
   /**
    * Security configuration.

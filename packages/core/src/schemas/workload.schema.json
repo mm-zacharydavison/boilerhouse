@@ -1,0 +1,231 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://boilerhouse.dev/schemas/workload.schema.json",
+  "title": "WorkloadSpec",
+  "description": "Workload specification for Boilerhouse containers. Uses docker-compose naming conventions where applicable.",
+  "type": "object",
+  "required": ["id", "name", "image", "healthcheck"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this workload",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "examples": ["python-worker", "node-api", "default"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for the workload",
+      "examples": ["Python ML Worker", "Node.js API Server"]
+    },
+    "image": {
+      "type": "string",
+      "description": "Docker image to use for this workload",
+      "examples": ["python:3.11-slim", "node:20-alpine", "myregistry/app:latest"]
+    },
+    "volumes": {
+      "type": "object",
+      "description": "Volume mount configuration",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "#/definitions/volume_config",
+          "description": "State volume for persistent tenant data"
+        },
+        "secrets": {
+          "$ref": "#/definitions/volume_config",
+          "description": "Secrets volume for credentials (typically read-only)"
+        },
+        "comm": {
+          "$ref": "#/definitions/volume_config",
+          "description": "Communication volume for IPC (sockets, etc.)"
+        },
+        "custom": {
+          "type": "array",
+          "description": "Additional custom volumes",
+          "items": {
+            "allOf": [
+              { "$ref": "#/definitions/volume_config" },
+              {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Unique name for this custom volume",
+                    "pattern": "^[a-z][a-z0-9-]*$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Environment variables to set in containers. Supports ${VAR} substitution.",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "examples": [
+        {
+          "STATE_DIR": "/data",
+          "LOG_LEVEL": "info",
+          "APP_NAME": "${WORKLOAD_ID}"
+        }
+      ]
+    },
+    "healthcheck": {
+      "$ref": "#/definitions/healthcheck_config",
+      "description": "Health check configuration (docker-compose compatible)"
+    },
+    "deploy": {
+      "type": "object",
+      "description": "Deployment configuration (docker-compose compatible)",
+      "additionalProperties": false,
+      "properties": {
+        "resources": {
+          "$ref": "#/definitions/resource_limits",
+          "description": "Resource limits for containers"
+        }
+      }
+    },
+    "read_only": {
+      "type": "boolean",
+      "description": "Whether the root filesystem is read-only",
+      "default": true
+    },
+    "user": {
+      "oneOf": [{ "type": "string", "pattern": "^[0-9]+$" }, { "type": "integer", "minimum": 0 }],
+      "description": "User ID to run the container as",
+      "examples": [1000, "1000"]
+    },
+    "network_mode": {
+      "type": "string",
+      "description": "Network mode for the container",
+      "enum": ["none", "bridge", "host"],
+      "default": "none"
+    },
+    "config_schema": {
+      "type": "object",
+      "description": "JSON Schema for validating tenant configs"
+    }
+  },
+  "definitions": {
+    "volume_config": {
+      "type": "object",
+      "required": ["target"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Path inside the container where the volume is mounted",
+          "examples": ["/data", "/secrets", "/comm"]
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "Whether the volume is read-only",
+          "default": false
+        }
+      }
+    },
+    "healthcheck_config": {
+      "type": "object",
+      "required": ["test"],
+      "additionalProperties": false,
+      "properties": {
+        "test": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Command to execute for health check",
+              "examples": [
+                ["CMD", "curl", "-f", "http://localhost:8080/health"],
+                ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+              ]
+            },
+            {
+              "type": "string",
+              "description": "Shell command to execute for health check",
+              "examples": ["curl -f http://localhost:8080/health || exit 1"]
+            }
+          ]
+        },
+        "interval": {
+          "type": "string",
+          "description": "Interval between health checks (duration string)",
+          "pattern": "^[0-9]+(ms|s|m|h)$",
+          "default": "30s",
+          "examples": ["30s", "1m", "5000ms"]
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Timeout for each health check (duration string)",
+          "pattern": "^[0-9]+(ms|s|m|h)$",
+          "default": "5s",
+          "examples": ["5s", "10s", "3000ms"]
+        },
+        "retries": {
+          "type": "integer",
+          "description": "Number of consecutive failures before marking unhealthy",
+          "minimum": 1,
+          "default": 3
+        },
+        "start_period": {
+          "type": "string",
+          "description": "Grace period before health checks start (duration string)",
+          "pattern": "^[0-9]+(ms|s|m|h)$",
+          "default": "0s",
+          "examples": ["30s", "1m"]
+        }
+      }
+    },
+    "resource_limits": {
+      "type": "object",
+      "description": "Resource constraints (docker-compose compatible)",
+      "additionalProperties": false,
+      "properties": {
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpus": {
+              "oneOf": [
+                { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+                { "type": "number", "minimum": 0 }
+              ],
+              "description": "CPU limit",
+              "examples": ["1", "0.5", 2]
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory limit (with unit suffix)",
+              "pattern": "^[0-9]+(b|k|m|g|kb|mb|gb)$",
+              "examples": ["512m", "1g", "256mb"]
+            }
+          }
+        },
+        "reservations": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpus": {
+              "oneOf": [
+                { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+                { "type": "number", "minimum": 0 }
+              ],
+              "description": "CPU reservation"
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory reservation (with unit suffix)",
+              "pattern": "^[0-9]+(b|k|m|g|kb|mb|gb)$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

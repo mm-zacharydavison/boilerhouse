@@ -358,10 +358,8 @@ describe('Security Configuration', () => {
 
     const poolId = createPoolId()
     const workload = createWorkloadSpec({
-      security: {
-        readOnlyRootFilesystem: false,
-        runAsUser: 1000,
-      },
+      readOnly: false,
+      user: 1000,
     })
     await manager.createContainer(workload, poolId)
 

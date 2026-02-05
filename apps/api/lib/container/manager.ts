@@ -13,10 +13,10 @@ import {
   type ContainerSpec,
   type ContainerStatus,
   DEFAULT_SECURITY_CONFIG,
+  type DefaultResourceLimits,
   type HealthCheckSpec,
   type PoolContainer,
   type PoolId,
-  type ResourceLimits,
   type TenantId,
   type WorkloadSpec,
 } from '@boilerhouse/core'
@@ -36,7 +36,7 @@ export interface ContainerManagerConfig {
   networkName: string
 
   /** Default resource limits per container (can be overridden by workload) */
-  resources: ResourceLimits
+  resources: DefaultResourceLimits
 
   /** Label prefix for tracking containers */
   labelPrefix: string
@@ -100,24 +100,24 @@ export class ContainerManager {
     if (workload.volumes.state) {
       volumes.push({
         source: stateDir,
-        target: workload.volumes.state.containerPath,
-        readOnly: workload.volumes.state.mode === 'ro',
+        target: workload.volumes.state.target,
+        readOnly: workload.volumes.state.readOnly ?? false,
       })
     }
 
     if (workload.volumes.secrets) {
       volumes.push({
         source: secretsDir,
-        target: workload.volumes.secrets.containerPath,
-        readOnly: workload.volumes.secrets.mode === 'ro',
+        target: workload.volumes.secrets.target,
+        readOnly: workload.volumes.secrets.readOnly ?? true,
       })
     }
 
     if (workload.volumes.comm) {
       volumes.push({
         source: socketDir,
-        target: workload.volumes.comm.containerPath,
-        readOnly: workload.volumes.comm.mode === 'ro',
+        target: workload.volumes.comm.target,
+        readOnly: workload.volumes.comm.readOnly ?? false,
       })
     }
 
@@ -128,8 +128,8 @@ export class ContainerManager {
         await mkdir(customDir, { recursive: true })
         volumes.push({
           source: customDir,
-          target: custom.containerPath,
-          readOnly: custom.mode === 'ro',
+          target: custom.target,
+          readOnly: custom.readOnly ?? false,
         })
       }
     }
@@ -140,30 +140,39 @@ export class ContainerManager {
       value,
     }))
 
-    // Merge resource limits (workload overrides manager defaults)
-    const resources: ResourceLimits = {
-      ...this.config.resources,
-      ...workload.resources,
+    // Merge resource limits (workload deploy.resources.limits overrides manager defaults)
+    const workloadLimits = workload.deploy?.resources?.limits
+    const cpusValue = workloadLimits?.cpus ?? this.config.resources.cpus
+    const memoryValue = workloadLimits?.memory ?? this.config.resources.memory
+    const resources = {
+      cpus: typeof cpusValue === 'string' ? Number.parseFloat(cpusValue) : cpusValue,
+      memory: typeof memoryValue === 'string' ? Number.parseInt(memoryValue, 10) : memoryValue,
+      tmpfsSize: this.config.resources.tmpfsSize,
     }
 
     // Build security config (workload overrides defaults)
     const security = {
       ...DEFAULT_SECURITY_CONFIG,
-      readOnlyRootFilesystem: workload.security?.readOnlyRootFilesystem ?? true,
-      runAsUser: workload.security?.runAsUser ?? DEFAULT_SECURITY_CONFIG.runAsUser,
+      readOnlyRootFilesystem: workload.readOnly ?? true,
+      runAsUser:
+        typeof workload.user === 'number'
+          ? workload.user
+          : (DEFAULT_SECURITY_CONFIG.runAsUser ?? undefined),
     }
 
     // Build health check from workload spec
-    const healthCheck: HealthCheckSpec | undefined = workload.healthCheck
+    const healthCheck: HealthCheckSpec | undefined = workload.healthcheck
       ? {
-          command: workload.healthCheck.command,
-          intervalMs: workload.healthCheck.intervalMs,
-          timeoutMs: workload.healthCheck.timeoutMs,
-          retries: workload.healthCheck.retries,
+          command: workload.healthcheck.test,
+          intervalMs: workload.healthcheck.interval,
+          timeoutMs: workload.healthcheck.timeout,
+          retries: workload.healthcheck.retries,
+          startPeriodMs: workload.healthcheck.startPeriod,
         }
       : undefined
 
     // Create container spec
+    const tmpfsSizeBytes = (resources.tmpfsSize ?? 100) * 1024 * 1024
     const spec: ContainerSpec = {
       name: containerName,
       image: workload.image,
@@ -172,12 +181,12 @@ export class ContainerManager {
       tmpfs: [
         {
           target: '/tmp',
-          sizeBytes: resources.tmpfsSizeMb * 1024 * 1024,
+          sizeBytes: tmpfsSizeBytes,
           mode: 0o1777,
         },
         {
           target: '/var/tmp',
-          sizeBytes: resources.tmpfsSizeMb * 1024 * 1024,
+          sizeBytes: tmpfsSizeBytes,
           mode: 0o1777,
         },
         { target: '/run', sizeBytes: 10 * 1024 * 1024, mode: 0o755 },

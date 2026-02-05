@@ -54,18 +54,18 @@ export function createWorkloadSpec(overrides?: Partial<WorkloadSpec>): WorkloadS
     name: faker.commerce.productName(),
     image: `${faker.internet.domainWord()}/${faker.internet.domainWord()}:${faker.system.semver()}`,
     volumes: {
-      state: { containerPath: '/state', mode: 'rw' },
-      secrets: { containerPath: '/secrets', mode: 'ro' },
-      comm: { containerPath: '/comm', mode: 'rw' },
+      state: { target: '/state', readOnly: false },
+      secrets: { target: '/secrets', readOnly: true },
+      comm: { target: '/comm', readOnly: false },
     },
     environment: {
       STATE_DIR: '/state',
       SOCKET_PATH: '/comm/app.sock',
     },
-    healthCheck: {
-      command: ['true'],
-      intervalMs: 30000,
-      timeoutMs: 5000,
+    healthcheck: {
+      test: ['true'],
+      interval: 30000,
+      timeout: 5000,
       retries: 3,
     },
     ...overrides,
@@ -122,7 +122,7 @@ export function createSyncPolicy(overrides?: Partial<SyncPolicy>): SyncPolicy {
     onClaim: faker.datatype.boolean(),
     onRelease: faker.datatype.boolean(),
     allowManualTrigger: faker.datatype.boolean(),
-    intervalMs: faker.helpers.arrayElement([undefined, 30000, 60000, 300000]),
+    interval: faker.helpers.arrayElement([undefined, 30000, 60000, 300000]),
     ...overrides,
   }
 }

@@ -234,7 +234,7 @@ describe('SyncCoordinator', () => {
       const poolId = createPoolId()
       const spec = createSyncSpec({
         poolId,
-        policy: { onClaim: true, intervalMs: 60000 },
+        policy: { onClaim: true, interval: 60000 },
       })
       registry.register(spec)
 

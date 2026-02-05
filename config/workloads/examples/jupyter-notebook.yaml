@@ -1,0 +1,81 @@
+# Jupyter Notebook workload
+# A containerized Jupyter environment for interactive data analysis
+
+id: jupyter-notebook
+name: Jupyter Notebook Server
+image: jupyter/minimal-notebook:latest
+
+volumes:
+  state:
+    target: /home/jovyan/work
+  secrets:
+    target: /home/jovyan/.secrets
+    read_only: true
+  comm:
+    target: /home/jovyan/.comm
+
+environment:
+  JUPYTER_ENABLE_LAB: "yes"
+  JUPYTER_TOKEN: ${TENANT_TOKEN}
+  NB_USER: jovyan
+  GRANT_SUDO: "no"
+
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+deploy:
+  resources:
+    limits:
+      cpus: "2"
+      memory: 4G
+
+user: "1000"
+network_mode: bridge
+
+# Pool configuration (boilerhouse-specific)
+pool:
+  min_size: 2
+  max_size: 25
+  idle_timeout: 30m
+
+# Sync configuration (boilerhouse-specific) - persist notebooks and data
+sync:
+  sink:
+    type: s3
+    bucket: jupyter-notebooks
+    region: us-west-2
+    prefix: users/${tenantId}/
+
+  mappings:
+    - path: /home/jovyan/work
+      pattern: "**/*.ipynb"
+      sink_path: notebooks/
+      direction: bidirectional
+      mode: sync
+    - path: /home/jovyan/work
+      pattern: "**/*.csv"
+      sink_path: data/
+      direction: upload
+      mode: copy
+
+  policy:
+    on_claim: true
+    on_release: true
+    interval: 2m
+    manual: true
+
+# Schema for tenant-specific configuration (boilerhouse-specific)
+config_schema:
+  type: object
+  properties:
+    notebook_dir:
+      type: string
+      description: Default notebook directory
+    extensions:
+      type: array
+      items:
+        type: string
+      description: JupyterLab extensions to install
