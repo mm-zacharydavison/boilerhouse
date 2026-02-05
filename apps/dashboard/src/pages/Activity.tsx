@@ -1,8 +1,9 @@
 import { Layout } from '@/components/layout'
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@/components/ui'
+import { useActivity } from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
 import { mockActivity } from '@/mocks/data'
-import { Activity, AlertTriangle, Box, Cloud, HardDrive } from 'lucide-react'
+import { Activity, AlertTriangle, Box, Cloud, HardDrive, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function ActivityIcon({ type }: { type: string }) {
@@ -46,7 +47,18 @@ function EventTypeBadge({ type }: { type: string }) {
 }
 
 export function ActivityPage() {
-  const activity = mockActivity
+  const { data: activityData, isLoading } = useActivity(50)
+  const activity = activityData ?? mockActivity
+
+  if (isLoading && !activityData) {
+    return (
+      <Layout title="Activity">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Activity">

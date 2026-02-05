@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import { useActivity, usePools, useStats } from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
 import { mockActivity, mockPools, mockStats } from '@/mocks/data'
 import {
@@ -21,6 +22,7 @@ import {
   CheckCircle,
   Cloud,
   HardDrive,
+  Loader2,
   Users,
   XCircle,
 } from 'lucide-react'
@@ -105,9 +107,25 @@ function ActivityIcon({ type }: { type: string }) {
 }
 
 export function DashboardPage() {
-  const stats = mockStats
-  const pools = mockPools
-  const activity = mockActivity
+  const { data: statsData, isLoading: statsLoading } = useStats()
+  const { data: poolsData, isLoading: poolsLoading } = usePools()
+  const { data: activityData, isLoading: activityLoading } = useActivity(10)
+
+  // Use real data if available, fall back to mock data
+  const stats = statsData ?? mockStats
+  const pools = poolsData ?? mockPools
+  const activity = activityData ?? mockActivity
+  const isLoading = statsLoading || poolsLoading || activityLoading
+
+  if (isLoading && !statsData && !poolsData) {
+    return (
+      <Layout title="Dashboard">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Dashboard">

@@ -1,8 +1,12 @@
 import type { PoolId, WorkloadId } from '@boilerhouse/core'
 import { DockerRuntime } from '@boilerhouse/docker'
+import { getActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
-import { ContainerManager, ContainerPool } from '../lib/container'
+import { ContainerManager } from '../lib/container'
+import { PoolRegistry } from '../lib/pool/registry'
+import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
 import { createWorkloadRegistry } from '../lib/workload'
+import { createServer } from './server'
 
 const DEFAULT_POOL_ID = 'default-pool' as PoolId
 const DEFAULT_WORKLOAD_ID = 'default' as WorkloadId
@@ -32,14 +36,39 @@ console.log(`  - Default workload: ${defaultWorkload.name} (${defaultWorkload.im
 const runtime = new DockerRuntime()
 console.log(`  - Runtime: ${runtime.name}`)
 
+// Initialize activity log
+const activityLog = getActivityLog()
+
 // Initialize container manager
 const manager = new ContainerManager(runtime)
 
-// Initialize container pool with default workload
-const pool = new ContainerPool(manager, {
-  workload: defaultWorkload,
-  poolId: DEFAULT_POOL_ID,
+// Initialize pool registry
+const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog)
+
+// Create default pool
+poolRegistry.createPool(DEFAULT_POOL_ID, DEFAULT_WORKLOAD_ID)
+console.log(`  - Created default pool: ${DEFAULT_POOL_ID}`)
+
+// Initialize sync components
+const syncStatusTracker = new SyncStatusTracker()
+const rcloneExecutor = new RcloneSyncExecutor()
+const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
+
+// Create and start Elysia server
+const server = createServer({
+  poolRegistry,
+  workloadRegistry,
+  syncCoordinator,
+  syncStatusTracker,
+  activityLog,
 })
+
+server.listen({
+  hostname: config.apiHost,
+  port: config.apiPort,
+})
+
+console.log(`Boilerhouse API server listening on ${config.apiHost}:${config.apiPort}`)
 
 // Watch for workload file changes in development
 if (process.env.NODE_ENV !== 'production') {
@@ -60,23 +89,19 @@ if (process.env.NODE_ENV !== 'production') {
   console.log('Watching for workload file changes...')
 }
 
-console.log('Boilerhouse API server initialized')
-
-// TODO: Initialize state sync
-// TODO: Initialize router
-// TODO: Start HTTP API server with Elysia
-
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down...')
   workloadRegistry.stopWatching()
-  await pool.drain()
+  await syncCoordinator.shutdown()
+  await poolRegistry.shutdown()
   process.exit(0)
 })
 
 process.on('SIGTERM', async () => {
   console.log('Shutting down...')
   workloadRegistry.stopWatching()
-  await pool.drain()
+  await syncCoordinator.shutdown()
+  await poolRegistry.shutdown()
   process.exit(0)
 })

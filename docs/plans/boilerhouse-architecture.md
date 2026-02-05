@@ -1238,15 +1238,17 @@ policy:
 
 | #   | Task                                          | Files Affected                                                                 | Status |
 |-----|-----------------------------------------------|--------------------------------------------------------------------------------|--------|
-| 9.1 | POST /sync-specs - create sync spec           | `apps/api/src/routes/sync.ts` (new)                                            | [ ]    |
-| 9.2 | GET /sync-specs - list sync specs             | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.3 | GET /sync-specs/:id - get sync spec           | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.4 | PUT /sync-specs/:id - update sync spec        | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.5 | DELETE /sync-specs/:id - delete sync spec     | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.6 | GET /sync-specs/:id/status - sync status      | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.7 | POST /sync-specs/:id/trigger - manual trigger | `apps/api/src/routes/sync.ts`                                                  | [ ]    |
-| 9.8 | POST /tenants/:id/sync - tenant sync trigger  | `apps/api/src/routes/tenants.ts`                                               | [ ]    |
-| 9.9 | Add sync status to tenant status endpoint     | `apps/api/src/routes/tenants.ts` (GET /tenants/:id/status)                     | [ ]    |
+| 9.1 | POST /sync-specs - create sync spec           | N/A - sync specs are embedded in workloads                                     | [N/A]  |
+| 9.2 | GET /sync-specs - list sync specs             | `apps/api/src/server.ts`                                                       | [x]    |
+| 9.3 | GET /sync-specs/:id - get sync spec           | `apps/api/src/server.ts`                                                       | [x]    |
+| 9.4 | PUT /sync-specs/:id - update sync spec        | N/A - sync specs are read-only (modify workload YAML)                          | [N/A]  |
+| 9.5 | DELETE /sync-specs/:id - delete sync spec     | N/A - sync specs are read-only (modify workload YAML)                          | [N/A]  |
+| 9.6 | GET /sync-specs/:id/status - sync status      | `apps/api/src/server.ts`                                                       | [x]    |
+| 9.7 | POST /sync-specs/:id/trigger - manual trigger | `apps/api/src/server.ts`                                                       | [x]    |
+| 9.8 | POST /tenants/:id/sync - tenant sync trigger  | `apps/api/src/server.ts`                                                       | [x]    |
+| 9.9 | Add sync status to tenant status endpoint     | `apps/api/src/server.ts` (GET /tenants/:id/status)                             | [x]    |
+
+**Note**: Phase 9 implemented with Elysia server in `apps/api/src/server.ts`. Sync specs are derived from WorkloadSpec.sync and are read-only via the API. To modify sync configuration, edit the workload YAML files in `config/workloads/`.
 
 ### Phase 10: Dashboard UI
 
@@ -1269,7 +1271,7 @@ policy:
 | 10.15| Implement Settings page                       | `apps/dashboard/src/pages/Settings.tsx`                                        | [x]    |
 | 10.16| Add mock data for development                 | `apps/dashboard/src/mocks/data.ts`                                             | [x]    |
 
-**Note**: Dashboard currently uses mock data. Real API integration pending Phase 9 (API endpoints) and WebSocket server implementation.
+**Note**: Dashboard now uses real API with fallback to mock data. WebSocket server implementation pending.
 
 ---
 
@@ -1304,8 +1306,9 @@ policy:
 | `apps/dashboard/src/components/`               | UI components (layout, ui)                            | Done   |
 | `apps/dashboard/src/pages/`                    | Dashboard pages                                       | Done   |
 | `apps/dashboard/src/hooks/`                    | React hooks (useApi, useWebSocket)                    | Done   |
-| `apps/api/src/routes/sync.ts`                  | Sync API endpoints                                    | TODO   |
-| `apps/api/src/routes/tenants.ts`               | Tenant API endpoints                                  | TODO   |
+| `apps/api/src/server.ts`                       | Elysia API server (all routes)                        | Done   |
+| `apps/api/lib/activity/index.ts`               | Activity log module                                   | Done   |
+| `apps/api/lib/pool/registry.ts`                | Pool registry for multi-pool support                  | Done   |
 | `test/*.ts`                                    | Update references                                     | TODO   |
 
 ---
@@ -1322,5 +1325,5 @@ policy:
 8. **Phase 6** - documentation (can be done in parallel)
 9. **Phase 7** - plugin removal ✅ DONE (mostly N/A)
 10. **Phase 8** - workload registry feature (builds on Phase 3.1 YAML loader) ✅ DONE
-11. **Phase 9** - sync API endpoints (depends on Phase 3 sync engine)
-12. **Phase 10** - dashboard UI ✅ DONE (uses mock data, pending API integration)
+11. **Phase 9** - sync API endpoints (depends on Phase 3 sync engine) ✅ DONE
+12. **Phase 10** - dashboard UI ✅ DONE (with real API integration)

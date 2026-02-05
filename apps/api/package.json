@@ -13,6 +13,7 @@
     "@aws-sdk/client-s3": "^3.982.0",
     "@boilerhouse/core": "workspace:*",
     "@boilerhouse/docker": "workspace:*",
+    "@elysiajs/cors": "^1.4.1",
     "elysia": "^1.2.25",
     "generic-pool": "^3.9.0",
     "yaml": "^2.8.2",

@@ -13,8 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import { usePools } from '@/hooks/useApi'
 import { mockPools } from '@/mocks/data'
-import { AlertTriangle, CheckCircle, Plus, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Loader2, Plus, XCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function PoolStatusBadge({ status }: { status: 'healthy' | 'degraded' | 'error' }) {
@@ -56,7 +57,18 @@ function UtilizationBar({ current, max }: { current: number; max: number }) {
 }
 
 export function PoolsPage() {
-  const pools = mockPools
+  const { data: poolsData, isLoading } = usePools()
+  const pools = poolsData ?? mockPools
+
+  if (isLoading && !poolsData) {
+    return (
+      <Layout title="Pools">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Pools">

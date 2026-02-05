@@ -12,8 +12,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import { useSyncHistory, useSyncJobs } from '@/hooks/useApi'
 import { formatBytes, formatRelativeTime } from '@/lib/utils'
 import { mockSyncJobs } from '@/mocks/data'
+import { Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function SyncStatusBadge({ status }: { status: string }) {
@@ -56,11 +58,27 @@ function ProgressBar({ progress }: { progress: number }) {
 }
 
 export function SyncPage() {
-  const syncJobs = mockSyncJobs
+  const { data: runningJobsData, isLoading: jobsLoading } = useSyncJobs('running')
+  const { data: historyData, isLoading: historyLoading } = useSyncHistory(undefined, 50)
 
-  const runningJobs = syncJobs.filter((j) => j.status === 'running')
-  const completedJobs = syncJobs.filter((j) => j.status === 'completed')
-  const failedJobs = syncJobs.filter((j) => j.status === 'failed')
+  // Combine running jobs with history for display
+  const syncJobs = [...(runningJobsData ?? []), ...(historyData ?? [])]
+  const fallbackJobs = syncJobs.length > 0 ? syncJobs : mockSyncJobs
+  const isLoading = jobsLoading || historyLoading
+
+  const runningJobs = fallbackJobs.filter((j) => j.status === 'running')
+  const completedJobs = fallbackJobs.filter((j) => j.status === 'completed')
+  const failedJobs = fallbackJobs.filter((j) => j.status === 'failed')
+
+  if (isLoading && syncJobs.length === 0) {
+    return (
+      <Layout title="Sync Monitor">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Sync Monitor">

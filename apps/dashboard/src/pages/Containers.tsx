@@ -12,8 +12,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import { useContainers } from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
 import { mockContainers } from '@/mocks/data'
+import { Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function ContainerStatusBadge({ status }: { status: string }) {
@@ -30,10 +32,21 @@ function ContainerStatusBadge({ status }: { status: string }) {
 }
 
 export function ContainersPage() {
-  const containers = mockContainers
+  const { data: containersData, isLoading } = useContainers()
+  const containers = containersData ?? mockContainers
 
   const idleCount = containers.filter((c) => c.status === 'idle').length
   const assignedCount = containers.filter((c) => c.status === 'assigned').length
+
+  if (isLoading && !containersData) {
+    return (
+      <Layout title="Containers">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Containers">

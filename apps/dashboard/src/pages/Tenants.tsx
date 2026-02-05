@@ -12,8 +12,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
+import { useTenants } from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
 import { mockTenants } from '@/mocks/data'
+import { Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 function TenantStatusBadge({ status }: { status: string }) {
@@ -45,10 +47,21 @@ function SyncStatusBadge({ state }: { state: string }) {
 }
 
 export function TenantsPage() {
-  const tenants = mockTenants
+  const { data: tenantsData, isLoading } = useTenants()
+  const tenants = tenantsData ?? mockTenants
 
   const activeCount = tenants.filter((t) => t.status === 'active').length
   const idleCount = tenants.filter((t) => t.status === 'idle').length
+
+  if (isLoading && !tenantsData) {
+    return (
+      <Layout title="Tenants">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout title="Tenants">

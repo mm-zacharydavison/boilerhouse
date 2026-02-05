@@ -18,6 +18,7 @@
         "@aws-sdk/client-s3": "^3.982.0",
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/docker": "workspace:*",
+        "@elysiajs/cors": "^1.4.1",
         "elysia": "^1.2.25",
         "generic-pool": "^3.9.0",
         "yaml": "^2.8.2",
@@ -236,6 +237,8 @@
     "@boilerhouse/docker": ["@boilerhouse/docker@workspace:packages/docker"],
 
     "@borewit/text-codec": ["@borewit/text-codec@0.2.1", "", {}, "sha512-k7vvKPbf7J2fZ5klGRD9AeKfUvojuZIQ3BT5u7Jfv+puwXkUBUT5PVyMDfJZpy30CBDXGMgw7fguK/lpOMBvgw=="],
+
+    "@elysiajs/cors": ["@elysiajs/cors@1.4.1", "", { "peerDependencies": { "elysia": ">= 1.4.0" } }, "sha512-lQfad+F3r4mNwsxRKbXyJB8Jg43oAOXjRwn7sKUL6bcOW3KjUqUimTS+woNpO97efpzjtDE0tEjGk9DTw8lqTQ=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.12", "", { "os": "aix", "cpu": "ppc64" }, "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA=="],
 
