@@ -30,8 +30,8 @@ function ContainerStatusBadge({ status }: { status: string }) {
   switch (status) {
     case 'idle':
       return <Badge variant="secondary">Idle</Badge>
-    case 'assigned':
-      return <Badge variant="success">Assigned</Badge>
+    case 'claimed':
+      return <Badge variant="success">Claimed</Badge>
     case 'stopping':
       return <Badge variant="warning">Stopping</Badge>
     default:
@@ -160,7 +160,7 @@ export function PoolDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{pool.idleCount}</div>
-              <p className="text-xs text-muted-foreground">Available for assignment</p>
+              <p className="text-xs text-muted-foreground">Available for claiming</p>
             </CardContent>
           </Card>
           <Card>
@@ -261,7 +261,7 @@ export function PoolDetailPage() {
                         variant="ghost"
                         size="icon"
                         className="text-destructive hover:text-destructive"
-                        disabled={container.status === 'assigned' || destroyContainer.isPending}
+                        disabled={container.status === 'claimed' || destroyContainer.isPending}
                         onClick={() => handleDeleteContainer(container.id)}
                       >
                         <Trash2 className="h-4 w-4" />

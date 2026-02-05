@@ -1,22 +1,27 @@
 /**
  * Recovery Module
  *
- * Reconciles database state with Docker runtime on startup.
- * Handles orphaned containers, missing containers, and restores assignments.
+ * Reconciles DB state with Docker runtime on startup.
+ * Docker is the source of truth for container existence.
+ * DB is the source of truth for domain state (claims, affinity).
+ *
+ * Flow:
+ * 1. List Docker containers with managed label (Docker = truth for existence)
+ * 2. Clean up claims for containers NOT in Docker (stale rows)
+ * 3. Clean up affinity reservations for containers NOT in Docker
+ * 4. Clean up expired affinity reservations
  */
 
-import type { ContainerRuntime, PoolContainer } from '@boilerhouse/core'
-import type { AffinityRepository, ContainerRepository } from '@boilerhouse/db'
+import type { ContainerRuntime } from '@boilerhouse/core'
+import type { AffinityRepository, ClaimRepository } from '@boilerhouse/db'
 
 export interface RecoveryStats {
-  /** Containers restored from DB that exist in Docker */
-  restored: number
-  /** DB containers that no longer exist in Docker (cleaned from DB) */
-  orphaned: number
-  /** DB containers in Docker but stopped (removed) */
-  stopped: number
-  /** Docker containers not in DB (destroyed as foreign) */
-  foreign: number
+  /** Docker containers found with managed label */
+  dockerContainers: number
+  /** Stale claim rows cleaned (container not in Docker) */
+  staleClaims: number
+  /** Stale affinity rows cleaned (container not in Docker) */
+  staleAffinity: number
   /** Affinity reservations cleaned (expired) */
   expiredAffinity: number
 }
@@ -27,91 +32,62 @@ export interface RecoveryConfig {
 }
 
 /**
- * Reconcile database state with Docker runtime.
- *
- * Flow:
- * 1. Load containers from DB
- * 2. List containers from Docker with managed label
- * 3. Reconcile:
- *    - DB container exists in Docker & running → keep (restored)
- *    - DB container not in Docker → delete from DB (orphaned)
- *    - DB container in Docker but stopped → delete from DB, remove from Docker (stopped)
- *    - Docker container not in DB → destroy (foreign)
- * 4. Clean expired affinity reservations
+ * Reconcile DB state with Docker runtime.
  */
 export async function recoverState(
   runtime: ContainerRuntime,
-  containerRepo: ContainerRepository,
+  claimRepo: ClaimRepository,
   affinityRepo: AffinityRepository,
   config: RecoveryConfig,
 ): Promise<RecoveryStats> {
   const stats: RecoveryStats = {
-    restored: 0,
-    orphaned: 0,
-    stopped: 0,
-    foreign: 0,
+    dockerContainers: 0,
+    staleClaims: 0,
+    staleAffinity: 0,
     expiredAffinity: 0,
   }
 
   console.log('[Recovery] Starting state recovery...')
 
-  // 1. Load containers from DB
-  const dbContainers = containerRepo.findAll()
-  const dbContainerIds = new Set(dbContainers.map((c) => c.containerId))
-  console.log(`[Recovery] Found ${dbContainers.length} containers in database`)
-
-  // 2. List containers from Docker
+  // 1. List Docker containers with managed label (Docker = source of truth)
   const dockerContainers = await runtime.listContainers({
     [`${config.labelPrefix}.managed`]: 'true',
   })
-  const dockerContainerMap = new Map<string, { id: string; status: string }>()
+  const dockerContainerIds = new Set<string>()
   for (const container of dockerContainers) {
     const containerId = container.labels[`${config.labelPrefix}.container-id`]
-    if (containerId) {
-      dockerContainerMap.set(containerId, { id: container.id, status: container.status })
-    }
-  }
-  console.log(`[Recovery] Found ${dockerContainerMap.size} managed containers in Docker`)
-
-  // 3. Reconcile
-  const validContainers: PoolContainer[] = []
-
-  // Check each DB container
-  for (const dbContainer of dbContainers) {
-    const dockerInfo = dockerContainerMap.get(dbContainer.containerId)
-
-    if (!dockerInfo) {
-      // DB container not in Docker → orphaned
-      console.log(
-        `[Recovery] Container ${dbContainer.containerId} not found in Docker, removing from DB`,
-      )
-      containerRepo.delete(dbContainer.containerId)
-      affinityRepo.deleteByContainerId(dbContainer.containerId)
-      stats.orphaned++
-    } else if (dockerInfo.status !== 'running') {
-      // DB container in Docker but stopped → remove both
-      console.log(`[Recovery] Container ${dbContainer.containerId} is stopped, removing`)
-      await runtime.removeContainer(dockerInfo.id)
-      containerRepo.delete(dbContainer.containerId)
-      affinityRepo.deleteByContainerId(dbContainer.containerId)
-      stats.stopped++
-    } else {
-      // Container exists and is running → keep
-      validContainers.push(dbContainer)
-      stats.restored++
-    }
-  }
-
-  // Check for foreign containers (in Docker but not in DB)
-  for (const [containerId, dockerInfo] of dockerContainerMap) {
-    if (!dbContainerIds.has(containerId)) {
-      console.log(`[Recovery] Container ${containerId} not in DB, destroying`)
+    if (containerId && container.status === 'running') {
+      dockerContainerIds.add(containerId)
+    } else if (containerId && container.status !== 'running') {
+      // Remove stopped containers from Docker
+      console.log(`[Recovery] Removing stopped container ${containerId}`)
       try {
-        await runtime.destroyContainer(dockerInfo.id, 10)
+        await runtime.removeContainer(container.id)
       } catch (err) {
-        console.error(`[Recovery] Failed to destroy foreign container ${containerId}:`, err)
+        console.error(`[Recovery] Failed to remove stopped container ${containerId}:`, err)
       }
-      stats.foreign++
+    }
+  }
+  stats.dockerContainers = dockerContainerIds.size
+  console.log(`[Recovery] Found ${dockerContainerIds.size} running managed containers in Docker`)
+
+  // 2. Clean up claims for containers NOT in Docker
+  const claims = claimRepo.findAll()
+  for (const claim of claims) {
+    if (!dockerContainerIds.has(claim.containerId)) {
+      console.log(`[Recovery] Cleaning stale claim for container ${claim.containerId}`)
+      claimRepo.delete(claim.containerId)
+      stats.staleClaims++
+    }
+  }
+
+  // 3. Clean up affinity reservations for containers NOT in Docker
+  const affinityReservations = affinityRepo.findAll()
+  for (const reservation of affinityReservations) {
+    if (!dockerContainerIds.has(reservation.containerId)) {
+      console.log(`[Recovery] Cleaning stale affinity for container ${reservation.containerId}`)
+      affinityRepo.delete(reservation.tenantId)
+      stats.staleAffinity++
     }
   }
 
@@ -122,8 +98,8 @@ export async function recoverState(
   }
 
   console.log(
-    `[Recovery] Complete: restored=${stats.restored}, orphaned=${stats.orphaned}, ` +
-      `stopped=${stats.stopped}, foreign=${stats.foreign}, expiredAffinity=${stats.expiredAffinity}`,
+    `[Recovery] Complete: docker=${stats.dockerContainers}, staleClaims=${stats.staleClaims}, ` +
+      `staleAffinity=${stats.staleAffinity}, expiredAffinity=${stats.expiredAffinity}`,
   )
 
   return stats
@@ -134,7 +110,7 @@ export async function recoverState(
  * Called after basic recovery to set up pool tracking structures.
  */
 export interface PoolRecoveryResult {
-  assignedCount: number
+  claimedCount: number
   affinityCount: number
   idleCount: number
 }

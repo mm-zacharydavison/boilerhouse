@@ -22,8 +22,8 @@ function ContainerStatusBadge({ status }: { status: string }) {
   switch (status) {
     case 'idle':
       return <Badge variant="secondary">Idle</Badge>
-    case 'assigned':
-      return <Badge variant="success">Assigned</Badge>
+    case 'claimed':
+      return <Badge variant="success">Claimed</Badge>
     case 'stopping':
       return <Badge variant="warning">Stopping</Badge>
     default:
@@ -36,7 +36,7 @@ export function ContainersPage() {
   const containers = containersData ?? mockContainers
 
   const idleCount = containers.filter((c) => c.status === 'idle').length
-  const assignedCount = containers.filter((c) => c.status === 'assigned').length
+  const claimedCount = containers.filter((c) => c.status === 'claimed').length
 
   if (isLoading && !containersData) {
     return (
@@ -62,10 +62,10 @@ export function ContainersPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Assigned</CardTitle>
+              <CardTitle className="text-sm font-medium">Claimed</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{assignedCount}</div>
+              <div className="text-2xl font-bold text-green-600">{claimedCount}</div>
             </CardContent>
           </Card>
           <Card>

@@ -75,11 +75,11 @@ export type SessionKey = string
 
 /**
  * Lifecycle status of a container.
- * - `idle`: Container is pre-warmed and available for assignment
- * - `assigned`: Container is assigned to a tenant and processing requests
+ * - `idle`: Container is pre-warmed and available for claiming
+ * - `claimed`: Container is claimed by a tenant and processing requests
  * - `stopping`: Container is being stopped or released
  */
-export type ContainerStatus = 'idle' | 'assigned' | 'stopping'
+export type ContainerStatus = 'idle' | 'claimed' | 'stopping'
 
 /**
  * Represents a running container instance in the pool.
@@ -87,7 +87,7 @@ export type ContainerStatus = 'idle' | 'assigned' | 'stopping'
 export interface PoolContainer {
   /** Unique identifier for this container. */
   containerId: ContainerId
-  /** ID of the tenant this container is assigned to. Null when pre-warmed and unassigned. */
+  /** ID of the tenant that claimed this container. Null when pre-warmed and unclaimed. */
   tenantId: TenantId | null
   /** ID of the pool this container belongs to. */
   poolId: PoolId
@@ -271,26 +271,26 @@ export interface SyncStatus {
 // =============================================================================
 
 /**
- * Tenant assignment state.
+ * Tenant claim state.
  */
-export type TenantAssignmentState = 'pending' | 'assigned' | 'releasing'
+export type TenantClaimState = 'pending' | 'claimed' | 'releasing'
 
 /**
- * Tenant assignment - tracks a tenant's container assignment.
+ * Tenant claim - tracks a tenant's container claim.
  */
-export interface TenantAssignment {
+export interface TenantClaim {
   /** ID of the tenant. */
   tenantId: TenantId
-  /** ID of the pool the tenant is assigned to. */
+  /** ID of the pool the tenant has a claim in. */
   poolId: PoolId
-  /** ID of the assigned container (null if pending). */
+  /** ID of the claimed container (null if pending). */
   containerId: ContainerId | null
-  /** Current assignment state. */
-  state: TenantAssignmentState
+  /** Current claim state. */
+  state: TenantClaimState
   /** Tenant-specific metadata. */
   metadata?: Record<string, unknown>
-  /** Timestamp when the container was assigned. */
-  assignedAt?: Date
+  /** Timestamp when the container was claimed. */
+  claimedAt?: Date
   /** Timestamp of last activity. */
   lastActivityAt?: Date
 }

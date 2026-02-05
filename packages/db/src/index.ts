@@ -2,8 +2,8 @@
  * @boilerhouse/db
  *
  * SQLite persistence layer for Boilerhouse.
- * Provides write-through caching: in-memory structures remain primary,
- * SQLite provides durability and crash recovery.
+ * DB is the single source of truth for domain state.
+ * Docker is the source of truth for container existence.
  */
 
 export { closeDatabase, initDatabase, type DatabaseConfig } from './database'
@@ -11,17 +11,21 @@ export { getMigrationStatus, rollbackMigration, runMigrations } from './migratio
 export {
   ActivityRepository,
   AffinityRepository,
-  ContainerRepository,
+  ClaimRepository,
+  PoolRepository,
   SyncStatusRepository,
   type ActivityEntry,
   type AffinityReservation,
+  type Claim,
+  type PoolRecord,
   type SyncErrorEntry,
   type SyncStatusEntry,
 } from './repositories'
 export type {
   ActivityLogRow,
   AffinityReservationRow,
-  ContainerRow,
+  ClaimRow,
+  PoolRow,
   SchemaVersionRow,
   SyncErrorRow,
   SyncStatusRow,

@@ -37,7 +37,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
         poolId: string | null
         containerId: string | null
         status: 'active' | 'pending' | 'releasing' | 'idle'
-        assignedAt: string | null
+        claimedAt: string | null
         lastActivityAt: string | null
         syncStatus: ReturnType<typeof syncStatusTracker.getStatusesForTenant>[0] | null
       }> = []
@@ -47,7 +47,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
         const pool = poolRegistry.getPool(poolId)
         if (!pool) continue
 
-        for (const tenantId of pool.getAssignedTenants()) {
+        for (const tenantId of pool.getTenantsWithClaims()) {
           const container = pool.getContainerForTenant(tenantId)
           const syncStatuses = syncStatusTracker.getStatusesForTenant(tenantId)
 
@@ -55,8 +55,8 @@ export function tenantsController(deps: TenantsControllerDeps) {
             id: tenantId,
             poolId,
             containerId: container?.containerId ?? null,
-            status: container?.status === 'assigned' ? 'active' : 'pending',
-            assignedAt: container?.lastActivity.toISOString() ?? null,
+            status: container?.status === 'claimed' ? 'active' : 'pending',
+            claimedAt: container?.lastActivity.toISOString() ?? null,
             lastActivityAt: container?.lastActivity.toISOString() ?? null,
             syncStatus: syncStatuses[0] ?? null,
           })
@@ -82,8 +82,8 @@ export function tenantsController(deps: TenantsControllerDeps) {
           id: params.id,
           poolId: pool.getPoolId(),
           containerId: container?.containerId ?? null,
-          status: container?.status === 'assigned' ? 'active' : 'pending',
-          assignedAt: container?.lastActivity.toISOString() ?? null,
+          status: container?.status === 'claimed' ? 'active' : 'pending',
+          claimedAt: container?.lastActivity.toISOString() ?? null,
           lastActivityAt: container?.lastActivity.toISOString() ?? null,
           syncStatus: syncStatuses[0] ?? null,
         }
@@ -110,7 +110,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
         }
 
         return {
-          status: container?.status === 'assigned' ? 'warm' : 'provisioning',
+          status: container?.status === 'claimed' ? 'warm' : 'provisioning',
           containerId: container?.containerId,
           poolId: pool?.getPoolId(),
           lastActivity: container?.lastActivity.toISOString(),

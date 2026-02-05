@@ -86,7 +86,7 @@ export function createPoolContainer(overrides?: Partial<PoolContainer>): PoolCon
     stateDir: `/var/lib/boilerhouse/states/${containerId}`,
     secretsDir: `/var/lib/boilerhouse/secrets/${containerId}`,
     lastActivity: faker.date.recent(),
-    status: 'assigned',
+    status: 'claimed',
     ...overrides,
   }
 }

@@ -15,6 +15,13 @@ import type {
   TenantId,
   WorkloadSpec,
 } from '@boilerhouse/core'
+import {
+  ActivityRepository,
+  AffinityRepository,
+  ClaimRepository,
+  PoolRepository,
+} from '@boilerhouse/db'
+import { SyncStatusRepository } from '@boilerhouse/db'
 import { DockerRuntime } from '@boilerhouse/docker'
 import type { Elysia } from 'elysia'
 import { ActivityLog } from '../lib/activity'
@@ -26,6 +33,7 @@ import { RcloneSyncExecutor } from '../lib/sync/rclone'
 import { SyncStatusTracker } from '../lib/sync/status'
 import { WorkloadRegistry } from '../lib/workload'
 import { createServer } from '../src/server'
+import { createTestDb } from './db'
 
 /**
  * Test harness configuration
@@ -140,15 +148,27 @@ export class TestHarness {
       this._runtime = createMockRuntime()
     }
 
+    // Create in-memory test DB and repos
+    const db = createTestDb()
+    const claimRepo = new ClaimRepository(db)
+    const affinityRepo = new AffinityRepository(db)
+    const activityRepo = new ActivityRepository(db)
+    const syncStatusRepo = new SyncStatusRepository(db)
+    const poolRepo = new PoolRepository(db)
+
     // Create activity log
-    this._activityLog = new ActivityLog()
+    this._activityLog = new ActivityLog(activityRepo)
 
     // Create container manager
-    this._manager = new ContainerManager(this._runtime, {
-      stateBaseDir: stateDir,
-      secretsBaseDir: secretsDir,
-      socketBaseDir: socketDir,
-    })
+    this._manager = new ContainerManager(
+      this._runtime,
+      {
+        stateBaseDir: stateDir,
+        secretsBaseDir: secretsDir,
+        socketBaseDir: socketDir,
+      },
+      claimRepo,
+    )
 
     // Create workload registry and save test workload to file
     const workload = this._config.workload ?? DEFAULT_TEST_WORKLOAD
@@ -183,16 +203,22 @@ healthcheck:
     this._workloadRegistry.load()
 
     // Create pool registry
-    this._poolRegistry = new PoolRegistry(this._manager, this._workloadRegistry, this._activityLog)
+    this._poolRegistry = new PoolRegistry(
+      this._manager,
+      this._workloadRegistry,
+      this._activityLog,
+      claimRepo,
+      affinityRepo,
+      poolRepo,
+    )
 
     // Create sync components
     const rcloneExecutor = new RcloneSyncExecutor()
-    this._syncStatusTracker = new SyncStatusTracker()
+    this._syncStatusTracker = new SyncStatusTracker(syncStatusRepo)
     this._syncCoordinator = new SyncCoordinator(rcloneExecutor, this._syncStatusTracker)
 
     // Create default pool
     const poolConfig = this._config.poolConfig ?? {}
-    // Cast to bypass type restriction - ContainerPool accepts these via spread
     this._poolRegistry.createPool('test-pool', workload.id, {
       minSize: poolConfig.minSize ?? 0,
       maxSize: poolConfig.maxSize ?? 5,
@@ -485,13 +511,6 @@ healthcheck:
   }
 
   /**
-   * Get all containers from the manager
-   */
-  getAllContainers(): PoolContainer[] {
-    return this._manager?.getAllContainers() ?? []
-  }
-
-  /**
    * Get activity log entries
    */
   getActivityLog(limit = 100) {
@@ -619,7 +638,7 @@ function createMockRuntime(): ContainerRuntime {
       if (command[0] === 'ls' && command[1] === '-1') {
         const dir = command[2]
         const files = Array.from(container.files.keys())
-          .filter((f) => f.startsWith(dir + '/'))
+          .filter((f) => f.startsWith(`${dir}/`))
           .map((f) => f.slice(dir.length + 1).split('/')[0])
         return { exitCode: 0, stdout: [...new Set(files)].join('\n'), stderr: '' }
       }

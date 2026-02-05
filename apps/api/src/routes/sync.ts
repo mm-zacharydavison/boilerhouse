@@ -165,7 +165,7 @@ export function syncController(deps: SyncControllerDeps) {
           if (!pool) continue
           if (pool.getWorkload().id !== workloadId) continue
 
-          for (const tenantId of pool.getAssignedTenants()) {
+          for (const tenantId of pool.getTenantsWithClaims()) {
             const container = pool.getContainerForTenant(tenantId)
             if (!container) continue
 

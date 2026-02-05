@@ -54,10 +54,10 @@ export function containersController(deps: ContainersControllerDeps) {
           return { error: `Container ${params.id} not found` }
         }
 
-        // Cannot delete assigned containers
-        if (container.status === 'assigned') {
+        // Cannot delete claimed containers
+        if (container.status === 'claimed') {
           set.status = 400
-          return { error: 'Cannot delete assigned container. Release it first.' }
+          return { error: 'Cannot delete claimed container. Release it first.' }
         }
 
         const destroyed = await poolRegistry.destroyContainer(params.id)

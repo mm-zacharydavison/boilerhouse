@@ -98,7 +98,7 @@ export interface TenantInfo {
   poolId: PoolId | null
   containerId: ContainerId | null
   status: 'active' | 'warm' | 'pending' | 'provisioning' | 'releasing' | 'idle' | 'cold'
-  assignedAt: string | null
+  claimedAt: string | null
   lastActivityAt: string | null
   syncStatus: SyncStatus | null
 }

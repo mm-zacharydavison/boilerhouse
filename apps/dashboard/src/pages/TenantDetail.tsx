@@ -140,8 +140,8 @@ export function TenantDetailPage() {
                     </Link>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Assigned</p>
-                    <p>{tenant.assignedAt ? formatRelativeTime(tenant.assignedAt) : '-'}</p>
+                    <p className="text-sm text-muted-foreground">Claimed</p>
+                    <p>{tenant.claimedAt ? formatRelativeTime(tenant.claimedAt) : '-'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Last Activity</p>
@@ -151,7 +151,7 @@ export function TenantDetailPage() {
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   <HardDrive className="mx-auto h-12 w-12 mb-4 opacity-50" />
-                  <p>No container assigned</p>
+                  <p>No container claimed</p>
                   <Button className="mt-4">
                     <Play className="mr-2 h-4 w-4" />
                     Claim Container

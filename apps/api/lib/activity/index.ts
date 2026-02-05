@@ -1,7 +1,8 @@
 /**
  * Activity Log
  *
- * In-memory activity log for tracking container and sync events.
+ * Activity log for tracking container and sync events.
+ * All state stored in ActivityRepository (DB as source of truth).
  * Provides real-time event streaming via callbacks.
  */
 
@@ -45,28 +46,13 @@ export interface ActivityEvent {
 export type ActivityEventListener = (event: ActivityEvent) => void
 
 /**
- * Activity log configuration
- */
-export interface ActivityLogConfig {
-  maxEvents?: number
-}
-
-const DEFAULT_CONFIG: Required<ActivityLogConfig> = {
-  maxEvents: 1000,
-}
-
-/**
- * In-memory activity log
+ * Activity log backed by SQLite
  */
 export class ActivityLog {
-  private events: ActivityEvent[] = []
   private listeners: Set<ActivityEventListener> = new Set()
-  private config: Required<ActivityLogConfig>
-  private eventCounter = 0
-  private activityRepo?: ActivityRepository
+  private activityRepo: ActivityRepository
 
-  constructor(config?: ActivityLogConfig, activityRepo?: ActivityRepository) {
-    this.config = { ...DEFAULT_CONFIG, ...config }
+  constructor(activityRepo: ActivityRepository) {
     this.activityRepo = activityRepo
   }
 
@@ -83,31 +69,26 @@ export class ActivityLog {
       metadata?: Record<string, unknown>
     },
   ): ActivityEvent {
-    const event: ActivityEvent = {
-      id: `evt-${++this.eventCounter}`,
-      type,
-      message,
-      timestamp: new Date().toISOString(),
-      ...options,
-    }
-
-    this.events.unshift(event)
-
-    // Trim old events
-    if (this.events.length > this.config.maxEvents) {
-      this.events = this.events.slice(0, this.config.maxEvents)
-    }
+    const now = new Date()
 
     // Persist to database
-    this.activityRepo?.save({
+    const id = this.activityRepo.save({
       eventType: type,
       poolId: options?.poolId ?? null,
       containerId: options?.containerId ?? null,
       tenantId: options?.tenantId ?? null,
       message,
       metadata: options?.metadata ?? null,
-      timestamp: new Date(),
+      timestamp: now,
     })
+
+    const event: ActivityEvent = {
+      id: `evt-${id}`,
+      type,
+      message,
+      timestamp: now.toISOString(),
+      ...options,
+    }
 
     // Notify listeners
     for (const listener of this.listeners) {
@@ -125,28 +106,32 @@ export class ActivityLog {
    * Get recent events
    */
   getEvents(limit = 50, offset = 0): ActivityEvent[] {
-    return this.events.slice(offset, offset + limit)
+    const entries = this.activityRepo.findRecent(limit, offset)
+    return entries.map((entry) => this.entryToEvent(entry))
   }
 
   /**
    * Get events filtered by type
    */
   getEventsByType(type: ActivityEventType, limit = 50): ActivityEvent[] {
-    return this.events.filter((e) => e.type === type).slice(0, limit)
+    const entries = this.activityRepo.findByType(type, limit)
+    return entries.map((entry) => this.entryToEvent(entry))
   }
 
   /**
    * Get events for a specific tenant
    */
   getEventsForTenant(tenantId: TenantId, limit = 50): ActivityEvent[] {
-    return this.events.filter((e) => e.tenantId === tenantId).slice(0, limit)
+    const entries = this.activityRepo.findByTenant(tenantId, limit)
+    return entries.map((entry) => this.entryToEvent(entry))
   }
 
   /**
    * Get events for a specific pool
    */
   getEventsForPool(poolId: PoolId, limit = 50): ActivityEvent[] {
-    return this.events.filter((e) => e.poolId === poolId).slice(0, limit)
+    const entries = this.activityRepo.findByPool(poolId, limit)
+    return entries.map((entry) => this.entryToEvent(entry))
   }
 
   /**
@@ -161,83 +146,83 @@ export class ActivityLog {
    * Clear all events
    */
   clear(): void {
-    this.events = []
-    this.eventCounter = 0
+    this.activityRepo.clear()
   }
 
   /**
    * Get total event count
    */
   get count(): number {
-    return this.events.length
+    return this.activityRepo.count()
   }
-}
 
-// Global activity log instance
-let globalActivityLog: ActivityLog | null = null
-
-/**
- * Get or create the global activity log
- */
-export function getActivityLog(config?: ActivityLogConfig): ActivityLog {
-  if (!globalActivityLog) {
-    globalActivityLog = new ActivityLog(config)
+  private entryToEvent(entry: {
+    id?: number
+    eventType: string
+    poolId: PoolId | null
+    containerId: ContainerId | null
+    tenantId: TenantId | null
+    message: string
+    metadata: Record<string, unknown> | null
+    timestamp: Date
+  }): ActivityEvent {
+    return {
+      id: `evt-${entry.id ?? 0}`,
+      type: entry.eventType as ActivityEventType,
+      message: entry.message,
+      timestamp: entry.timestamp.toISOString(),
+      poolId: entry.poolId ?? undefined,
+      containerId: entry.containerId ?? undefined,
+      tenantId: entry.tenantId ?? undefined,
+      metadata: entry.metadata ?? undefined,
+    }
   }
-  return globalActivityLog
 }
 
 // Convenience logging functions
 export function logContainerCreated(
   containerId: ContainerId,
   poolId: PoolId,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log(
-    'container.created',
-    `Container ${containerId} created in pool ${poolId}`,
-    {
-      containerId,
-      poolId,
-    },
-  )
+  return log.log('container.created', `Container ${containerId} created in pool ${poolId}`, {
+    containerId,
+    poolId,
+  })
 }
 
 export function logContainerClaimed(
   containerId: ContainerId,
   tenantId: TenantId,
   poolId: PoolId,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log(
-    'container.claimed',
-    `Container ${containerId} claimed by tenant ${tenantId}`,
-    { containerId, tenantId, poolId },
-  )
+  return log.log('container.claimed', `Container ${containerId} claimed by tenant ${tenantId}`, {
+    containerId,
+    tenantId,
+    poolId,
+  })
 }
 
 export function logContainerReleased(
   containerId: ContainerId,
   tenantId: TenantId,
   poolId: PoolId,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log(
-    'container.released',
-    `Container ${containerId} released by tenant ${tenantId}`,
-    { containerId, tenantId, poolId },
-  )
+  return log.log('container.released', `Container ${containerId} released by tenant ${tenantId}`, {
+    containerId,
+    tenantId,
+    poolId,
+  })
 }
 
 export function logContainerDestroyed(
   containerId: ContainerId,
   poolId: PoolId,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log('container.destroyed', `Container ${containerId} destroyed`, {
+  return log.log('container.destroyed', `Container ${containerId} destroyed`, {
     containerId,
     poolId,
   })
@@ -246,10 +231,9 @@ export function logContainerDestroyed(
 export function logSyncStarted(
   tenantId: TenantId,
   direction: string,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log('sync.started', `Sync started for tenant ${tenantId} (${direction})`, {
+  return log.log('sync.started', `Sync started for tenant ${tenantId} (${direction})`, {
     tenantId,
     metadata: { direction },
   })
@@ -258,19 +242,17 @@ export function logSyncStarted(
 export function logSyncCompleted(
   tenantId: TenantId,
   bytesTransferred: number,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
   const sizeStr = formatBytes(bytesTransferred)
-  return activityLog.log('sync.completed', `Sync completed for tenant ${tenantId} (${sizeStr})`, {
+  return log.log('sync.completed', `Sync completed for tenant ${tenantId} (${sizeStr})`, {
     tenantId,
     metadata: { bytesTransferred },
   })
 }
 
-export function logSyncFailed(tenantId: TenantId, error: string, log?: ActivityLog): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log('sync.failed', `Sync failed for tenant ${tenantId}: ${error}`, {
+export function logSyncFailed(tenantId: TenantId, error: string, log: ActivityLog): ActivityEvent {
+  return log.log('sync.failed', `Sync failed for tenant ${tenantId}: ${error}`, {
     tenantId,
     metadata: { error },
   })
@@ -279,10 +261,9 @@ export function logSyncFailed(tenantId: TenantId, error: string, log?: ActivityL
 export function logPoolCreated(
   poolId: PoolId,
   workloadId: string,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log('pool.created', `Pool ${poolId} created for workload ${workloadId}`, {
+  return log.log('pool.created', `Pool ${poolId} created for workload ${workloadId}`, {
     poolId,
     metadata: { workloadId },
   })
@@ -292,10 +273,9 @@ export function logPoolScaled(
   poolId: PoolId,
   previousSize: number,
   newSize: number,
-  log?: ActivityLog,
+  log: ActivityLog,
 ): ActivityEvent {
-  const activityLog = log ?? getActivityLog()
-  return activityLog.log(
+  return log.log(
     'pool.scaled',
     `Pool ${poolId} scaled from ${previousSize} to ${newSize} containers`,
     { poolId, metadata: { previousSize, newSize } },

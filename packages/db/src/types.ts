@@ -5,21 +5,32 @@
  * Repositories convert these to/from domain types.
  */
 
-import type { ContainerId, ContainerStatus, PoolId, SyncId, TenantId } from '@boilerhouse/core'
+import type { ContainerId, PoolId, SyncId, TenantId } from '@boilerhouse/core'
 
 /**
- * Container row from the containers table.
+ * Claim row from the claims table.
  */
-export interface ContainerRow {
+export interface ClaimRow {
   container_id: ContainerId
-  tenant_id: TenantId | null
+  tenant_id: TenantId
   pool_id: PoolId
-  socket_path: string
-  state_dir: string
-  secrets_dir: string
   last_activity: number
-  status: ContainerStatus
-  last_tenant_id: TenantId | null
+  claimed_at: number
+}
+
+/**
+ * Pool row from the pools table.
+ */
+export interface PoolRow {
+  pool_id: PoolId
+  workload_id: string
+  min_size: number
+  max_size: number
+  idle_timeout_ms: number
+  eviction_interval_ms: number
+  acquire_timeout_ms: number
+  network_name: string | null
+  affinity_timeout_ms: number
   created_at: number
 }
 

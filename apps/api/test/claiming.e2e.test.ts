@@ -88,8 +88,8 @@ describe('Container Claiming', () => {
     // Pool should show all containers borrowed
     const stats = harness.getPoolStats()
     expect(stats).not.toBeNull()
-    expect(stats!.borrowed).toBe(3)
-    expect(stats!.available).toBe(0)
+    expect(stats?.borrowed).toBe(3)
+    expect(stats?.available).toBe(0)
   })
 
   test('returns error when pool is at max capacity', async () => {
@@ -108,8 +108,8 @@ describe('Container Claiming', () => {
 
     // Verify pool is at capacity
     const stats = harness.getPoolStats()
-    expect(stats!.borrowed).toBe(3)
-    expect(stats!.size).toBe(3)
+    expect(stats?.borrowed).toBe(3)
+    expect(stats?.size).toBe(3)
   })
 })
 

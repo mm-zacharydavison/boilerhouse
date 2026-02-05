@@ -3,6 +3,10 @@
  *
  * Manages the lifecycle of isolated containers in the pool.
  * Uses the ContainerRuntime interface to support multiple backends (Docker, Kubernetes).
+ *
+ * Container existence is tracked by Docker (source of truth).
+ * Tenant claims are tracked by the ClaimRepository in SQLite.
+ * Paths are computed deterministically from containerId.
  */
 
 import { mkdir, readdir, rm } from 'node:fs/promises'
@@ -12,7 +16,6 @@ import {
   type ContainerId,
   type ContainerRuntime,
   type ContainerSpec,
-  type ContainerStatus,
   DEFAULT_SECURITY_CONFIG,
   type DefaultResourceLimits,
   type HealthCheckSpec,
@@ -21,7 +24,7 @@ import {
   type TenantId,
   type WorkloadSpec,
 } from '@boilerhouse/core'
-import type { ContainerRepository } from '@boilerhouse/db'
+import type { ClaimRepository } from '@boilerhouse/db'
 import { config } from '../config'
 
 export interface ContainerManagerConfig {
@@ -56,17 +59,16 @@ const DEFAULT_CONFIG: ContainerManagerConfig = {
 export class ContainerManager {
   private runtime: ContainerRuntime
   private config: ContainerManagerConfig
-  private containers: Map<ContainerId, PoolContainer> = new Map()
-  private containerRepo?: ContainerRepository
+  private claimRepo: ClaimRepository
 
   constructor(
     runtime: ContainerRuntime,
-    managerConfig?: Partial<ContainerManagerConfig>,
-    containerRepo?: ContainerRepository,
+    managerConfig: Partial<ContainerManagerConfig> | undefined,
+    claimRepo: ClaimRepository,
   ) {
     this.runtime = runtime
     this.config = { ...DEFAULT_CONFIG, ...managerConfig }
-    this.containerRepo = containerRepo
+    this.claimRepo = claimRepo
   }
 
   /**
@@ -77,7 +79,28 @@ export class ContainerManager {
   }
 
   /**
-   * Create a new container (unassigned, for pool)
+   * Compute the state directory path for a container.
+   */
+  getStateDir(containerId: string): string {
+    return join(this.config.stateBaseDir, containerId)
+  }
+
+  /**
+   * Compute the secrets directory path for a container.
+   */
+  getSecretsDir(containerId: string): string {
+    return join(this.config.secretsBaseDir, containerId)
+  }
+
+  /**
+   * Compute the socket path for a container.
+   */
+  getSocketPath(containerId: string): string {
+    return join(this.config.socketBaseDir, containerId, 'app.sock')
+  }
+
+  /**
+   * Create a new container (unclaimed, for pool)
    *
    * @param workload - Workload specification defining image, volumes, env, etc.
    * @param poolId - ID of the pool this container belongs to
@@ -90,10 +113,10 @@ export class ContainerManager {
   ): Promise<PoolContainer> {
     const containerId = this.generateContainerId()
     const containerName = `container-${containerId}`
-    const stateDir = join(this.config.stateBaseDir, containerId)
-    const secretsDir = join(this.config.secretsBaseDir, containerId)
+    const stateDir = this.getStateDir(containerId)
+    const secretsDir = this.getSecretsDir(containerId)
     const socketDir = join(this.config.socketBaseDir, containerId)
-    const socketPath = join(socketDir, 'app.sock')
+    const socketPath = this.getSocketPath(containerId)
 
     // Create host directories
     await Promise.all([
@@ -230,64 +253,54 @@ export class ContainerManager {
       status: 'idle',
     }
 
-    this.containers.set(containerId, poolContainer)
-    this.containerRepo?.save(poolContainer)
     return poolContainer
   }
 
   /**
-   * Assign a container to a tenant
+   * Claim a container for a tenant.
+   * Mutates the passed-in PoolContainer object (for generic-pool compatibility).
    */
-  async assignToTenant(
+  async claimForTenant(
     containerId: ContainerId,
     tenantId: TenantId,
+    poolContainer: PoolContainer,
     envVars?: Record<string, string>,
   ): Promise<PoolContainer> {
-    const container = this.containers.get(containerId)
-    if (!container) {
-      throw new Error(`Container ${containerId} not found`)
+    if (poolContainer.tenantId !== null) {
+      throw new Error(
+        `Container ${containerId} already claimed by tenant ${poolContainer.tenantId}`,
+      )
     }
 
-    if (container.tenantId !== null) {
-      throw new Error(`Container ${containerId} already assigned to tenant ${container.tenantId}`)
-    }
-
-    // If we need to inject environment variables (LLM API keys), we need to
-    // stop and recreate the container with new env vars, or use a different approach.
-    // For now, we'll write credentials to the secrets directory instead.
     if (envVars && Object.keys(envVars).length > 0) {
-      // Environment variables are passed via secrets files, not container env
-      // This avoids needing to recreate the container
       console.warn('Environment variables should be passed via secrets files, not container env')
     }
 
-    container.tenantId = tenantId
-    container.status = 'assigned'
-    container.lastActivity = new Date()
+    poolContainer.tenantId = tenantId
+    poolContainer.status = 'claimed'
+    poolContainer.lastActivity = new Date()
 
-    this.containerRepo?.updateTenant(containerId, tenantId, 'assigned')
-    return container
+    this.claimRepo.save({
+      containerId,
+      tenantId,
+      poolId: poolContainer.poolId,
+      lastActivity: poolContainer.lastActivity,
+    })
+
+    return poolContainer
   }
 
   /**
    * Release a container from a tenant.
-   * Does NOT wipe state - that happens on claim if the next tenant is different.
-   * This allows returning tenants to get their previous container with state intact.
+   * Mutates the passed-in PoolContainer object.
    */
-  async releaseContainer(containerId: ContainerId): Promise<void> {
-    const container = this.containers.get(containerId)
-    if (!container) {
-      throw new Error(`Container ${containerId} not found`)
-    }
+  async releaseContainer(containerId: ContainerId, poolContainer: PoolContainer): Promise<void> {
+    poolContainer.lastTenantId = poolContainer.tenantId
+    poolContainer.tenantId = null
+    poolContainer.status = 'idle'
+    poolContainer.lastActivity = new Date()
 
-    // Preserve lastTenantId for affinity matching on next claim
-    container.lastTenantId = container.tenantId
-    container.tenantId = null
-    container.status = 'idle'
-    container.lastActivity = new Date()
-
-    this.containerRepo?.updateTenant(containerId, null, 'idle')
-    this.containerRepo?.updateLastTenantId(containerId, container.lastTenantId)
+    this.claimRepo.delete(containerId)
   }
 
   /**
@@ -296,20 +309,14 @@ export class ContainerManager {
    * Wipes state, secrets, and bisync cache for tenant isolation.
    */
   async wipeForNewTenant(containerId: ContainerId): Promise<void> {
-    const container = this.containers.get(containerId)
-    if (!container) {
-      throw new Error(`Container ${containerId} not found`)
-    }
+    const stateDir = this.getStateDir(containerId)
+    const secretsDir = this.getSecretsDir(containerId)
 
     await Promise.all([
-      this.wipeDirectory(container.stateDir),
-      this.wipeDirectory(container.secretsDir),
-      this.wipeBisyncCache(container.stateDir),
+      this.wipeDirectory(stateDir),
+      this.wipeDirectory(secretsDir),
+      this.wipeBisyncCache(stateDir),
     ])
-
-    // Clear lastTenantId since we've wiped the state
-    container.lastTenantId = null
-    this.containerRepo?.updateLastTenantId(containerId, null)
   }
 
   /**
@@ -317,83 +324,51 @@ export class ContainerManager {
    * Call this after sync to ensure the new tenant gets a clean process with their data.
    */
   async restartContainer(containerId: ContainerId, timeoutSeconds = 10): Promise<void> {
-    const container = this.containers.get(containerId)
-    if (!container) {
-      throw new Error(`Container ${containerId} not found`)
-    }
-
     const containerName = `container-${containerId}`
     await this.runtime.restartContainer(containerName, timeoutSeconds)
-    container.lastActivity = new Date()
   }
 
   /**
    * Stop and remove a container completely
    */
   async destroyContainer(containerId: ContainerId): Promise<void> {
-    const container = this.containers.get(containerId)
-    if (!container) {
-      throw new Error(`Container ${containerId} not found`)
-    }
-
-    container.status = 'stopping'
-
-    // Destroy via runtime
     const containerName = `container-${containerId}`
     await this.runtime.destroyContainer(containerName, 10)
 
     // Clean up host directories
     await Promise.all([
-      rm(container.stateDir, { recursive: true, force: true }),
-      rm(container.secretsDir, { recursive: true, force: true }),
+      rm(this.getStateDir(containerId), { recursive: true, force: true }),
+      rm(this.getSecretsDir(containerId), { recursive: true, force: true }),
       rm(join(this.config.socketBaseDir, containerId), { recursive: true, force: true }),
     ])
 
-    this.containers.delete(containerId)
-    this.containerRepo?.delete(containerId)
+    this.claimRepo.delete(containerId)
   }
 
   /**
-   * Get container by ID
+   * Get container claimed by a tenant (from DB).
    */
-  getContainer(containerId: ContainerId): PoolContainer | undefined {
-    return this.containers.get(containerId)
-  }
+  getContainerByTenant(tenantId: TenantId): PoolContainer | null {
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    if (!claim) return null
 
-  /**
-   * Get container by tenant ID
-   */
-  getContainerByTenant(tenantId: TenantId): PoolContainer | undefined {
-    for (const container of this.containers.values()) {
-      if (container.tenantId === tenantId) {
-        return container
-      }
+    return {
+      containerId: claim.containerId,
+      tenantId: claim.tenantId,
+      poolId: claim.poolId,
+      socketPath: this.getSocketPath(claim.containerId),
+      stateDir: this.getStateDir(claim.containerId),
+      secretsDir: this.getSecretsDir(claim.containerId),
+      lastActivity: claim.lastActivity,
+      status: 'claimed',
     }
-    return undefined
   }
 
   /**
-   * Get all containers
-   */
-  getAllContainers(): PoolContainer[] {
-    return Array.from(this.containers.values())
-  }
-
-  /**
-   * Get containers by status
-   */
-  getContainersByStatus(status: ContainerStatus): PoolContainer[] {
-    return Array.from(this.containers.values()).filter((c) => c.status === status)
-  }
-
-  /**
-   * Update last activity timestamp
+   * Update last activity timestamp in the claim.
    */
   recordActivity(containerId: ContainerId): void {
-    const container = this.containers.get(containerId)
-    if (container) {
-      container.lastActivity = new Date()
-    }
+    this.claimRepo.updateLastActivity(containerId)
   }
 
   /**
@@ -405,79 +380,20 @@ export class ContainerManager {
   }
 
   /**
-   * Get idle containers that have exceeded the timeout
+   * Get claimed containers that have exceeded the idle timeout (from claims DB).
    */
-  getStaleContainers(maxIdleMs: number): PoolContainer[] {
-    const now = Date.now()
-    return Array.from(this.containers.values()).filter((c) => {
-      if (c.status !== 'assigned') return false
-      return now - c.lastActivity.getTime() > maxIdleMs
-    })
+  getStaleContainers(maxIdleMs: number): { containerId: ContainerId; tenantId: TenantId }[] {
+    return this.claimRepo.findStale(maxIdleMs).map((c) => ({
+      containerId: c.containerId,
+      tenantId: c.tenantId,
+    }))
   }
 
   /**
-   * Restore container state from the repository (for recovery after restart).
-   * Only restores containers that still exist in Docker.
+   * Get the label prefix used for container tracking.
    */
-  restoreFromRepository(): PoolContainer[] {
-    if (!this.containerRepo) {
-      return []
-    }
-
-    const containers = this.containerRepo.findAll()
-    for (const container of containers) {
-      this.containers.set(container.containerId, container)
-    }
-    return containers
-  }
-
-  /**
-   * Get the container repository (for recovery operations).
-   */
-  getContainerRepository(): ContainerRepository | undefined {
-    return this.containerRepo
-  }
-
-  /**
-   * Remove a container from in-memory tracking only (used during recovery).
-   */
-  removeFromMemory(containerId: ContainerId): void {
-    this.containers.delete(containerId)
-  }
-
-  /**
-   * Sync container state from runtime (for recovery after restart)
-   */
-  async syncFromRuntime(): Promise<void> {
-    const containers = await this.runtime.listContainers({
-      [`${this.config.labelPrefix}.managed`]: 'true',
-    })
-
-    for (const info of containers) {
-      const containerId = info.labels[`${this.config.labelPrefix}.container-id`]
-      if (!containerId) continue
-
-      // Only track running containers
-      if (info.status !== 'running') {
-        // Clean up stopped containers
-        await this.runtime.removeContainer(info.id)
-        continue
-      }
-
-      // Reconstruct container state
-      const container: PoolContainer = {
-        containerId,
-        tenantId: info.labels[`${this.config.labelPrefix}.tenant-id`] ?? null,
-        poolId: info.labels[`${this.config.labelPrefix}.pool-id`] ?? '',
-        socketPath: join(this.config.socketBaseDir, containerId, 'app.sock'),
-        stateDir: join(this.config.stateBaseDir, containerId),
-        secretsDir: join(this.config.secretsBaseDir, containerId),
-        lastActivity: info.startedAt ?? new Date(),
-        status: info.labels[`${this.config.labelPrefix}.tenant-id`] ? 'assigned' : 'idle',
-      }
-
-      this.containers.set(containerId, container)
-    }
+  getLabelPrefix(): string {
+    return this.config.labelPrefix
   }
 
   private generateContainerId(): string {

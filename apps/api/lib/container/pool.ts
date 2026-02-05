@@ -2,11 +2,15 @@
  * Container Pool
  *
  * Manages a pool of pre-warmed containers using generic-pool.
- * Provides fast container acquisition by maintaining idle containers ready for assignment.
+ * Provides fast container acquisition by maintaining idle containers ready for claiming.
+ *
+ * Claim state comes from ClaimRepository (DB).
+ * Affinity state comes from AffinityRepository (DB) + in-memory timeouts.
+ * allContainers is a runtime cache bridging generic-pool references.
  */
 
-import type { PoolContainer, PoolId, TenantId, WorkloadSpec } from '@boilerhouse/core'
-import type { AffinityRepository } from '@boilerhouse/db'
+import type { ContainerId, PoolContainer, PoolId, TenantId, WorkloadSpec } from '@boilerhouse/core'
+import type { AffinityRepository, ClaimRepository } from '@boilerhouse/db'
 import { type Factory, type Pool, createPool } from 'generic-pool'
 import { config } from '../config'
 import type { ContainerManager } from './manager'
@@ -65,22 +69,22 @@ export class ContainerPool {
   private manager: ContainerManager
   private pool: Pool<PoolContainer>
   private poolConfig: ContainerPoolConfig
-  private assignedContainers: Map<TenantId, PoolContainer> = new Map()
   /** Track all containers by ID so we can destroy specific ones */
   private allContainers: Map<string, PoolContainer> = new Map()
-  /** Containers reserved for returning tenants (not in generic-pool) */
-  private affinityContainers: Map<TenantId, PoolContainer> = new Map()
   /** Timeouts to return affinity containers to pool */
   private affinityTimeouts: Map<TenantId, ReturnType<typeof setTimeout>> = new Map()
   private _lastError: PoolError | null = null
-  private affinityRepo?: AffinityRepository
+  private claimRepo: ClaimRepository
+  private affinityRepo: AffinityRepository
 
   constructor(
     manager: ContainerManager,
     poolConfig: Pick<ContainerPoolConfig, 'workload' | 'poolId'> & Partial<ContainerPoolConfig>,
-    affinityRepo?: AffinityRepository,
+    claimRepo: ClaimRepository,
+    affinityRepo: AffinityRepository,
   ) {
     this.manager = manager
+    this.claimRepo = claimRepo
     this.affinityRepo = affinityRepo
     this.poolConfig = {
       workload: poolConfig.workload,
@@ -157,60 +161,70 @@ export class ContainerPool {
    * Acquire a container for a tenant
    *
    * Priority:
-   * 1. If tenant already has an assigned container, returns it
+   * 1. If tenant already has a claimed container (from DB), returns it
    * 2. If tenant has an affinity container (their previous container), returns it
    * 3. Otherwise, acquires from pool
    *
    * Returns isAffinityMatch=true if returning tenant's previous container (state intact).
    */
   async acquireForTenant(tenantId: TenantId): Promise<AcquireResult> {
-    // Check if tenant already has an assigned container
-    const existing = this.assignedContainers.get(tenantId)
-    if (existing) {
-      this.manager.recordActivity(existing.containerId)
-      return { container: existing, isAffinityMatch: true }
+    // Check if tenant already has a claimed container (DB lookup)
+    const existingClaim = this.claimRepo.findByTenantId(tenantId)
+    if (existingClaim && existingClaim.poolId === this.poolConfig.poolId) {
+      const existing = this.allContainers.get(existingClaim.containerId)
+      if (existing) {
+        this.manager.recordActivity(existing.containerId)
+        return { container: existing, isAffinityMatch: true }
+      }
     }
 
     // Check for affinity container (tenant's previous container reserved for them)
-    const affinityContainer = this.affinityContainers.get(tenantId)
-    if (affinityContainer) {
-      // Clear the timeout and remove from affinity map
-      const timeout = this.affinityTimeouts.get(tenantId)
-      if (timeout) {
-        clearTimeout(timeout)
-        this.affinityTimeouts.delete(tenantId)
-      }
-      this.affinityContainers.delete(tenantId)
-      this.affinityRepo?.delete(tenantId)
+    const affinityReservation = this.affinityRepo.findByTenantId(tenantId)
+    if (affinityReservation && affinityReservation.poolId === this.poolConfig.poolId) {
+      const affinityContainer = this.allContainers.get(affinityReservation.containerId)
+      if (affinityContainer) {
+        // Clear the timeout and remove from affinity
+        const timeout = this.affinityTimeouts.get(tenantId)
+        if (timeout) {
+          clearTimeout(timeout)
+          this.affinityTimeouts.delete(tenantId)
+        }
+        this.affinityRepo.delete(tenantId)
 
-      // Validate container is still healthy
-      const healthy = await this.manager.isHealthy(affinityContainer.containerId)
-      if (healthy) {
-        // Assign to tenant
-        await this.manager.assignToTenant(affinityContainer.containerId, tenantId)
-        this.assignedContainers.set(tenantId, affinityContainer)
+        // Validate container is still healthy
+        const healthy = await this.manager.isHealthy(affinityContainer.containerId)
+        if (healthy) {
+          // Claim for tenant
+          await this.manager.claimForTenant(
+            affinityContainer.containerId,
+            tenantId,
+            affinityContainer,
+          )
+          console.log(
+            `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
+          )
+          return { container: affinityContainer, isAffinityMatch: true }
+        }
+
+        // Container unhealthy, destroy it and fall through to pool
         console.log(
-          `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
+          `[Pool] Affinity container ${affinityContainer.containerId} unhealthy, destroying`,
         )
-        return { container: affinityContainer, isAffinityMatch: true }
+        await this.manager.destroyContainer(affinityContainer.containerId)
+        this.allContainers.delete(affinityContainer.containerId)
+      } else {
+        // Container not in allContainers (maybe crashed), clean up DB
+        this.affinityRepo.delete(tenantId)
       }
-
-      // Container unhealthy, destroy it and fall through to pool
-      console.log(
-        `[Pool] Affinity container ${affinityContainer.containerId} unhealthy, destroying`,
-      )
-      await this.manager.destroyContainer(affinityContainer.containerId)
-      this.allContainers.delete(affinityContainer.containerId)
     }
 
     // Acquire from pool
     const container = await this.pool.acquire()
 
-    // Assign to tenant
-    await this.manager.assignToTenant(container.containerId, tenantId)
+    // Claim for tenant
+    await this.manager.claimForTenant(container.containerId, tenantId, container)
 
-    this.assignedContainers.set(tenantId, container)
-    console.log(`[Pool] Assigned container ${container.containerId} to tenant ${tenantId}`)
+    console.log(`[Pool] Claimed container ${container.containerId} for tenant ${tenantId}`)
 
     return { container, isAffinityMatch: false }
   }
@@ -223,34 +237,42 @@ export class ContainerPool {
    * wiped and returned to pool for other tenants.
    */
   async releaseForTenant(tenantId: TenantId): Promise<void> {
-    const container = this.assignedContainers.get(tenantId)
-    if (!container) {
+    // Find container via claim DB
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    if (!claim || claim.poolId !== this.poolConfig.poolId) {
       console.log(`[Pool] No container found for tenant ${tenantId}`)
       return
     }
 
-    this.assignedContainers.delete(tenantId)
+    const container = this.allContainers.get(claim.containerId)
+    if (!container) {
+      console.log(
+        `[Pool] Container ${claim.containerId} not in allContainers for tenant ${tenantId}`,
+      )
+      this.claimRepo.delete(claim.containerId)
+      return
+    }
 
-    // Release from tenant assignment (preserves lastTenantId for affinity)
-    await this.manager.releaseContainer(container.containerId)
+    // Release from tenant claim (preserves lastTenantId for affinity)
+    await this.manager.releaseContainer(container.containerId, container)
 
-    // Clear any existing affinity for this tenant (shouldn't happen, but be safe)
+    // Clear any existing affinity for this tenant
     const existingTimeout = this.affinityTimeouts.get(tenantId)
     if (existingTimeout) {
       clearTimeout(existingTimeout)
     }
-    const existingAffinity = this.affinityContainers.get(tenantId)
+    const existingAffinity = this.affinityRepo.findByTenantId(tenantId)
     if (existingAffinity) {
-      // Return the old affinity container to pool with wipe
-      await this.flushAffinityToPool(existingAffinity)
+      const existingAffinityContainer = this.allContainers.get(existingAffinity.containerId)
+      if (existingAffinityContainer) {
+        await this.flushAffinityToPool(existingAffinityContainer)
+      }
+      this.affinityRepo.delete(tenantId)
     }
-
-    // Store in affinity map for potential quick return
-    this.affinityContainers.set(tenantId, container)
 
     // Persist affinity reservation
     const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
-    this.affinityRepo?.save({
+    this.affinityRepo.save({
       tenantId,
       containerId: container.containerId,
       poolId: this.poolConfig.poolId,
@@ -260,10 +282,10 @@ export class ContainerPool {
     // Set timeout to return to pool if tenant doesn't come back
     const timeout = setTimeout(async () => {
       this.affinityTimeouts.delete(tenantId)
-      this.affinityRepo?.delete(tenantId)
-      const affinityContainer = this.affinityContainers.get(tenantId)
-      if (affinityContainer && affinityContainer.containerId === container.containerId) {
-        this.affinityContainers.delete(tenantId)
+      this.affinityRepo.delete(tenantId)
+      // Look up the container from allContainers by the containerId we captured
+      const affinityContainer = this.allContainers.get(container.containerId)
+      if (affinityContainer) {
         await this.flushAffinityToPool(affinityContainer)
       }
     }, this.poolConfig.affinityTimeoutMs)
@@ -303,12 +325,17 @@ export class ContainerPool {
    * Removes from pool and destroys. Use for problematic containers.
    */
   async destroyForTenant(tenantId: TenantId): Promise<void> {
-    const container = this.assignedContainers.get(tenantId)
-    if (!container) {
+    // Find via claim DB
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    if (!claim || claim.poolId !== this.poolConfig.poolId) {
       return
     }
 
-    this.assignedContainers.delete(tenantId)
+    const container = this.allContainers.get(claim.containerId)
+    if (!container) {
+      this.claimRepo.delete(claim.containerId)
+      return
+    }
 
     // Destroy the container (removes from pool)
     await this.pool.destroy(container)
@@ -318,16 +345,15 @@ export class ContainerPool {
   /**
    * Destroy a container by ID
    *
-   * Works for both assigned and idle containers.
+   * Works for both claimed and idle containers.
    * Uses pool.destroy() so the pool knows to create a replacement.
    */
   async destroyContainer(containerId: string): Promise<boolean> {
-    // Check if it's assigned to a tenant
-    for (const [tenantId, container] of this.assignedContainers) {
-      if (container.containerId === containerId) {
-        await this.destroyForTenant(tenantId)
-        return true
-      }
+    // Check if it's claimed by a tenant
+    const claim = this.claimRepo.findByContainerId(containerId as ContainerId)
+    if (claim && claim.poolId === this.poolConfig.poolId) {
+      await this.destroyForTenant(claim.tenantId)
+      return true
     }
 
     // Look up the container in our tracking map
@@ -343,26 +369,31 @@ export class ContainerPool {
   }
 
   /**
-   * Get container for a tenant (if assigned)
+   * Get container for a tenant (if claimed in this pool)
    */
   getContainerForTenant(tenantId: TenantId): PoolContainer | undefined {
-    return this.assignedContainers.get(tenantId)
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    if (!claim || claim.poolId !== this.poolConfig.poolId) {
+      return undefined
+    }
+    return this.allContainers.get(claim.containerId)
   }
 
   /**
-   * Check if tenant has an assigned container
+   * Check if tenant has a claimed container in this pool
    */
   hasTenant(tenantId: TenantId): boolean {
-    return this.assignedContainers.has(tenantId)
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    return claim !== null && claim.poolId === this.poolConfig.poolId
   }
 
   /**
    * Record activity for a tenant's container
    */
   recordActivity(tenantId: TenantId): void {
-    const container = this.assignedContainers.get(tenantId)
-    if (container) {
-      this.manager.recordActivity(container.containerId)
+    const claim = this.claimRepo.findByTenantId(tenantId)
+    if (claim && claim.poolId === this.poolConfig.poolId) {
+      this.manager.recordActivity(claim.containerId)
     }
   }
 
@@ -373,12 +404,13 @@ export class ContainerPool {
     const staleContainers = this.manager.getStaleContainers(this.poolConfig.idleTimeoutMs)
     let evicted = 0
 
-    for (const container of staleContainers) {
-      if (container.tenantId) {
+    for (const stale of staleContainers) {
+      const claim = this.claimRepo.findByContainerId(stale.containerId)
+      if (claim && claim.poolId === this.poolConfig.poolId) {
         console.log(
-          `[Pool] Evicting stale container ${container.containerId} for tenant ${container.tenantId}`,
+          `[Pool] Evicting stale container ${stale.containerId} for tenant ${stale.tenantId}`,
         )
-        await this.releaseForTenant(container.tenantId)
+        await this.releaseForTenant(stale.tenantId)
         evicted++
       }
     }
@@ -404,7 +436,7 @@ export class ContainerPool {
    * Scale the pool to a target size.
    *
    * - Scale up: Creates new containers by acquiring and releasing
-   * - Scale down: Destroys idle containers (assigned containers are preserved)
+   * - Scale down: Destroys idle containers (claimed containers are preserved)
    *
    * @param targetSize - Desired number of total containers
    * @returns Object with actual new size and any errors
@@ -419,7 +451,7 @@ export class ContainerPool {
     }
 
     const currentSize = this.pool.size
-    const assignedCount = this.assignedContainers.size
+    const claimedCount = this.claimRepo.countByPoolId(this.poolConfig.poolId)
 
     if (targetSize === currentSize) {
       return { newSize: currentSize, message: 'Already at target size' }
@@ -465,15 +497,14 @@ export class ContainerPool {
     }
 
     // Scale down: destroy idle containers
-    if (targetSize < assignedCount) {
-      // Can't scale below assigned count
-      const minPossible = assignedCount
+    if (targetSize < claimedCount) {
+      // Can't scale below claimed count
       console.log(
-        `[Pool] Cannot scale to ${targetSize}, ${assignedCount} containers are assigned. Min possible: ${minPossible}`,
+        `[Pool] Cannot scale to ${targetSize}, ${claimedCount} containers are claimed. Min possible: ${claimedCount}`,
       )
       return {
         newSize: currentSize,
-        message: `Cannot scale below ${assignedCount} assigned containers`,
+        message: `Cannot scale below ${claimedCount} claimed containers`,
       }
     }
 
@@ -521,10 +552,18 @@ export class ContainerPool {
   }
 
   /**
-   * Get all assigned tenant IDs
+   * Get all containers in this pool (idle, claimed, and affinity-reserved).
+   * Returns the runtime cache of PoolContainer objects.
    */
-  getAssignedTenants(): TenantId[] {
-    return Array.from(this.assignedContainers.keys())
+  getAllContainers(): PoolContainer[] {
+    return Array.from(this.allContainers.values())
+  }
+
+  /**
+   * Get all claimed tenant IDs in this pool
+   */
+  getTenantsWithClaims(): TenantId[] {
+    return this.claimRepo.findByPoolId(this.poolConfig.poolId).map((c) => c.tenantId)
   }
 
   /**
@@ -554,15 +593,13 @@ export class ContainerPool {
   async drain(): Promise<void> {
     console.log('[Pool] Draining pool...')
 
-    // First, release all assigned containers (this moves them to affinity)
-    const tenants = Array.from(this.assignedContainers.keys())
-    for (const tenantId of tenants) {
-      const container = this.assignedContainers.get(tenantId)
+    // Release all claimed containers back to the pool
+    const claims = this.claimRepo.findByPoolId(this.poolConfig.poolId)
+    for (const claim of claims) {
+      const container = this.allContainers.get(claim.containerId)
       if (container) {
-        this.assignedContainers.delete(tenantId)
-        await this.manager.releaseContainer(container.containerId)
-        // Put directly in affinity for cleanup below
-        this.affinityContainers.set(tenantId, container)
+        await this.manager.releaseContainer(container.containerId, container)
+        await this.pool.release(container)
       }
     }
 
@@ -573,15 +610,19 @@ export class ContainerPool {
     this.affinityTimeouts.clear()
 
     // Flush all affinity containers back to pool
-    for (const container of this.affinityContainers.values()) {
-      try {
-        await this.manager.wipeForNewTenant(container.containerId)
-        await this.pool.release(container)
-      } catch {
-        // Best effort during drain
+    const affinityReservations = this.affinityRepo.findByPoolId(this.poolConfig.poolId)
+    for (const reservation of affinityReservations) {
+      const container = this.allContainers.get(reservation.containerId)
+      if (container) {
+        try {
+          await this.manager.wipeForNewTenant(container.containerId)
+          await this.pool.release(container)
+        } catch {
+          // Best effort during drain
+        }
       }
+      this.affinityRepo.delete(reservation.tenantId)
     }
-    this.affinityContainers.clear()
 
     // Drain and clear the pool
     await this.pool.drain()
@@ -611,7 +652,7 @@ export class ContainerPool {
    * Restore an affinity reservation from the database.
    * Used during recovery to re-establish affinity timeouts.
    */
-  restoreAffinity(tenantId: TenantId, container: PoolContainer, remainingMs: number): void {
+  restoreAffinityTimeout(tenantId: TenantId, container: PoolContainer, remainingMs: number): void {
     if (remainingMs <= 0) {
       // Already expired, flush to pool
       this.flushAffinityToPool(container).catch((err) => {
@@ -620,15 +661,13 @@ export class ContainerPool {
       return
     }
 
-    this.affinityContainers.set(tenantId, container)
     this.allContainers.set(container.containerId, container)
 
     const timeout = setTimeout(async () => {
       this.affinityTimeouts.delete(tenantId)
-      this.affinityRepo?.delete(tenantId)
-      const affinityContainer = this.affinityContainers.get(tenantId)
-      if (affinityContainer && affinityContainer.containerId === container.containerId) {
-        this.affinityContainers.delete(tenantId)
+      this.affinityRepo.delete(tenantId)
+      const affinityContainer = this.allContainers.get(container.containerId)
+      if (affinityContainer) {
         await this.flushAffinityToPool(affinityContainer)
       }
     }, remainingMs)
@@ -640,26 +679,20 @@ export class ContainerPool {
   }
 
   /**
-   * Restore an assigned container from recovery.
-   * Used to add containers that were assigned at crash time back to tracking.
+   * Restore a claimed container from recovery.
+   * Populates allContainers for generic-pool compatibility.
    */
-  restoreAssigned(tenantId: TenantId, container: PoolContainer): void {
-    this.assignedContainers.set(tenantId, container)
+  restoreClaimed(container: PoolContainer): void {
     this.allContainers.set(container.containerId, container)
-    console.log(
-      `[Pool] Restored assigned container ${container.containerId} for tenant ${tenantId}`,
-    )
+    console.log(`[Pool] Restored claimed container ${container.containerId}`)
   }
 
   /**
    * Restore an idle container from recovery.
-   * Used to add containers that were idle at crash time back to the pool.
+   * Populates allContainers for generic-pool compatibility.
    */
   async restoreIdle(container: PoolContainer): Promise<void> {
     this.allContainers.set(container.containerId, container)
-    // The container is already in the manager, we just need to track it
-    // Note: generic-pool doesn't have a method to add existing resources,
-    // so we'll just track it in allContainers for now
     console.log(`[Pool] Restored idle container ${container.containerId}`)
   }
 }

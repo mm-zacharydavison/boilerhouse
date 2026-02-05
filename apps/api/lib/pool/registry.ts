@@ -3,6 +3,9 @@
  *
  * Manages multiple container pools, each associated with a workload.
  * Provides centralized access to pools and their containers.
+ *
+ * Pool configs and createdAt are stored in PoolRepository (DB).
+ * Runtime pool instances are held in memory.
  */
 
 import type {
@@ -14,8 +17,8 @@ import type {
   WorkloadId,
   WorkloadSpec,
 } from '@boilerhouse/core'
-import type { AffinityRepository } from '@boilerhouse/db'
-import { type ActivityLog, getActivityLog, logPoolCreated, logPoolScaled } from '../activity'
+import type { AffinityRepository, ClaimRepository, PoolRepository } from '@boilerhouse/db'
+import { type ActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
 import type { WorkloadRegistry } from '../workload'
@@ -57,10 +60,10 @@ export interface PoolInfo {
   /** Current number of containers in the pool (idle + claimed). */
   currentSize: number
 
-  /** Number of containers currently assigned to tenants. */
+  /** Number of containers currently claimed by tenants. */
   claimedCount: number
 
-  /** Number of containers available for assignment. */
+  /** Number of containers available for claiming. */
   idleCount: number
 
   /**
@@ -104,14 +107,14 @@ export interface ContainerInfo {
   poolId: PoolId
 
   /**
-   * ID of the tenant this container is assigned to, or null if idle.
+   * ID of the tenant that claimed this container, or null if idle.
    * @example 'tenant-12345'
    */
   tenantId: TenantId | null
 
   /**
    * Current lifecycle status of the container.
-   * @example 'assigned'
+   * @example 'claimed'
    */
   status: ContainerStatus
 
@@ -151,22 +154,70 @@ export interface ContainerInfo {
  */
 export class PoolRegistry {
   private pools: Map<PoolId, ContainerPool> = new Map()
-  private poolCreatedAt: Map<PoolId, Date> = new Map()
   private manager: ContainerManager
   private workloadRegistry: WorkloadRegistry
   private activityLog: ActivityLog
-  private affinityRepo?: AffinityRepository
+  private claimRepo: ClaimRepository
+  private affinityRepo: AffinityRepository
+  private poolRepo: PoolRepository
 
   constructor(
     manager: ContainerManager,
     workloadRegistry: WorkloadRegistry,
-    activityLog?: ActivityLog,
-    affinityRepo?: AffinityRepository,
+    activityLog: ActivityLog,
+    claimRepo: ClaimRepository,
+    affinityRepo: AffinityRepository,
+    poolRepo: PoolRepository,
   ) {
     this.manager = manager
     this.workloadRegistry = workloadRegistry
-    this.activityLog = activityLog ?? getActivityLog()
+    this.activityLog = activityLog
+    this.claimRepo = claimRepo
     this.affinityRepo = affinityRepo
+    this.poolRepo = poolRepo
+  }
+
+  /**
+   * Restore all pools from the database.
+   * Creates pool instances from persisted configs. Skips pools whose workload is no longer registered.
+   */
+  restoreFromDb(): number {
+    const poolRecords = this.poolRepo.findAll()
+    let restored = 0
+
+    for (const record of poolRecords) {
+      if (this.pools.has(record.poolId)) continue
+
+      const workload = this.workloadRegistry.get(record.workloadId)
+      if (!workload) {
+        console.log(
+          `[PoolRegistry] Skipping pool ${record.poolId}: workload ${record.workloadId} not found`,
+        )
+        continue
+      }
+
+      const pool = new ContainerPool(
+        this.manager,
+        {
+          workload,
+          poolId: record.poolId,
+          minSize: record.minSize,
+          maxSize: record.maxSize,
+          idleTimeoutMs: record.idleTimeoutMs,
+          evictionIntervalMs: record.evictionIntervalMs,
+          acquireTimeoutMs: record.acquireTimeoutMs,
+          networkName: record.networkName ?? undefined,
+          affinityTimeoutMs: record.affinityTimeoutMs,
+        },
+        this.claimRepo,
+        this.affinityRepo,
+      )
+
+      this.pools.set(record.poolId, pool)
+      restored++
+    }
+
+    return restored
   }
 
   /**
@@ -180,6 +231,8 @@ export class PoolRegistry {
       maxSize: number
       idleTimeoutMs: number
       networkName: string
+      affinityTimeoutMs: number
+      acquireTimeoutMs: number
     }>,
   ): ContainerPool {
     if (this.pools.has(poolId)) {
@@ -198,11 +251,24 @@ export class PoolRegistry {
         poolId,
         ...config,
       },
+      this.claimRepo,
       this.affinityRepo,
     )
 
     this.pools.set(poolId, pool)
-    this.poolCreatedAt.set(poolId, new Date())
+
+    // Persist pool config to DB
+    this.poolRepo.save({
+      poolId,
+      workloadId,
+      minSize: config?.minSize ?? pool.getStats().min,
+      maxSize: config?.maxSize ?? pool.getStats().max,
+      idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
+      evictionIntervalMs: 30000,
+      acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
+      networkName: config?.networkName ?? null,
+      affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
+    })
 
     logPoolCreated(poolId, workloadId, this.activityLog)
 
@@ -239,7 +305,8 @@ export class PoolRegistry {
 
     const stats = pool.getStats()
     const workload = pool.getWorkload()
-    const createdAt = this.poolCreatedAt.get(poolId) ?? new Date()
+    const poolRecord = this.poolRepo.findById(poolId)
+    const createdAt = poolRecord?.createdAt ?? new Date()
 
     // Determine pool health status
     let status: 'healthy' | 'degraded' | 'error' = 'healthy'
@@ -283,55 +350,67 @@ export class PoolRegistry {
   }
 
   /**
-   * Get all containers across all pools
-   */
-  getAllContainers(): PoolContainer[] {
-    return this.manager.getAllContainers()
-  }
-
-  /**
-   * Get containers for a specific pool
-   */
-  getContainersForPool(poolId: PoolId): PoolContainer[] {
-    return this.manager.getAllContainers().filter((c) => c.poolId === poolId)
-  }
-
-  /**
-   * Get container info for API responses
+   * Get container info for API responses.
+   * Looks up the container across all pools using the runtime cache.
    */
   getContainerInfo(containerId: ContainerId): ContainerInfo | undefined {
-    const container = this.manager.getContainer(containerId)
-    if (!container) return undefined
+    const claim = this.claimRepo.findByContainerId(containerId)
 
-    const pool = this.pools.get(container.poolId)
-    if (!pool) return undefined
+    for (const [poolId, pool] of this.pools) {
+      const containers = pool.getAllContainers()
+      const container = containers.find((c) => c.containerId === containerId)
+      if (!container) continue
 
-    const workload = pool.getWorkload()
-
-    return {
-      id: container.containerId,
-      poolId: container.poolId,
-      tenantId: container.tenantId,
-      status: container.status,
-      workloadId: workload.id,
-      workloadName: workload.name,
-      image: workload.image,
-      createdAt: container.lastActivity.toISOString(),
-      lastActivityAt: container.lastActivity.toISOString(),
+      const workload = pool.getWorkload()
+      return {
+        id: containerId,
+        poolId,
+        tenantId: claim?.tenantId ?? null,
+        status: container.status,
+        workloadId: workload.id,
+        workloadName: workload.name,
+        image: workload.image,
+        createdAt: container.lastActivity.toISOString(),
+        lastActivityAt: container.lastActivity.toISOString(),
+      }
     }
+
+    return undefined
   }
 
   /**
-   * List all containers with info
+   * List all containers with info (idle, claimed, and affinity-reserved).
    */
   listContainersInfo(poolId?: PoolId): ContainerInfo[] {
-    const containers = poolId ? this.getContainersForPool(poolId) : this.getAllContainers()
-
     const result: ContainerInfo[] = []
-    for (const container of containers) {
-      const info = this.getContainerInfo(container.containerId)
-      if (info) result.push(info)
+
+    if (poolId) {
+      const pool = this.pools.get(poolId)
+      if (!pool) return result
+      const workload = pool.getWorkload()
+      const claims = this.claimRepo.findByPoolId(poolId)
+      const claimMap = new Map(claims.map((c) => [c.containerId, c]))
+
+      for (const container of pool.getAllContainers()) {
+        const claim = claimMap.get(container.containerId)
+        result.push({
+          id: container.containerId,
+          poolId,
+          tenantId: claim?.tenantId ?? container.tenantId,
+          status: container.status,
+          workloadId: workload.id,
+          workloadName: workload.name,
+          image: workload.image,
+          createdAt: container.lastActivity.toISOString(),
+          lastActivityAt: container.lastActivity.toISOString(),
+        })
+      }
+    } else {
+      for (const pId of this.pools.keys()) {
+        result.push(...this.listContainersInfo(pId))
+      }
     }
+
     return result
   }
 
@@ -339,13 +418,17 @@ export class PoolRegistry {
    * Destroy a container by ID
    */
   async destroyContainer(containerId: ContainerId): Promise<boolean> {
-    const container = this.manager.getContainer(containerId)
-    if (!container) return false
+    const claim = this.claimRepo.findByContainerId(containerId)
+    const poolId = claim?.poolId
 
-    const pool = this.pools.get(container.poolId)
-    if (!pool) return false
+    // Try to find pool
+    for (const [pId, pool] of this.pools) {
+      if (poolId && pId !== poolId) continue
+      const destroyed = await pool.destroyContainer(containerId)
+      if (destroyed) return true
+    }
 
-    return pool.destroyContainer(containerId)
+    return false
   }
 
   /**
@@ -363,7 +446,7 @@ export class PoolRegistry {
   /**
    * Get container for a tenant
    */
-  getContainerForTenant(tenantId: TenantId): PoolContainer | undefined {
+  getContainerForTenant(tenantId: TenantId): PoolContainer | null {
     return this.manager.getContainerByTenant(tenantId)
   }
 
@@ -387,7 +470,7 @@ export class PoolRegistry {
       totalContainers += stats.size
       activeContainers += stats.borrowed
       idleContainers += stats.available
-      totalTenants += pool.getAssignedTenants().length
+      totalTenants += pool.getTenantsWithClaims().length
     }
 
     return {
@@ -410,7 +493,7 @@ export class PoolRegistry {
 
     await pool.drain()
     this.pools.delete(poolId)
-    this.poolCreatedAt.delete(poolId)
+    this.poolRepo.delete(poolId)
   }
 
   /**
@@ -423,6 +506,5 @@ export class PoolRegistry {
       pool.stop()
     }
     this.pools.clear()
-    this.poolCreatedAt.clear()
   }
 }

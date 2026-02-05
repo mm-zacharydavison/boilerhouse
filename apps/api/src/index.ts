@@ -1,7 +1,8 @@
 import {
   ActivityRepository,
   AffinityRepository,
-  ContainerRepository,
+  ClaimRepository,
+  PoolRepository,
   SyncStatusRepository,
   closeDatabase,
   initDatabase,
@@ -28,22 +29,23 @@ console.log(`  - Database: ${config.dbPath}`)
 const db = initDatabase({ path: config.dbPath })
 
 // Create repositories
-const containerRepo = new ContainerRepository(db)
+const claimRepo = new ClaimRepository(db)
 const affinityRepo = new AffinityRepository(db)
 const syncStatusRepo = new SyncStatusRepository(db)
 const activityRepo = new ActivityRepository(db)
+const poolRepo = new PoolRepository(db)
 
 // Initialize container runtime
 const runtime = new DockerRuntime()
 console.log(`  - Runtime: ${runtime.name}`)
 
-// Run recovery/reconciliation (DB vs Docker)
-const recoveryStats = await recoverState(runtime, containerRepo, affinityRepo, {
+// Run recovery/reconciliation (Docker = truth for existence, DB = truth for domain state)
+const recoveryStats = await recoverState(runtime, claimRepo, affinityRepo, {
   labelPrefix: 'boilerhouse',
 })
 console.log(
-  `  - Recovery: restored=${recoveryStats.restored}, orphaned=${recoveryStats.orphaned}, ` +
-    `stopped=${recoveryStats.stopped}, foreign=${recoveryStats.foreign}`,
+  `  - Recovery: docker=${recoveryStats.dockerContainers}, staleClaims=${recoveryStats.staleClaims}, ` +
+    `staleAffinity=${recoveryStats.staleAffinity}, expiredAffinity=${recoveryStats.expiredAffinity}`,
 )
 
 // Load workloads from YAML files
@@ -53,28 +55,45 @@ console.log(
 )
 
 // Initialize activity log with persistence
-const activityLog = new ActivityLog(undefined, activityRepo)
+const activityLog = new ActivityLog(activityRepo)
 
-// Initialize container manager with persistence
-const manager = new ContainerManager(runtime, undefined, containerRepo)
+// Initialize container manager with claim persistence
+const manager = new ContainerManager(runtime, undefined, claimRepo)
 
-// Restore container state from database
-const restoredContainers = manager.restoreFromRepository()
-console.log(`  - Restored ${restoredContainers.length} containers from database`)
+// Initialize pool registry with all repos
+const poolRegistry = new PoolRegistry(
+  manager,
+  workloadRegistry,
+  activityLog,
+  claimRepo,
+  affinityRepo,
+  poolRepo,
+)
 
-// Initialize pool registry with affinity persistence
-const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog, affinityRepo)
+// Restore pools from DB
+const restoredPools = poolRegistry.restoreFromDb()
+if (restoredPools > 0) {
+  console.log(`  - Restored ${restoredPools} pool(s) from database`)
+}
 
 // Restore affinity reservations for each pool
 const activeAffinityReservations = affinityRepo.findActive()
 for (const reservation of activeAffinityReservations) {
-  const container = manager.getContainer(reservation.containerId)
-  if (container) {
-    const pool = poolRegistry.getPool(reservation.poolId)
-    if (pool) {
-      const remainingMs = reservation.expiresAt.getTime() - Date.now()
-      pool.restoreAffinity(reservation.tenantId, container, remainingMs)
+  const pool = poolRegistry.getPool(reservation.poolId)
+  if (pool) {
+    const remainingMs = reservation.expiresAt.getTime() - Date.now()
+    // Build a PoolContainer from computed paths
+    const container = {
+      containerId: reservation.containerId,
+      tenantId: null,
+      poolId: reservation.poolId,
+      socketPath: manager.getSocketPath(reservation.containerId),
+      stateDir: manager.getStateDir(reservation.containerId),
+      secretsDir: manager.getSecretsDir(reservation.containerId),
+      lastActivity: reservation.createdAt,
+      status: 'idle' as const,
     }
+    pool.restoreAffinityTimeout(reservation.tenantId, container, remainingMs)
   }
 }
 if (activeAffinityReservations.length > 0) {

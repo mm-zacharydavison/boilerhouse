@@ -2,7 +2,8 @@
  * Migration 001: Initial Schema
  *
  * Creates all tables for durability:
- * - containers: Pool container state
+ * - claims: Tenant-to-container claims
+ * - pools: Pool configurations
  * - affinity_reservations: Tenant affinity reservations
  * - sync_status: Sync operation status
  * - sync_errors: Sync error history
@@ -15,36 +16,42 @@ export const version = 1
 
 export function up(db: Database): void {
   db.run(`
-    CREATE TABLE IF NOT EXISTS containers (
+    CREATE TABLE IF NOT EXISTS claims (
       container_id TEXT PRIMARY KEY,
-      tenant_id TEXT,
+      tenant_id TEXT NOT NULL,
       pool_id TEXT NOT NULL,
-      socket_path TEXT NOT NULL,
-      state_dir TEXT NOT NULL,
-      secrets_dir TEXT NOT NULL,
       last_activity INTEGER NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('idle', 'assigned', 'stopping')),
-      last_tenant_id TEXT,
+      claimed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    )
+  `)
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_claims_tenant ON claims(tenant_id)
+  `)
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_claims_pool ON claims(pool_id)
+  `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS pools (
+      pool_id TEXT PRIMARY KEY,
+      workload_id TEXT NOT NULL,
+      min_size INTEGER NOT NULL,
+      max_size INTEGER NOT NULL,
+      idle_timeout_ms INTEGER NOT NULL,
+      eviction_interval_ms INTEGER NOT NULL,
+      acquire_timeout_ms INTEGER NOT NULL,
+      network_name TEXT,
+      affinity_timeout_ms INTEGER NOT NULL,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     )
   `)
 
   db.run(`
-    CREATE INDEX IF NOT EXISTS idx_containers_pool_id ON containers(pool_id)
-  `)
-
-  db.run(`
-    CREATE INDEX IF NOT EXISTS idx_containers_tenant_id ON containers(tenant_id)
-  `)
-
-  db.run(`
-    CREATE INDEX IF NOT EXISTS idx_containers_status ON containers(status)
-  `)
-
-  db.run(`
     CREATE TABLE IF NOT EXISTS affinity_reservations (
       tenant_id TEXT PRIMARY KEY,
-      container_id TEXT NOT NULL REFERENCES containers(container_id) ON DELETE CASCADE,
+      container_id TEXT NOT NULL,
       pool_id TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
@@ -109,5 +116,6 @@ export function down(db: Database): void {
   db.run('DROP TABLE IF EXISTS sync_errors')
   db.run('DROP TABLE IF EXISTS sync_status')
   db.run('DROP TABLE IF EXISTS affinity_reservations')
-  db.run('DROP TABLE IF EXISTS containers')
+  db.run('DROP TABLE IF EXISTS pools')
+  db.run('DROP TABLE IF EXISTS claims')
 }

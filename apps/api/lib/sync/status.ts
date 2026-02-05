@@ -3,6 +3,8 @@
  *
  * Tracks sync operation status per tenant and sync spec.
  * Records last sync time, pending operations, and errors.
+ *
+ * All state is stored in the SyncStatusRepository (DB as source of truth).
  */
 
 import type { SyncId, SyncStatus, TenantId } from '@boilerhouse/core'
@@ -72,56 +74,40 @@ export interface SyncStatusEntry {
 }
 
 export class SyncStatusTracker {
-  private statuses: Map<string, SyncStatusEntry> = new Map()
-  private syncStatusRepo?: SyncStatusRepository
+  private syncStatusRepo: SyncStatusRepository
 
-  /** Maximum number of errors to retain per tenant/sync */
-  private maxErrors = 10
-
-  constructor(syncStatusRepo?: SyncStatusRepository) {
+  constructor(syncStatusRepo: SyncStatusRepository) {
     this.syncStatusRepo = syncStatusRepo
-  }
-
-  /**
-   * Create a unique key for tenant + sync spec combination.
-   */
-  private makeKey(tenantId: TenantId, syncId: SyncId): string {
-    return `${tenantId}:${syncId}`
-  }
-
-  /**
-   * Get or create a status entry for a tenant + sync spec.
-   */
-  private getOrCreate(tenantId: TenantId, syncId: SyncId): SyncStatusEntry {
-    const key = this.makeKey(tenantId, syncId)
-    let entry = this.statuses.get(key)
-
-    if (!entry) {
-      entry = {
-        syncId,
-        tenantId,
-        pendingCount: 0,
-        errors: [],
-        state: 'idle',
-      }
-      this.statuses.set(key, entry)
-    }
-
-    return entry
   }
 
   /**
    * Get status for a tenant + sync spec.
    */
   getStatus(tenantId: TenantId, syncId: SyncId): SyncStatus {
-    const entry = this.getOrCreate(tenantId, syncId)
+    const dbEntry = this.syncStatusRepo.findByTenantAndSync(tenantId, syncId)
+    const errors = this.syncStatusRepo.findErrors(tenantId, syncId)
+
+    if (!dbEntry) {
+      return {
+        syncId,
+        tenantId,
+        pendingCount: 0,
+        errors: [],
+        state: 'idle',
+      }
+    }
+
     return {
-      syncId: entry.syncId,
-      tenantId: entry.tenantId,
-      lastSyncAt: entry.lastSyncAt,
-      pendingCount: entry.pendingCount,
-      errors: entry.errors,
-      state: entry.state,
+      syncId: dbEntry.syncId,
+      tenantId: dbEntry.tenantId,
+      lastSyncAt: dbEntry.lastSyncAt ?? undefined,
+      pendingCount: dbEntry.pendingCount,
+      errors: errors.map((e) => ({
+        timestamp: e.timestamp,
+        message: e.message,
+        mapping: e.mapping ?? undefined,
+      })),
+      state: dbEntry.state,
     }
   }
 
@@ -129,36 +115,37 @@ export class SyncStatusTracker {
    * Get all statuses for a tenant.
    */
   getStatusesForTenant(tenantId: TenantId): SyncStatus[] {
-    const results: SyncStatus[] = []
-    for (const [key, entry] of this.statuses) {
-      if (key.startsWith(`${tenantId}:`)) {
-        results.push({
-          syncId: entry.syncId,
-          tenantId: entry.tenantId,
-          lastSyncAt: entry.lastSyncAt,
-          pendingCount: entry.pendingCount,
-          errors: entry.errors,
-          state: entry.state,
-        })
+    const dbEntries = this.syncStatusRepo.findByTenant(tenantId)
+    return dbEntries.map((entry) => {
+      const errors = this.syncStatusRepo.findErrors(entry.tenantId, entry.syncId)
+      return {
+        syncId: entry.syncId,
+        tenantId: entry.tenantId,
+        lastSyncAt: entry.lastSyncAt ?? undefined,
+        pendingCount: entry.pendingCount,
+        errors: errors.map((e) => ({
+          timestamp: e.timestamp,
+          message: e.message,
+          mapping: e.mapping ?? undefined,
+        })),
+        state: entry.state,
       }
-    }
-    return results
+    })
   }
 
   /**
    * Mark a sync as started.
    */
   markSyncStarted(tenantId: TenantId, syncId: SyncId): void {
-    const entry = this.getOrCreate(tenantId, syncId)
-    entry.state = 'syncing'
-    entry.pendingCount++
+    const existing = this.syncStatusRepo.findByTenantAndSync(tenantId, syncId)
+    const pendingCount = (existing?.pendingCount ?? 0) + 1
 
-    this.syncStatusRepo?.save({
+    this.syncStatusRepo.save({
       tenantId,
       syncId,
-      lastSyncAt: entry.lastSyncAt ?? null,
-      pendingCount: entry.pendingCount,
-      state: entry.state,
+      lastSyncAt: existing?.lastSyncAt ?? null,
+      pendingCount,
+      state: 'syncing',
       updatedAt: new Date(),
     })
   }
@@ -167,23 +154,21 @@ export class SyncStatusTracker {
    * Mark a sync as completed successfully.
    */
   markSyncCompleted(tenantId: TenantId, syncId: SyncId): void {
-    const entry = this.getOrCreate(tenantId, syncId)
-    entry.lastSyncAt = new Date()
-    entry.pendingCount = Math.max(0, entry.pendingCount - 1)
-    entry.state = entry.pendingCount > 0 ? 'syncing' : 'idle'
+    const existing = this.syncStatusRepo.findByTenantAndSync(tenantId, syncId)
+    const pendingCount = Math.max(0, (existing?.pendingCount ?? 1) - 1)
+    const state = pendingCount > 0 ? 'syncing' : 'idle'
 
-    // Clear errors on successful sync
-    if (entry.state === 'idle') {
-      entry.errors = []
-      this.syncStatusRepo?.clearErrors(tenantId, syncId)
+    // Clear errors on successful completion when idle
+    if (state === 'idle') {
+      this.syncStatusRepo.clearErrors(tenantId, syncId)
     }
 
-    this.syncStatusRepo?.save({
+    this.syncStatusRepo.save({
       tenantId,
       syncId,
-      lastSyncAt: entry.lastSyncAt,
-      pendingCount: entry.pendingCount,
-      state: entry.state,
+      lastSyncAt: new Date(),
+      pendingCount,
+      state,
       updatedAt: new Date(),
     })
   }
@@ -192,94 +177,61 @@ export class SyncStatusTracker {
    * Mark a sync as failed.
    */
   markSyncFailed(tenantId: TenantId, syncId: SyncId, error: string, mapping?: string): void {
-    const entry = this.getOrCreate(tenantId, syncId)
-    entry.pendingCount = Math.max(0, entry.pendingCount - 1)
-    entry.state = 'error'
+    const existing = this.syncStatusRepo.findByTenantAndSync(tenantId, syncId)
+    const pendingCount = Math.max(0, (existing?.pendingCount ?? 1) - 1)
 
-    entry.errors.push({
-      timestamp: new Date(),
-      message: error,
-      mapping,
-    })
-
-    // Trim old errors
-    if (entry.errors.length > this.maxErrors) {
-      entry.errors = entry.errors.slice(-this.maxErrors)
-    }
-
-    this.syncStatusRepo?.save({
+    this.syncStatusRepo.save({
       tenantId,
       syncId,
-      lastSyncAt: entry.lastSyncAt ?? null,
-      pendingCount: entry.pendingCount,
-      state: entry.state,
+      lastSyncAt: existing?.lastSyncAt ?? null,
+      pendingCount,
+      state: 'error',
       updatedAt: new Date(),
     })
-    this.syncStatusRepo?.addError(tenantId, syncId, error, mapping)
+    this.syncStatusRepo.addError(tenantId, syncId, error, mapping)
   }
 
   /**
    * Clear status for a tenant.
    */
   clearTenant(tenantId: TenantId): void {
-    const keysToDelete: string[] = []
-    for (const key of this.statuses.keys()) {
-      if (key.startsWith(`${tenantId}:`)) {
-        keysToDelete.push(key)
-      }
-    }
-    for (const key of keysToDelete) {
-      this.statuses.delete(key)
-    }
-    this.syncStatusRepo?.deleteByTenant(tenantId)
+    this.syncStatusRepo.deleteByTenant(tenantId)
   }
 
   /**
    * Clear status for a specific tenant + sync spec.
    */
   clearStatus(tenantId: TenantId, syncId: SyncId): void {
-    const key = this.makeKey(tenantId, syncId)
-    this.statuses.delete(key)
-  }
-
-  /**
-   * Clear all statuses.
-   */
-  clear(): void {
-    this.statuses.clear()
+    this.syncStatusRepo.deleteByTenantAndSync(tenantId, syncId)
   }
 
   /**
    * Get all pending syncs.
    */
   getPendingSyncs(): Array<{ tenantId: TenantId; syncId: SyncId; pendingCount: number }> {
-    const pending: Array<{ tenantId: TenantId; syncId: SyncId; pendingCount: number }> = []
-    for (const entry of this.statuses.values()) {
-      if (entry.pendingCount > 0) {
-        pending.push({
-          tenantId: entry.tenantId,
-          syncId: entry.syncId,
-          pendingCount: entry.pendingCount,
-        })
-      }
-    }
-    return pending
+    return this.syncStatusRepo.findWithPending().map((e) => ({
+      tenantId: e.tenantId,
+      syncId: e.syncId,
+      pendingCount: e.pendingCount,
+    }))
   }
 
   /**
    * Get all syncs in error state.
    */
   getErrorSyncs(): Array<{ tenantId: TenantId; syncId: SyncId; errors: SyncError[] }> {
-    const errored: Array<{ tenantId: TenantId; syncId: SyncId; errors: SyncError[] }> = []
-    for (const entry of this.statuses.values()) {
-      if (entry.state === 'error') {
-        errored.push({
-          tenantId: entry.tenantId,
-          syncId: entry.syncId,
-          errors: entry.errors,
-        })
+    const errorEntries = this.syncStatusRepo.findInErrorState()
+    return errorEntries.map((e) => {
+      const errors = this.syncStatusRepo.findErrors(e.tenantId, e.syncId)
+      return {
+        tenantId: e.tenantId,
+        syncId: e.syncId,
+        errors: errors.map((err) => ({
+          timestamp: err.timestamp,
+          message: err.message,
+          mapping: err.mapping ?? undefined,
+        })),
       }
-    }
-    return errored
+    })
   }
 }

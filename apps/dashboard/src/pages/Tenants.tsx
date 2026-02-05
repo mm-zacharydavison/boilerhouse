@@ -106,7 +106,7 @@ export function TenantsPage() {
                   <TableHead>Container</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Sync Status</TableHead>
-                  <TableHead>Assigned</TableHead>
+                  <TableHead>Claimed</TableHead>
                   <TableHead>Last Activity</TableHead>
                 </TableRow>
               </TableHeader>
@@ -141,8 +141,8 @@ export function TenantsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {tenant.assignedAt ? (
-                        formatRelativeTime(tenant.assignedAt)
+                      {tenant.claimedAt ? (
+                        formatRelativeTime(tenant.claimedAt)
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
