@@ -134,14 +134,26 @@ export function tenantsController(deps: TenantsControllerDeps) {
         }
 
         try {
-          const container = await pool.acquireForTenant(params.id)
+          const { container, isAffinityMatch } = await pool.acquireForTenant(params.id)
           logContainerClaimed(container.containerId, params.id, body.poolId, activityLog)
 
+          // If this is a new container (not tenant's previous), wipe it first
+          if (!isAffinityMatch) {
+            await containerManager.wipeForNewTenant(container.containerId)
+          }
+
           // Trigger onClaim sync
+          // initialSync=true for new containers (full download with --resync)
+          // initialSync=false for affinity match (incremental bisync)
           const workload = pool.getWorkload()
           if (workload.sync) {
-            logSyncStarted(params.id, 'download', activityLog)
-            const results = await syncCoordinator.onClaim(params.id, container, workload.sync)
+            logSyncStarted(params.id, isAffinityMatch ? 'bisync' : 'download', activityLog)
+            const results = await syncCoordinator.onClaim(
+              params.id,
+              container,
+              workload.sync,
+              !isAffinityMatch,
+            )
             const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
             if (results.every((r) => r.success)) {
               logSyncCompleted(params.id, totalBytes, activityLog)

@@ -101,6 +101,8 @@ export interface PoolContainer {
   lastActivity: Date
   /** Current lifecycle status of the container. */
   status: ContainerStatus
+  /** Previous tenant ID, preserved after release for affinity matching. */
+  lastTenantId?: TenantId | null
 }
 
 // =============================================================================

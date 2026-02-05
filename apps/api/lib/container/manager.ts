@@ -261,8 +261,9 @@ export class ContainerManager {
   }
 
   /**
-   * Release a container from a tenant and prepare for reuse.
-   * Wipes state, secrets, and bisync cache for tenant isolation.
+   * Release a container from a tenant.
+   * Does NOT wipe state - that happens on claim if the next tenant is different.
+   * This allows returning tenants to get their previous container with state intact.
    */
   async releaseContainer(containerId: ContainerId): Promise<void> {
     const container = this.containers.get(containerId)
@@ -270,18 +271,32 @@ export class ContainerManager {
       throw new Error(`Container ${containerId} not found`)
     }
 
-    container.status = 'stopping'
+    // Preserve lastTenantId for affinity matching on next claim
+    container.lastTenantId = container.tenantId
+    container.tenantId = null
+    container.status = 'idle'
+    container.lastActivity = new Date()
+  }
 
-    // Wipe state, secrets, and bisync cache for tenant isolation
+  /**
+   * Wipe container state for a new tenant.
+   * Called when a container is claimed by a different tenant than its lastTenantId.
+   * Wipes state, secrets, and bisync cache for tenant isolation.
+   */
+  async wipeForNewTenant(containerId: ContainerId): Promise<void> {
+    const container = this.containers.get(containerId)
+    if (!container) {
+      throw new Error(`Container ${containerId} not found`)
+    }
+
     await Promise.all([
       this.wipeDirectory(container.stateDir),
       this.wipeDirectory(container.secretsDir),
       this.wipeBisyncCache(container.stateDir),
     ])
 
-    container.tenantId = null
-    container.status = 'idle'
-    container.lastActivity = new Date()
+    // Clear lastTenantId since we've wiped the state
+    container.lastTenantId = null
   }
 
   /**

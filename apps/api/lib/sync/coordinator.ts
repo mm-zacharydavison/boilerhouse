@@ -127,11 +127,14 @@ export class SyncCoordinator {
    * @param tenantId - The tenant claiming the container
    * @param container - The container being claimed
    * @param syncConfig - Sync configuration from the workload spec (optional)
+   * @param initialSync - If true, this is a new container (uses --resync for bisync).
+   *                      If false, tenant is returning to same container (incremental bisync).
    */
   async onClaim(
     tenantId: TenantId,
     container: PoolContainer,
     syncConfig?: WorkloadSyncConfig,
+    initialSync = true,
   ): Promise<SyncResult[]> {
     if (!syncConfig) {
       return []
@@ -151,8 +154,7 @@ export class SyncCoordinator {
     )
 
     for (const mapping of downloadMappings) {
-      // initialSync=true for first sync on a newly claimed container
-      const result = await this.executeSync(tenantId, syncConfig, mapping, container, true)
+      const result = await this.executeSync(tenantId, syncConfig, mapping, container, initialSync)
       results.push(result)
     }
 
@@ -161,7 +163,9 @@ export class SyncCoordinator {
       this.startPeriodicSync(tenantId, syncConfig, container)
     }
 
-    this.log(`[Sync] onClaim completed for tenant ${tenantId}: ${results.length} syncs`)
+    this.log(
+      `[Sync] onClaim completed for tenant ${tenantId}: ${results.length} syncs (initialSync=${initialSync})`,
+    )
     return results
   }
 

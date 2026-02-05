@@ -176,8 +176,8 @@ describe('ContainerPool', () => {
         acquireTimeoutMs: 5000,
       })
 
-      const container1 = await pool.acquireForTenant('tenant-pool-1')
-      const container2 = await pool.acquireForTenant('tenant-pool-1')
+      const { container: container1 } = await pool.acquireForTenant('tenant-pool-1')
+      const { container: container2 } = await pool.acquireForTenant('tenant-pool-1')
 
       expect(container1.containerId).toBe(container2.containerId)
 
@@ -203,8 +203,8 @@ describe('ContainerPool', () => {
         acquireTimeoutMs: 5000,
       })
 
-      const container1 = await pool.acquireForTenant('tenant-a')
-      const container2 = await pool.acquireForTenant('tenant-b')
+      const { container: container1 } = await pool.acquireForTenant('tenant-a')
+      const { container: container2 } = await pool.acquireForTenant('tenant-b')
 
       expect(container1.containerId).not.toBe(container2.containerId)
 
@@ -234,6 +234,77 @@ describe('ContainerPool', () => {
 
       await pool.acquireForTenant('tenant-check')
       expect(pool.hasTenant('tenant-check')).toBe(true)
+
+      await pool.drain()
+    })
+
+    test('acquireForTenant returns affinity match when tenant reclaims their container', async () => {
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+      const manager = new ContainerManager(runtime, {
+        stateBaseDir: '/tmp/test-states',
+        secretsBaseDir: '/tmp/test-secrets',
+        socketBaseDir: '/tmp/test-sockets',
+      })
+
+      const poolId = createPoolId()
+      const pool = new ContainerPool(manager, {
+        workload: createWorkloadSpec(),
+        poolId,
+        minSize: 0,
+        maxSize: 5,
+        idleTimeoutMs: 60000,
+        evictionIntervalMs: 0,
+        acquireTimeoutMs: 5000,
+        affinityTimeoutMs: 60000, // 60 seconds for test
+      })
+
+      // First claim - should not be affinity match
+      const { container: container1, isAffinityMatch: match1 } =
+        await pool.acquireForTenant('tenant-affinity')
+      expect(match1).toBe(false)
+
+      // Release the container
+      await pool.releaseForTenant('tenant-affinity')
+
+      // Reclaim - should get same container with affinity match
+      const { container: container2, isAffinityMatch: match2 } =
+        await pool.acquireForTenant('tenant-affinity')
+      expect(match2).toBe(true)
+      expect(container2.containerId).toBe(container1.containerId)
+
+      await pool.drain()
+    })
+
+    test('acquireForTenant returns no affinity for different tenant', async () => {
+      const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+      const manager = new ContainerManager(runtime, {
+        stateBaseDir: '/tmp/test-states',
+        secretsBaseDir: '/tmp/test-secrets',
+        socketBaseDir: '/tmp/test-sockets',
+      })
+
+      const poolId = createPoolId()
+      const pool = new ContainerPool(manager, {
+        workload: createWorkloadSpec(),
+        poolId,
+        minSize: 0,
+        maxSize: 5,
+        idleTimeoutMs: 60000,
+        evictionIntervalMs: 0,
+        acquireTimeoutMs: 5000,
+        affinityTimeoutMs: 60000,
+      })
+
+      // Tenant A claims and releases
+      const { container: containerA } = await pool.acquireForTenant('tenant-A')
+      await pool.releaseForTenant('tenant-A')
+
+      // Tenant B claims - should not get affinity match
+      const { container: containerB, isAffinityMatch: matchB } =
+        await pool.acquireForTenant('tenant-B')
+      expect(matchB).toBe(false)
+      // Should get a different container (A's is reserved)
+      expect(containerB.containerId).not.toBe(containerA.containerId)
 
       await pool.drain()
     })
@@ -410,6 +481,7 @@ describe('ContainerRuntime abstraction', () => {
       stopContainer: async () => {},
       removeContainer: async () => {},
       destroyContainer: async () => {},
+      restartContainer: async () => {},
       getContainer: async () => null,
       isHealthy: async () => true,
       listContainers: async () => [],

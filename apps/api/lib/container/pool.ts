@@ -34,6 +34,9 @@ export interface ContainerPoolConfig {
 
   /** Optional network name override */
   networkName?: string
+
+  /** Time to keep a released container reserved for the same tenant before returning to pool */
+  affinityTimeoutMs: number
 }
 
 export interface PoolStats {
@@ -50,6 +53,13 @@ export interface PoolError {
   timestamp: Date
 }
 
+/** Result of acquiring a container, includes affinity match info */
+export interface AcquireResult {
+  container: PoolContainer
+  /** True if this tenant is returning to their previous container (state intact) */
+  isAffinityMatch: boolean
+}
+
 export class ContainerPool {
   private manager: ContainerManager
   private pool: Pool<PoolContainer>
@@ -57,6 +67,10 @@ export class ContainerPool {
   private assignedContainers: Map<TenantId, PoolContainer> = new Map()
   /** Track all containers by ID so we can destroy specific ones */
   private allContainers: Map<string, PoolContainer> = new Map()
+  /** Containers reserved for returning tenants (not in generic-pool) */
+  private affinityContainers: Map<TenantId, PoolContainer> = new Map()
+  /** Timeouts to return affinity containers to pool */
+  private affinityTimeouts: Map<TenantId, ReturnType<typeof setTimeout>> = new Map()
   private _lastError: PoolError | null = null
 
   constructor(
@@ -73,6 +87,7 @@ export class ContainerPool {
       evictionIntervalMs: poolConfig.evictionIntervalMs ?? 30000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? config.pool.containerStartTimeoutMs,
       networkName: poolConfig.networkName,
+      affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 0 * 60 * 1000, // 0 minutes default
     }
 
     const factory: Factory<PoolContainer> = {
@@ -137,15 +152,50 @@ export class ContainerPool {
   /**
    * Acquire a container for a tenant
    *
-   * If the tenant already has an assigned container, returns it.
-   * Otherwise, acquires one from the pool and assigns it.
+   * Priority:
+   * 1. If tenant already has an assigned container, returns it
+   * 2. If tenant has an affinity container (their previous container), returns it
+   * 3. Otherwise, acquires from pool
+   *
+   * Returns isAffinityMatch=true if returning tenant's previous container (state intact).
    */
-  async acquireForTenant(tenantId: TenantId): Promise<PoolContainer> {
+  async acquireForTenant(tenantId: TenantId): Promise<AcquireResult> {
     // Check if tenant already has an assigned container
     const existing = this.assignedContainers.get(tenantId)
     if (existing) {
       this.manager.recordActivity(existing.containerId)
-      return existing
+      return { container: existing, isAffinityMatch: true }
+    }
+
+    // Check for affinity container (tenant's previous container reserved for them)
+    const affinityContainer = this.affinityContainers.get(tenantId)
+    if (affinityContainer) {
+      // Clear the timeout and remove from affinity map
+      const timeout = this.affinityTimeouts.get(tenantId)
+      if (timeout) {
+        clearTimeout(timeout)
+        this.affinityTimeouts.delete(tenantId)
+      }
+      this.affinityContainers.delete(tenantId)
+
+      // Validate container is still healthy
+      const healthy = await this.manager.isHealthy(affinityContainer.containerId)
+      if (healthy) {
+        // Assign to tenant
+        await this.manager.assignToTenant(affinityContainer.containerId, tenantId)
+        this.assignedContainers.set(tenantId, affinityContainer)
+        console.log(
+          `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
+        )
+        return { container: affinityContainer, isAffinityMatch: true }
+      }
+
+      // Container unhealthy, destroy it and fall through to pool
+      console.log(
+        `[Pool] Affinity container ${affinityContainer.containerId} unhealthy, destroying`,
+      )
+      await this.manager.destroyContainer(affinityContainer.containerId)
+      this.allContainers.delete(affinityContainer.containerId)
     }
 
     // Acquire from pool
@@ -157,13 +207,15 @@ export class ContainerPool {
     this.assignedContainers.set(tenantId, container)
     console.log(`[Pool] Assigned container ${container.containerId} to tenant ${tenantId}`)
 
-    return container
+    return { container, isAffinityMatch: false }
   }
 
   /**
-   * Release a tenant's container back to the pool
+   * Release a tenant's container
    *
-   * Wipes tenant data and returns container to pool for reuse.
+   * Instead of returning to pool immediately, keeps container reserved for the
+   * tenant in case they return soon. After affinityTimeoutMs, container is
+   * wiped and returned to pool for other tenants.
    */
   async releaseForTenant(tenantId: TenantId): Promise<void> {
     const container = this.assignedContainers.get(tenantId)
@@ -174,12 +226,60 @@ export class ContainerPool {
 
     this.assignedContainers.delete(tenantId)
 
-    // Release from tenant assignment (wipes data)
+    // Release from tenant assignment (preserves lastTenantId for affinity)
     await this.manager.releaseContainer(container.containerId)
 
-    // Return to pool
-    await this.pool.release(container)
-    console.log(`[Pool] Released container ${container.containerId} from tenant ${tenantId}`)
+    // Clear any existing affinity for this tenant (shouldn't happen, but be safe)
+    const existingTimeout = this.affinityTimeouts.get(tenantId)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+    const existingAffinity = this.affinityContainers.get(tenantId)
+    if (existingAffinity) {
+      // Return the old affinity container to pool with wipe
+      await this.flushAffinityToPool(existingAffinity)
+    }
+
+    // Store in affinity map for potential quick return
+    this.affinityContainers.set(tenantId, container)
+
+    // Set timeout to return to pool if tenant doesn't come back
+    const timeout = setTimeout(async () => {
+      this.affinityTimeouts.delete(tenantId)
+      const affinityContainer = this.affinityContainers.get(tenantId)
+      if (affinityContainer && affinityContainer.containerId === container.containerId) {
+        this.affinityContainers.delete(tenantId)
+        await this.flushAffinityToPool(affinityContainer)
+      }
+    }, this.poolConfig.affinityTimeoutMs)
+
+    this.affinityTimeouts.set(tenantId, timeout)
+
+    console.log(
+      `[Pool] Released container ${container.containerId} from tenant ${tenantId} (reserved for ${this.poolConfig.affinityTimeoutMs}ms)`,
+    )
+  }
+
+  /**
+   * Wipe an affinity container and return it to the pool
+   */
+  private async flushAffinityToPool(container: PoolContainer): Promise<void> {
+    try {
+      // Wipe state for next tenant
+      await this.manager.wipeForNewTenant(container.containerId)
+      // Return to pool
+      await this.pool.release(container)
+      console.log(`[Pool] Flushed affinity container ${container.containerId} back to pool`)
+    } catch (err) {
+      console.error(`[Pool] Failed to flush affinity container ${container.containerId}:`, err)
+      // Try to destroy it since we couldn't return it cleanly
+      try {
+        await this.manager.destroyContainer(container.containerId)
+        this.allContainers.delete(container.containerId)
+      } catch {
+        // Best effort
+      }
+    }
   }
 
   /**
@@ -420,9 +520,34 @@ export class ContainerPool {
   async drain(): Promise<void> {
     console.log('[Pool] Draining pool...')
 
-    // Release all assigned containers
+    // First, release all assigned containers (this moves them to affinity)
     const tenants = Array.from(this.assignedContainers.keys())
-    await Promise.all(tenants.map((tenantId) => this.releaseForTenant(tenantId)))
+    for (const tenantId of tenants) {
+      const container = this.assignedContainers.get(tenantId)
+      if (container) {
+        this.assignedContainers.delete(tenantId)
+        await this.manager.releaseContainer(container.containerId)
+        // Put directly in affinity for cleanup below
+        this.affinityContainers.set(tenantId, container)
+      }
+    }
+
+    // Clear all affinity timeouts
+    for (const timeout of this.affinityTimeouts.values()) {
+      clearTimeout(timeout)
+    }
+    this.affinityTimeouts.clear()
+
+    // Flush all affinity containers back to pool
+    for (const container of this.affinityContainers.values()) {
+      try {
+        await this.manager.wipeForNewTenant(container.containerId)
+        await this.pool.release(container)
+      } catch {
+        // Best effort during drain
+      }
+    }
+    this.affinityContainers.clear()
 
     // Drain and clear the pool
     await this.pool.drain()
