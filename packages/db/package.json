@@ -15,6 +15,10 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@boilerhouse/core": "workspace:*"
+    "@boilerhouse/core": "workspace:*",
+    "drizzle-orm": "^0.45.1"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.8"
   }
 }

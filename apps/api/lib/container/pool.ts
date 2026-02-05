@@ -4,13 +4,13 @@
  * Manages a pool of pre-warmed containers using generic-pool.
  * Provides fast container acquisition by maintaining idle containers ready for claiming.
  *
- * Claim state comes from ClaimRepository (DB).
- * Affinity state comes from AffinityRepository (DB) + in-memory timeouts.
+ * Claim and affinity state stored in SQLite via Drizzle ORM.
  * allContainers is a runtime cache bridging generic-pool references.
  */
 
 import type { ContainerId, PoolContainer, PoolId, TenantId, WorkloadSpec } from '@boilerhouse/core'
-import type { AffinityRepository, ClaimRepository } from '@boilerhouse/db'
+import { type DrizzleDb, schema } from '@boilerhouse/db'
+import { count, eq, gt, lte } from 'drizzle-orm'
 import { type Factory, type Pool, createPool } from 'generic-pool'
 import { config } from '../config'
 import type { ContainerManager } from './manager'
@@ -74,18 +74,15 @@ export class ContainerPool {
   /** Timeouts to return affinity containers to pool */
   private affinityTimeouts: Map<TenantId, ReturnType<typeof setTimeout>> = new Map()
   private _lastError: PoolError | null = null
-  private claimRepo: ClaimRepository
-  private affinityRepo: AffinityRepository
+  private db: DrizzleDb
 
   constructor(
     manager: ContainerManager,
     poolConfig: Pick<ContainerPoolConfig, 'workload' | 'poolId'> & Partial<ContainerPoolConfig>,
-    claimRepo: ClaimRepository,
-    affinityRepo: AffinityRepository,
+    db: DrizzleDb,
   ) {
     this.manager = manager
-    this.claimRepo = claimRepo
-    this.affinityRepo = affinityRepo
+    this.db = db
     this.poolConfig = {
       workload: poolConfig.workload,
       poolId: poolConfig.poolId,
@@ -169,7 +166,11 @@ export class ContainerPool {
    */
   async acquireForTenant(tenantId: TenantId): Promise<AcquireResult> {
     // Check if tenant already has a claimed container (DB lookup)
-    const existingClaim = this.claimRepo.findByTenantId(tenantId)
+    const existingClaim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (existingClaim && existingClaim.poolId === this.poolConfig.poolId) {
       const existing = this.allContainers.get(existingClaim.containerId)
       if (existing) {
@@ -179,7 +180,11 @@ export class ContainerPool {
     }
 
     // Check for affinity container (tenant's previous container reserved for them)
-    const affinityReservation = this.affinityRepo.findByTenantId(tenantId)
+    const affinityReservation = this.db
+      .select()
+      .from(schema.affinityReservations)
+      .where(eq(schema.affinityReservations.tenantId, tenantId))
+      .get()
     if (affinityReservation && affinityReservation.poolId === this.poolConfig.poolId) {
       const affinityContainer = this.allContainers.get(affinityReservation.containerId)
       if (affinityContainer) {
@@ -189,7 +194,10 @@ export class ContainerPool {
           clearTimeout(timeout)
           this.affinityTimeouts.delete(tenantId)
         }
-        this.affinityRepo.delete(tenantId)
+        this.db
+          .delete(schema.affinityReservations)
+          .where(eq(schema.affinityReservations.tenantId, tenantId))
+          .run()
 
         // Validate container is still healthy
         const healthy = await this.manager.isHealthy(affinityContainer.containerId)
@@ -214,7 +222,10 @@ export class ContainerPool {
         this.allContainers.delete(affinityContainer.containerId)
       } else {
         // Container not in allContainers (maybe crashed), clean up DB
-        this.affinityRepo.delete(tenantId)
+        this.db
+          .delete(schema.affinityReservations)
+          .where(eq(schema.affinityReservations.tenantId, tenantId))
+          .run()
       }
     }
 
@@ -238,7 +249,11 @@ export class ContainerPool {
    */
   async releaseForTenant(tenantId: TenantId): Promise<void> {
     // Find container via claim DB
-    const claim = this.claimRepo.findByTenantId(tenantId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (!claim || claim.poolId !== this.poolConfig.poolId) {
       console.log(`[Pool] No container found for tenant ${tenantId}`)
       return
@@ -249,7 +264,7 @@ export class ContainerPool {
       console.log(
         `[Pool] Container ${claim.containerId} not in allContainers for tenant ${tenantId}`,
       )
-      this.claimRepo.delete(claim.containerId)
+      this.db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
       return
     }
 
@@ -261,28 +276,49 @@ export class ContainerPool {
     if (existingTimeout) {
       clearTimeout(existingTimeout)
     }
-    const existingAffinity = this.affinityRepo.findByTenantId(tenantId)
+    const existingAffinity = this.db
+      .select()
+      .from(schema.affinityReservations)
+      .where(eq(schema.affinityReservations.tenantId, tenantId))
+      .get()
     if (existingAffinity) {
       const existingAffinityContainer = this.allContainers.get(existingAffinity.containerId)
       if (existingAffinityContainer) {
         await this.flushAffinityToPool(existingAffinityContainer)
       }
-      this.affinityRepo.delete(tenantId)
+      this.db
+        .delete(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        .run()
     }
 
     // Persist affinity reservation
     const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
-    this.affinityRepo.save({
-      tenantId,
-      containerId: container.containerId,
-      poolId: this.poolConfig.poolId,
-      expiresAt,
-    })
+    this.db
+      .insert(schema.affinityReservations)
+      .values({
+        tenantId,
+        containerId: container.containerId,
+        poolId: this.poolConfig.poolId,
+        expiresAt,
+      })
+      .onConflictDoUpdate({
+        target: schema.affinityReservations.tenantId,
+        set: {
+          containerId: container.containerId,
+          poolId: this.poolConfig.poolId,
+          expiresAt,
+        },
+      })
+      .run()
 
     // Set timeout to return to pool if tenant doesn't come back
     const timeout = setTimeout(async () => {
       this.affinityTimeouts.delete(tenantId)
-      this.affinityRepo.delete(tenantId)
+      this.db
+        .delete(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        .run()
       // Look up the container from allContainers by the containerId we captured
       const affinityContainer = this.allContainers.get(container.containerId)
       if (affinityContainer) {
@@ -326,14 +362,18 @@ export class ContainerPool {
    */
   async destroyForTenant(tenantId: TenantId): Promise<void> {
     // Find via claim DB
-    const claim = this.claimRepo.findByTenantId(tenantId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (!claim || claim.poolId !== this.poolConfig.poolId) {
       return
     }
 
     const container = this.allContainers.get(claim.containerId)
     if (!container) {
-      this.claimRepo.delete(claim.containerId)
+      this.db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
       return
     }
 
@@ -350,7 +390,11 @@ export class ContainerPool {
    */
   async destroyContainer(containerId: string): Promise<boolean> {
     // Check if it's claimed by a tenant
-    const claim = this.claimRepo.findByContainerId(containerId as ContainerId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.containerId, containerId as ContainerId))
+      .get()
     if (claim && claim.poolId === this.poolConfig.poolId) {
       await this.destroyForTenant(claim.tenantId)
       return true
@@ -372,7 +416,11 @@ export class ContainerPool {
    * Get container for a tenant (if claimed in this pool)
    */
   getContainerForTenant(tenantId: TenantId): PoolContainer | undefined {
-    const claim = this.claimRepo.findByTenantId(tenantId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (!claim || claim.poolId !== this.poolConfig.poolId) {
       return undefined
     }
@@ -383,15 +431,23 @@ export class ContainerPool {
    * Check if tenant has a claimed container in this pool
    */
   hasTenant(tenantId: TenantId): boolean {
-    const claim = this.claimRepo.findByTenantId(tenantId)
-    return claim !== null && claim.poolId === this.poolConfig.poolId
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
+    return claim !== undefined && claim.poolId === this.poolConfig.poolId
   }
 
   /**
    * Record activity for a tenant's container
    */
   recordActivity(tenantId: TenantId): void {
-    const claim = this.claimRepo.findByTenantId(tenantId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (claim && claim.poolId === this.poolConfig.poolId) {
       this.manager.recordActivity(claim.containerId)
     }
@@ -405,7 +461,11 @@ export class ContainerPool {
     let evicted = 0
 
     for (const stale of staleContainers) {
-      const claim = this.claimRepo.findByContainerId(stale.containerId)
+      const claim = this.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.containerId, stale.containerId))
+        .get()
       if (claim && claim.poolId === this.poolConfig.poolId) {
         console.log(
           `[Pool] Evicting stale container ${stale.containerId} for tenant ${stale.tenantId}`,
@@ -451,7 +511,12 @@ export class ContainerPool {
     }
 
     const currentSize = this.pool.size
-    const claimedCount = this.claimRepo.countByPoolId(this.poolConfig.poolId)
+    const result = this.db
+      .select({ count: count() })
+      .from(schema.claims)
+      .where(eq(schema.claims.poolId, this.poolConfig.poolId))
+      .get()
+    const claimedCount = result?.count ?? 0
 
     if (targetSize === currentSize) {
       return { newSize: currentSize, message: 'Already at target size' }
@@ -563,7 +628,12 @@ export class ContainerPool {
    * Get all claimed tenant IDs in this pool
    */
   getTenantsWithClaims(): TenantId[] {
-    return this.claimRepo.findByPoolId(this.poolConfig.poolId).map((c) => c.tenantId)
+    return this.db
+      .select({ tenantId: schema.claims.tenantId })
+      .from(schema.claims)
+      .where(eq(schema.claims.poolId, this.poolConfig.poolId))
+      .all()
+      .map((c) => c.tenantId)
   }
 
   /**
@@ -594,8 +664,12 @@ export class ContainerPool {
     console.log('[Pool] Draining pool...')
 
     // Release all claimed containers back to the pool
-    const claims = this.claimRepo.findByPoolId(this.poolConfig.poolId)
-    for (const claim of claims) {
+    const poolClaims = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.poolId, this.poolConfig.poolId))
+      .all()
+    for (const claim of poolClaims) {
       const container = this.allContainers.get(claim.containerId)
       if (container) {
         await this.manager.releaseContainer(container.containerId, container)
@@ -610,8 +684,12 @@ export class ContainerPool {
     this.affinityTimeouts.clear()
 
     // Flush all affinity containers back to pool
-    const affinityReservations = this.affinityRepo.findByPoolId(this.poolConfig.poolId)
-    for (const reservation of affinityReservations) {
+    const affinityRows = this.db
+      .select()
+      .from(schema.affinityReservations)
+      .where(eq(schema.affinityReservations.poolId, this.poolConfig.poolId))
+      .all()
+    for (const reservation of affinityRows) {
       const container = this.allContainers.get(reservation.containerId)
       if (container) {
         try {
@@ -621,7 +699,10 @@ export class ContainerPool {
           // Best effort during drain
         }
       }
-      this.affinityRepo.delete(reservation.tenantId)
+      this.db
+        .delete(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, reservation.tenantId))
+        .run()
     }
 
     // Drain and clear the pool
@@ -665,7 +746,10 @@ export class ContainerPool {
 
     const timeout = setTimeout(async () => {
       this.affinityTimeouts.delete(tenantId)
-      this.affinityRepo.delete(tenantId)
+      this.db
+        .delete(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        .run()
       const affinityContainer = this.allContainers.get(container.containerId)
       if (affinityContainer) {
         await this.flushAffinityToPool(affinityContainer)

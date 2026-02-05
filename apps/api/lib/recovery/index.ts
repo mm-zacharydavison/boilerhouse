@@ -13,7 +13,8 @@
  */
 
 import type { ContainerRuntime } from '@boilerhouse/core'
-import type { AffinityRepository, ClaimRepository } from '@boilerhouse/db'
+import { type DrizzleDb, schema } from '@boilerhouse/db'
+import { eq, lte } from 'drizzle-orm'
 
 export interface RecoveryStats {
   /** Docker containers found with managed label */
@@ -36,8 +37,7 @@ export interface RecoveryConfig {
  */
 export async function recoverState(
   runtime: ContainerRuntime,
-  claimRepo: ClaimRepository,
-  affinityRepo: AffinityRepository,
+  db: DrizzleDb,
   config: RecoveryConfig,
 ): Promise<RecoveryStats> {
   const stats: RecoveryStats = {
@@ -72,27 +72,34 @@ export async function recoverState(
   console.log(`[Recovery] Found ${dockerContainerIds.size} running managed containers in Docker`)
 
   // 2. Clean up claims for containers NOT in Docker
-  const claims = claimRepo.findAll()
+  const claims = db.select().from(schema.claims).all()
   for (const claim of claims) {
     if (!dockerContainerIds.has(claim.containerId)) {
       console.log(`[Recovery] Cleaning stale claim for container ${claim.containerId}`)
-      claimRepo.delete(claim.containerId)
+      db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
       stats.staleClaims++
     }
   }
 
   // 3. Clean up affinity reservations for containers NOT in Docker
-  const affinityReservations = affinityRepo.findAll()
+  const affinityReservations = db.select().from(schema.affinityReservations).all()
   for (const reservation of affinityReservations) {
     if (!dockerContainerIds.has(reservation.containerId)) {
       console.log(`[Recovery] Cleaning stale affinity for container ${reservation.containerId}`)
-      affinityRepo.delete(reservation.tenantId)
+      db.delete(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, reservation.tenantId))
+        .run()
       stats.staleAffinity++
     }
   }
 
   // 4. Clean expired affinity reservations
-  stats.expiredAffinity = affinityRepo.deleteExpired()
+  const expired = db
+    .delete(schema.affinityReservations)
+    .where(lte(schema.affinityReservations.expiresAt, new Date()))
+    .returning({ tenantId: schema.affinityReservations.tenantId })
+    .all()
+  stats.expiredAffinity = expired.length
   if (stats.expiredAffinity > 0) {
     console.log(`[Recovery] Cleaned ${stats.expiredAffinity} expired affinity reservations`)
   }

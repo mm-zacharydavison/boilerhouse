@@ -1,13 +1,6 @@
-import {
-  ActivityRepository,
-  AffinityRepository,
-  ClaimRepository,
-  PoolRepository,
-  SyncStatusRepository,
-  closeDatabase,
-  initDatabase,
-} from '@boilerhouse/db'
+import { closeDatabase, initDatabase, schema } from '@boilerhouse/db'
 import { DockerRuntime } from '@boilerhouse/docker'
+import { gt } from 'drizzle-orm'
 import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
 import { ContainerManager } from '../lib/container'
@@ -28,19 +21,12 @@ console.log(`  - Database: ${config.dbPath}`)
 // Initialize SQLite database with WAL mode
 const db = initDatabase({ path: config.dbPath })
 
-// Create repositories
-const claimRepo = new ClaimRepository(db)
-const affinityRepo = new AffinityRepository(db)
-const syncStatusRepo = new SyncStatusRepository(db)
-const activityRepo = new ActivityRepository(db)
-const poolRepo = new PoolRepository(db)
-
 // Initialize container runtime
 const runtime = new DockerRuntime()
 console.log(`  - Runtime: ${runtime.name}`)
 
 // Run recovery/reconciliation (Docker = truth for existence, DB = truth for domain state)
-const recoveryStats = await recoverState(runtime, claimRepo, affinityRepo, {
+const recoveryStats = await recoverState(runtime, db, {
   labelPrefix: 'boilerhouse',
 })
 console.log(
@@ -55,20 +41,13 @@ console.log(
 )
 
 // Initialize activity log with persistence
-const activityLog = new ActivityLog(activityRepo)
+const activityLog = new ActivityLog(db)
 
 // Initialize container manager with claim persistence
-const manager = new ContainerManager(runtime, undefined, claimRepo)
+const manager = new ContainerManager(runtime, undefined, db)
 
-// Initialize pool registry with all repos
-const poolRegistry = new PoolRegistry(
-  manager,
-  workloadRegistry,
-  activityLog,
-  claimRepo,
-  affinityRepo,
-  poolRepo,
-)
+// Initialize pool registry
+const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog, db)
 
 // Restore pools from DB
 const restoredPools = poolRegistry.restoreFromDb()
@@ -77,7 +56,11 @@ if (restoredPools > 0) {
 }
 
 // Restore affinity reservations for each pool
-const activeAffinityReservations = affinityRepo.findActive()
+const activeAffinityReservations = db
+  .select()
+  .from(schema.affinityReservations)
+  .where(gt(schema.affinityReservations.expiresAt, new Date()))
+  .all()
 for (const reservation of activeAffinityReservations) {
   const pool = poolRegistry.getPool(reservation.poolId)
   if (pool) {
@@ -101,7 +84,7 @@ if (activeAffinityReservations.length > 0) {
 }
 
 // Initialize sync components with persistence
-const syncStatusTracker = new SyncStatusTracker(syncStatusRepo)
+const syncStatusTracker = new SyncStatusTracker(db)
 const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
 const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
 

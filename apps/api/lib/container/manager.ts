@@ -5,7 +5,7 @@
  * Uses the ContainerRuntime interface to support multiple backends (Docker, Kubernetes).
  *
  * Container existence is tracked by Docker (source of truth).
- * Tenant claims are tracked by the ClaimRepository in SQLite.
+ * Tenant claims are tracked in SQLite via Drizzle ORM.
  * Paths are computed deterministically from containerId.
  */
 
@@ -24,7 +24,8 @@ import {
   type TenantId,
   type WorkloadSpec,
 } from '@boilerhouse/core'
-import type { ClaimRepository } from '@boilerhouse/db'
+import { type DrizzleDb, schema } from '@boilerhouse/db'
+import { eq, lt } from 'drizzle-orm'
 import { config } from '../config'
 
 export interface ContainerManagerConfig {
@@ -59,16 +60,16 @@ const DEFAULT_CONFIG: ContainerManagerConfig = {
 export class ContainerManager {
   private runtime: ContainerRuntime
   private config: ContainerManagerConfig
-  private claimRepo: ClaimRepository
+  private db: DrizzleDb
 
   constructor(
     runtime: ContainerRuntime,
     managerConfig: Partial<ContainerManagerConfig> | undefined,
-    claimRepo: ClaimRepository,
+    db: DrizzleDb,
   ) {
     this.runtime = runtime
     this.config = { ...DEFAULT_CONFIG, ...managerConfig }
-    this.claimRepo = claimRepo
+    this.db = db
   }
 
   /**
@@ -280,12 +281,23 @@ export class ContainerManager {
     poolContainer.status = 'claimed'
     poolContainer.lastActivity = new Date()
 
-    this.claimRepo.save({
-      containerId,
-      tenantId,
-      poolId: poolContainer.poolId,
-      lastActivity: poolContainer.lastActivity,
-    })
+    this.db
+      .insert(schema.claims)
+      .values({
+        containerId,
+        tenantId,
+        poolId: poolContainer.poolId,
+        lastActivity: poolContainer.lastActivity,
+      })
+      .onConflictDoUpdate({
+        target: schema.claims.containerId,
+        set: {
+          tenantId,
+          poolId: poolContainer.poolId,
+          lastActivity: poolContainer.lastActivity,
+        },
+      })
+      .run()
 
     return poolContainer
   }
@@ -300,7 +312,7 @@ export class ContainerManager {
     poolContainer.status = 'idle'
     poolContainer.lastActivity = new Date()
 
-    this.claimRepo.delete(containerId)
+    this.db.delete(schema.claims).where(eq(schema.claims.containerId, containerId)).run()
   }
 
   /**
@@ -342,14 +354,18 @@ export class ContainerManager {
       rm(join(this.config.socketBaseDir, containerId), { recursive: true, force: true }),
     ])
 
-    this.claimRepo.delete(containerId)
+    this.db.delete(schema.claims).where(eq(schema.claims.containerId, containerId)).run()
   }
 
   /**
    * Get container claimed by a tenant (from DB).
    */
   getContainerByTenant(tenantId: TenantId): PoolContainer | null {
-    const claim = this.claimRepo.findByTenantId(tenantId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.tenantId, tenantId))
+      .get()
     if (!claim) return null
 
     return {
@@ -368,7 +384,11 @@ export class ContainerManager {
    * Update last activity timestamp in the claim.
    */
   recordActivity(containerId: ContainerId): void {
-    this.claimRepo.updateLastActivity(containerId)
+    this.db
+      .update(schema.claims)
+      .set({ lastActivity: new Date() })
+      .where(eq(schema.claims.containerId, containerId))
+      .run()
   }
 
   /**
@@ -383,10 +403,15 @@ export class ContainerManager {
    * Get claimed containers that have exceeded the idle timeout (from claims DB).
    */
   getStaleContainers(maxIdleMs: number): { containerId: ContainerId; tenantId: TenantId }[] {
-    return this.claimRepo.findStale(maxIdleMs).map((c) => ({
-      containerId: c.containerId,
-      tenantId: c.tenantId,
-    }))
+    const threshold = new Date(Date.now() - maxIdleMs)
+    return this.db
+      .select({
+        containerId: schema.claims.containerId,
+        tenantId: schema.claims.tenantId,
+      })
+      .from(schema.claims)
+      .where(lt(schema.claims.lastActivity, threshold))
+      .all()
   }
 
   /**

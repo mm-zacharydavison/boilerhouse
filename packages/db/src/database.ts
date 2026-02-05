@@ -1,13 +1,18 @@
 /**
  * Database Initialization
  *
- * Creates and configures the SQLite database with WAL mode for performance.
+ * Creates and configures the SQLite database with WAL mode for performance,
+ * wrapped with Drizzle ORM for type-safe queries.
  */
 
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { runMigrations } from './migrations'
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
+import * as schema from './schema'
+
+export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>
 
 export interface DatabaseConfig {
   /** Path to the SQLite database file */
@@ -18,6 +23,8 @@ export interface DatabaseConfig {
   foreignKeys?: boolean
   /** Busy timeout in milliseconds (default: 5000) */
   busyTimeout?: number
+  /** Path to drizzle migrations folder (default: resolved from package) */
+  migrationsFolder?: string
 }
 
 const DEFAULT_CONFIG: Omit<DatabaseConfig, 'path'> = {
@@ -27,9 +34,19 @@ const DEFAULT_CONFIG: Omit<DatabaseConfig, 'path'> = {
 }
 
 /**
- * Initialize the database with migrations and optimized settings.
+ * Resolve the migrations folder path.
+ * Finds the drizzle/ directory relative to the @boilerhouse/db package.
  */
-export function initDatabase(config: DatabaseConfig): Database {
+function resolveMigrationsFolder(): string {
+  const dbPackageDir = import.meta.dir.replace(/\/src$/, '')
+  return `${dbPackageDir}/drizzle`
+}
+
+/**
+ * Initialize the database with migrations and optimized settings.
+ * Returns a Drizzle ORM instance wrapping the configured SQLite database.
+ */
+export function initDatabase(config: DatabaseConfig): DrizzleDb {
   const fullConfig = { ...DEFAULT_CONFIG, ...config }
 
   // Ensure parent directory exists
@@ -38,51 +55,67 @@ export function initDatabase(config: DatabaseConfig): Database {
 
   console.log(`[DB] Opening database at ${fullConfig.path}`)
 
-  const db = new Database(fullConfig.path, { create: true })
+  const sqlite = new Database(fullConfig.path, { create: true })
 
   // Configure SQLite for optimal performance
   if (fullConfig.walMode) {
-    db.run('PRAGMA journal_mode = WAL')
+    sqlite.run('PRAGMA journal_mode = WAL')
     console.log('[DB] WAL mode enabled')
   }
 
   if (fullConfig.foreignKeys) {
-    db.run('PRAGMA foreign_keys = ON')
+    sqlite.run('PRAGMA foreign_keys = ON')
   }
 
   if (fullConfig.busyTimeout) {
-    db.run(`PRAGMA busy_timeout = ${fullConfig.busyTimeout}`)
+    sqlite.run(`PRAGMA busy_timeout = ${fullConfig.busyTimeout}`)
   }
 
   // Additional performance pragmas
-  db.run('PRAGMA synchronous = NORMAL')
-  db.run('PRAGMA temp_store = MEMORY')
-  db.run('PRAGMA mmap_size = 268435456') // 256MB
+  sqlite.run('PRAGMA synchronous = NORMAL')
+  sqlite.run('PRAGMA temp_store = MEMORY')
+  sqlite.run('PRAGMA mmap_size = 268435456') // 256MB
+
+  const db = drizzle(sqlite, { schema })
 
   // Run migrations
-  const { applied, current } = runMigrations(db)
-  if (applied.length > 0) {
-    console.log(`[DB] Applied ${applied.length} migration(s), now at version ${current}`)
-  } else {
-    console.log(`[DB] Database at version ${current}, no migrations needed`)
-  }
+  const migrationsFolder = fullConfig.migrationsFolder ?? resolveMigrationsFolder()
+  migrate(db, { migrationsFolder })
+  console.log('[DB] Migrations applied')
 
   return db
 }
 
 /**
- * Close the database connection gracefully.
+ * Create an in-memory Drizzle database for testing.
+ * Applies migrations and returns the Drizzle instance.
  */
-export function closeDatabase(db: Database): void {
+export function createTestDatabase(): DrizzleDb {
+  const sqlite = new Database(':memory:')
+  sqlite.run('PRAGMA foreign_keys = ON')
+  const db = drizzle(sqlite, { schema })
+  const migrationsFolder = resolveMigrationsFolder()
+  migrate(db, { migrationsFolder })
+  return db
+}
+
+/**
+ * Close the database connection gracefully.
+ * Accesses the underlying SQLite client for WAL checkpoint and close.
+ */
+export function closeDatabase(db: DrizzleDb): void {
   console.log('[DB] Closing database...')
+
+  // Access underlying bun:sqlite Database for checkpoint and close
+  const raw = (db as unknown as { $client: Database }).$client
 
   // Checkpoint WAL before closing
   try {
-    db.run('PRAGMA wal_checkpoint(TRUNCATE)')
+    raw.run('PRAGMA wal_checkpoint(TRUNCATE)')
   } catch {
     // Ignore errors during checkpoint
   }
 
-  db.close()
+  raw.close()
   console.log('[DB] Database closed')
 }

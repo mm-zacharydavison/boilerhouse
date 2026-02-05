@@ -200,14 +200,21 @@ export function TenantDetailPage() {
                     <div>
                       <p className="text-sm text-muted-foreground">Recent Errors</p>
                       <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
-                        {tenant.syncStatus.errors.map((error, i) => (
-                          <div
-                            key={i}
-                            className="rounded bg-destructive/10 p-2 text-xs font-mono text-destructive"
-                          >
-                            {typeof error === 'string' ? error : error.message}
-                          </div>
-                        ))}
+                        {tenant.syncStatus.errors.map((error) => {
+                          const message = typeof error === 'string' ? error : error.message
+                          const key =
+                            typeof error === 'string'
+                              ? error
+                              : `${error.timestamp}-${error.message}`
+                          return (
+                            <div
+                              key={key}
+                              className="rounded bg-destructive/10 p-2 text-xs font-mono text-destructive"
+                            >
+                              {message}
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   )}
@@ -273,9 +280,9 @@ export function TenantDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {syncHistory.map((job, i) => (
+                {syncHistory.map((job) => (
                   <div
-                    key={i}
+                    key={job.id}
                     className="flex items-center justify-between py-2 border-b last:border-0"
                   >
                     <div className="flex items-center gap-3">

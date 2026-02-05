@@ -5,16 +5,15 @@
  * Note: Some tests require Docker to be running.
  */
 
+import type { Database } from 'bun:sqlite'
 import { describe, expect, type mock, test } from 'bun:test'
-import { AffinityRepository, ClaimRepository } from '@boilerhouse/db'
+import type { DrizzleDb } from '@boilerhouse/db'
 import { ContainerManager, ContainerPool, type ContainerRuntime, DEFAULT_SECURITY_CONFIG } from '.'
 import { createTestDb } from '../../test/db'
 import { createMockContainerRuntime, createPoolId, createWorkloadSpec } from '../../test/fixtures'
 
 function setupTest() {
   const db = createTestDb()
-  const claimRepo = new ClaimRepository(db)
-  const affinityRepo = new AffinityRepository(db)
   const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
   const manager = new ContainerManager(
     runtime,
@@ -23,9 +22,9 @@ function setupTest() {
       secretsBaseDir: '/tmp/test-secrets',
       socketBaseDir: '/tmp/test-sockets',
     },
-    claimRepo,
+    db,
   )
-  return { db, claimRepo, affinityRepo, runtime, manager }
+  return { db, runtime, manager }
 }
 
 describe('ContainerManager', () => {
@@ -75,40 +74,39 @@ describe('ContainerManager', () => {
     })
 
     test('recordActivity updates claim in DB', async () => {
-      const { manager, claimRepo } = setupTest()
+      const { manager } = setupTest()
 
       const poolId = createPoolId()
       const workload = createWorkloadSpec()
       const container = await manager.createContainer(workload, poolId)
       await manager.claimForTenant(container.containerId, 'tenant-activity', container)
 
-      const beforeActivity = claimRepo.findByContainerId(container.containerId)
-      expect(beforeActivity).not.toBeNull()
+      const beforeContainer = manager.getContainerByTenant('tenant-activity')
+      if (!beforeContainer) throw new Error('Expected beforeContainer')
 
       // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 10))
 
       manager.recordActivity(container.containerId)
 
-      const afterActivity = claimRepo.findByContainerId(container.containerId)
-      expect(afterActivity).not.toBeNull()
-      expect(beforeActivity).not.toBeNull()
-      expect(afterActivity?.lastActivity.getTime()).toBeGreaterThanOrEqual(
-        beforeActivity?.lastActivity.getTime() ?? 0,
+      const afterContainer = manager.getContainerByTenant('tenant-activity')
+      if (!afterContainer) throw new Error('Expected afterContainer')
+      expect(afterContainer.lastActivity.getTime()).toBeGreaterThanOrEqual(
+        beforeContainer.lastActivity.getTime(),
       )
     })
 
     test('getStaleContainers returns containers exceeding idle timeout', async () => {
-      const { manager, claimRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const workload = createWorkloadSpec()
       const container = await manager.createContainer(workload, poolId)
       await manager.claimForTenant(container.containerId, 'tenant-stale', container)
 
-      // Manually update last_activity to the past
-      const db = (claimRepo as unknown as { db: { run: (q: string, p: unknown[]) => void } }).db
-      db.run('UPDATE claims SET last_activity = ? WHERE container_id = ?', [
+      // Manually update last_activity to the past via raw SQLite client
+      const rawDb = (db as unknown as { $client: Database }).$client
+      rawDb.run('UPDATE claims SET last_activity = ? WHERE container_id = ?', [
         Date.now() - 60000,
         container.containerId,
       ])
@@ -141,7 +139,7 @@ describe('ContainerManager', () => {
 describe('ContainerPool', () => {
   describe('Unit Tests (mocked runtime)', () => {
     test('acquireForTenant returns same container for same tenant', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -155,8 +153,7 @@ describe('ContainerPool', () => {
           evictionIntervalMs: 0, // Disable auto-eviction for tests
           acquireTimeoutMs: 5000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       const { container: container1 } = await pool.acquireForTenant('tenant-pool-1')
@@ -168,7 +165,7 @@ describe('ContainerPool', () => {
     })
 
     test('acquireForTenant returns different containers for different tenants', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -182,8 +179,7 @@ describe('ContainerPool', () => {
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       const { container: container1 } = await pool.acquireForTenant('tenant-a')
@@ -195,7 +191,7 @@ describe('ContainerPool', () => {
     })
 
     test('hasTenant returns correct status', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -209,8 +205,7 @@ describe('ContainerPool', () => {
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       expect(pool.hasTenant('tenant-check')).toBe(false)
@@ -222,7 +217,7 @@ describe('ContainerPool', () => {
     })
 
     test('acquireForTenant returns affinity match when tenant reclaims their container', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -237,8 +232,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
           affinityTimeoutMs: 60000, // 60 seconds for test
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       // First claim - should not be affinity match
@@ -259,7 +253,7 @@ describe('ContainerPool', () => {
     })
 
     test('acquireForTenant returns no affinity for different tenant', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -274,8 +268,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
           affinityTimeoutMs: 60000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       // Tenant A claims and releases
@@ -293,7 +286,7 @@ describe('ContainerPool', () => {
     })
 
     test('getStats returns pool statistics', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -307,8 +300,7 @@ describe('ContainerPool', () => {
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       const stats = pool.getStats()
@@ -322,7 +314,7 @@ describe('ContainerPool', () => {
     })
 
     test('getTenantsWithClaims returns all tenant IDs that have claims', async () => {
-      const { manager, claimRepo, affinityRepo } = setupTest()
+      const { manager, db } = setupTest()
 
       const poolId = createPoolId()
       const pool = new ContainerPool(
@@ -336,8 +328,7 @@ describe('ContainerPool', () => {
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
         },
-        claimRepo,
-        affinityRepo,
+        db,
       )
 
       await pool.acquireForTenant('tenant-x')
@@ -432,7 +423,6 @@ describe('Security Configuration', () => {
 describe('ContainerRuntime abstraction', () => {
   test('manager works with any ContainerRuntime implementation', async () => {
     const db = createTestDb()
-    const claimRepo = new ClaimRepository(db)
 
     // This test verifies that the manager only depends on the interface
     const customRuntime: ContainerRuntime = {
@@ -461,7 +451,7 @@ describe('ContainerRuntime abstraction', () => {
         secretsBaseDir: '/tmp/test-secrets',
         socketBaseDir: '/tmp/test-sockets',
       },
-      claimRepo,
+      db,
     )
 
     expect(manager.getRuntime().name).toBe('custom-runtime')

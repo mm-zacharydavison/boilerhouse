@@ -2,12 +2,13 @@
  * Activity Log
  *
  * Activity log for tracking container and sync events.
- * All state stored in ActivityRepository (DB as source of truth).
+ * All state stored in SQLite via Drizzle ORM (DB as source of truth).
  * Provides real-time event streaming via callbacks.
  */
 
 import type { ContainerId, PoolId, TenantId } from '@boilerhouse/core'
-import type { ActivityRepository } from '@boilerhouse/db'
+import { type DrizzleDb, schema } from '@boilerhouse/db'
+import { count, desc, eq, notInArray } from 'drizzle-orm'
 
 /**
  * Activity event types
@@ -45,15 +46,19 @@ export interface ActivityEvent {
  */
 export type ActivityEventListener = (event: ActivityEvent) => void
 
+const DEFAULT_MAX_EVENTS = 1000
+
 /**
  * Activity log backed by SQLite
  */
 export class ActivityLog {
   private listeners: Set<ActivityEventListener> = new Set()
-  private activityRepo: ActivityRepository
+  private db: DrizzleDb
+  private maxEvents: number
 
-  constructor(activityRepo: ActivityRepository) {
-    this.activityRepo = activityRepo
+  constructor(db: DrizzleDb, maxEvents = DEFAULT_MAX_EVENTS) {
+    this.db = db
+    this.maxEvents = maxEvents
   }
 
   /**
@@ -72,18 +77,29 @@ export class ActivityLog {
     const now = new Date()
 
     // Persist to database
-    const id = this.activityRepo.save({
-      eventType: type,
-      poolId: options?.poolId ?? null,
-      containerId: options?.containerId ?? null,
-      tenantId: options?.tenantId ?? null,
-      message,
-      metadata: options?.metadata ?? null,
-      timestamp: now,
-    })
+    const [inserted] = this.db
+      .insert(schema.activityLog)
+      .values({
+        eventType: type,
+        poolId: options?.poolId ?? null,
+        containerId: options?.containerId ?? null,
+        tenantId: options?.tenantId ?? null,
+        message,
+        metadata: options?.metadata ?? null,
+        timestamp: now,
+      })
+      .returning({ id: schema.activityLog.id })
+      .all()
+
+    const insertedId = inserted.id
+
+    // Auto-trim periodically
+    if (insertedId % 100 === 0) {
+      this.trim()
+    }
 
     const event: ActivityEvent = {
-      id: `evt-${id}`,
+      id: `evt-${insertedId}`,
       type,
       message,
       timestamp: now.toISOString(),
@@ -106,7 +122,13 @@ export class ActivityLog {
    * Get recent events
    */
   getEvents(limit = 50, offset = 0): ActivityEvent[] {
-    const entries = this.activityRepo.findRecent(limit, offset)
+    const entries = this.db
+      .select()
+      .from(schema.activityLog)
+      .orderBy(desc(schema.activityLog.timestamp))
+      .limit(limit)
+      .offset(offset)
+      .all()
     return entries.map((entry) => this.entryToEvent(entry))
   }
 
@@ -114,7 +136,13 @@ export class ActivityLog {
    * Get events filtered by type
    */
   getEventsByType(type: ActivityEventType, limit = 50): ActivityEvent[] {
-    const entries = this.activityRepo.findByType(type, limit)
+    const entries = this.db
+      .select()
+      .from(schema.activityLog)
+      .where(eq(schema.activityLog.eventType, type))
+      .orderBy(desc(schema.activityLog.timestamp))
+      .limit(limit)
+      .all()
     return entries.map((entry) => this.entryToEvent(entry))
   }
 
@@ -122,7 +150,13 @@ export class ActivityLog {
    * Get events for a specific tenant
    */
   getEventsForTenant(tenantId: TenantId, limit = 50): ActivityEvent[] {
-    const entries = this.activityRepo.findByTenant(tenantId, limit)
+    const entries = this.db
+      .select()
+      .from(schema.activityLog)
+      .where(eq(schema.activityLog.tenantId, tenantId))
+      .orderBy(desc(schema.activityLog.timestamp))
+      .limit(limit)
+      .all()
     return entries.map((entry) => this.entryToEvent(entry))
   }
 
@@ -130,7 +164,13 @@ export class ActivityLog {
    * Get events for a specific pool
    */
   getEventsForPool(poolId: PoolId, limit = 50): ActivityEvent[] {
-    const entries = this.activityRepo.findByPool(poolId, limit)
+    const entries = this.db
+      .select()
+      .from(schema.activityLog)
+      .where(eq(schema.activityLog.poolId, poolId))
+      .orderBy(desc(schema.activityLog.timestamp))
+      .limit(limit)
+      .all()
     return entries.map((entry) => this.entryToEvent(entry))
   }
 
@@ -146,28 +186,40 @@ export class ActivityLog {
    * Clear all events
    */
   clear(): void {
-    this.activityRepo.clear()
+    this.db.delete(schema.activityLog).run()
   }
 
   /**
    * Get total event count
    */
   get count(): number {
-    return this.activityRepo.count()
+    const result = this.db.select({ count: count() }).from(schema.activityLog).get()
+    return result?.count ?? 0
   }
 
-  private entryToEvent(entry: {
-    id?: number
-    eventType: string
-    poolId: PoolId | null
-    containerId: ContainerId | null
-    tenantId: TenantId | null
-    message: string
-    metadata: Record<string, unknown> | null
-    timestamp: Date
-  }): ActivityEvent {
+  /**
+   * Trim old events to keep only maxEvents.
+   */
+  private trim(): void {
+    const keepIds = this.db
+      .select({ id: schema.activityLog.id })
+      .from(schema.activityLog)
+      .orderBy(desc(schema.activityLog.timestamp))
+      .limit(this.maxEvents)
+      .all()
+      .map((r) => r.id)
+
+    if (keepIds.length === 0) {
+      this.db.delete(schema.activityLog).run()
+      return
+    }
+
+    this.db.delete(schema.activityLog).where(notInArray(schema.activityLog.id, keepIds)).run()
+  }
+
+  private entryToEvent(entry: typeof schema.activityLog.$inferSelect): ActivityEvent {
     return {
-      id: `evt-${entry.id ?? 0}`,
+      id: `evt-${entry.id}`,
       type: entry.eventType as ActivityEventType,
       message: entry.message,
       timestamp: entry.timestamp.toISOString(),

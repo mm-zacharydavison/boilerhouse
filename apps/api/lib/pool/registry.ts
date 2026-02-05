@@ -4,7 +4,7 @@
  * Manages multiple container pools, each associated with a workload.
  * Provides centralized access to pools and their containers.
  *
- * Pool configs and createdAt are stored in PoolRepository (DB).
+ * Pool configs stored in SQLite via Drizzle ORM.
  * Runtime pool instances are held in memory.
  */
 
@@ -17,7 +17,8 @@ import type {
   WorkloadId,
   WorkloadSpec,
 } from '@boilerhouse/core'
-import type { AffinityRepository, ClaimRepository, PoolRepository } from '@boilerhouse/db'
+import { type DrizzleDb, schema } from '@boilerhouse/db'
+import { eq } from 'drizzle-orm'
 import { type ActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
@@ -157,24 +158,18 @@ export class PoolRegistry {
   private manager: ContainerManager
   private workloadRegistry: WorkloadRegistry
   private activityLog: ActivityLog
-  private claimRepo: ClaimRepository
-  private affinityRepo: AffinityRepository
-  private poolRepo: PoolRepository
+  private db: DrizzleDb
 
   constructor(
     manager: ContainerManager,
     workloadRegistry: WorkloadRegistry,
     activityLog: ActivityLog,
-    claimRepo: ClaimRepository,
-    affinityRepo: AffinityRepository,
-    poolRepo: PoolRepository,
+    db: DrizzleDb,
   ) {
     this.manager = manager
     this.workloadRegistry = workloadRegistry
     this.activityLog = activityLog
-    this.claimRepo = claimRepo
-    this.affinityRepo = affinityRepo
-    this.poolRepo = poolRepo
+    this.db = db
   }
 
   /**
@@ -182,7 +177,7 @@ export class PoolRegistry {
    * Creates pool instances from persisted configs. Skips pools whose workload is no longer registered.
    */
   restoreFromDb(): number {
-    const poolRecords = this.poolRepo.findAll()
+    const poolRecords = this.db.select().from(schema.pools).all()
     let restored = 0
 
     for (const record of poolRecords) {
@@ -209,8 +204,7 @@ export class PoolRegistry {
           networkName: record.networkName ?? undefined,
           affinityTimeoutMs: record.affinityTimeoutMs,
         },
-        this.claimRepo,
-        this.affinityRepo,
+        this.db,
       )
 
       this.pools.set(record.poolId, pool)
@@ -251,24 +245,38 @@ export class PoolRegistry {
         poolId,
         ...config,
       },
-      this.claimRepo,
-      this.affinityRepo,
+      this.db,
     )
 
     this.pools.set(poolId, pool)
 
     // Persist pool config to DB
-    this.poolRepo.save({
-      poolId,
-      workloadId,
-      minSize: config?.minSize ?? pool.getStats().min,
-      maxSize: config?.maxSize ?? pool.getStats().max,
-      idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
-      evictionIntervalMs: 30000,
-      acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
-      networkName: config?.networkName ?? null,
-      affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
-    })
+    this.db
+      .insert(schema.pools)
+      .values({
+        poolId,
+        workloadId,
+        minSize: config?.minSize ?? pool.getStats().min,
+        maxSize: config?.maxSize ?? pool.getStats().max,
+        idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
+        evictionIntervalMs: 30000,
+        acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
+        networkName: config?.networkName ?? null,
+        affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
+      })
+      .onConflictDoUpdate({
+        target: schema.pools.poolId,
+        set: {
+          workloadId,
+          minSize: config?.minSize ?? pool.getStats().min,
+          maxSize: config?.maxSize ?? pool.getStats().max,
+          idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
+          acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
+          networkName: config?.networkName ?? null,
+          affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
+        },
+      })
+      .run()
 
     logPoolCreated(poolId, workloadId, this.activityLog)
 
@@ -305,7 +313,11 @@ export class PoolRegistry {
 
     const stats = pool.getStats()
     const workload = pool.getWorkload()
-    const poolRecord = this.poolRepo.findById(poolId)
+    const poolRecord = this.db
+      .select()
+      .from(schema.pools)
+      .where(eq(schema.pools.poolId, poolId))
+      .get()
     const createdAt = poolRecord?.createdAt ?? new Date()
 
     // Determine pool health status
@@ -354,7 +366,11 @@ export class PoolRegistry {
    * Looks up the container across all pools using the runtime cache.
    */
   getContainerInfo(containerId: ContainerId): ContainerInfo | undefined {
-    const claim = this.claimRepo.findByContainerId(containerId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.containerId, containerId))
+      .get()
 
     for (const [poolId, pool] of this.pools) {
       const containers = pool.getAllContainers()
@@ -388,8 +404,12 @@ export class PoolRegistry {
       const pool = this.pools.get(poolId)
       if (!pool) return result
       const workload = pool.getWorkload()
-      const claims = this.claimRepo.findByPoolId(poolId)
-      const claimMap = new Map(claims.map((c) => [c.containerId, c]))
+      const poolClaims = this.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.poolId, poolId))
+        .all()
+      const claimMap = new Map(poolClaims.map((c) => [c.containerId, c]))
 
       for (const container of pool.getAllContainers()) {
         const claim = claimMap.get(container.containerId)
@@ -418,7 +438,11 @@ export class PoolRegistry {
    * Destroy a container by ID
    */
   async destroyContainer(containerId: ContainerId): Promise<boolean> {
-    const claim = this.claimRepo.findByContainerId(containerId)
+    const claim = this.db
+      .select()
+      .from(schema.claims)
+      .where(eq(schema.claims.containerId, containerId))
+      .get()
     const poolId = claim?.poolId
 
     // Try to find pool
@@ -493,7 +517,7 @@ export class PoolRegistry {
 
     await pool.drain()
     this.pools.delete(poolId)
-    this.poolRepo.delete(poolId)
+    this.db.delete(schema.pools).where(eq(schema.pools.poolId, poolId)).run()
   }
 
   /**

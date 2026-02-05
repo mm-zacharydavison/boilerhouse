@@ -4,7 +4,6 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { WorkloadSyncConfig, WorkloadSyncPolicy } from '@boilerhouse/core'
-import { SyncStatusRepository } from '@boilerhouse/db'
 import { createTestDb } from '../../test/db'
 import {
   createMockRcloneExecutor,
@@ -48,8 +47,7 @@ describe('SyncCoordinator', () => {
   beforeEach(() => {
     executor = createMockRcloneExecutor() as unknown as RcloneSyncExecutor
     const db = createTestDb()
-    const syncStatusRepo = new SyncStatusRepository(db)
-    statusTracker = new SyncStatusTracker(syncStatusRepo)
+    statusTracker = new SyncStatusTracker(db)
     coordinator = new SyncCoordinator(executor, statusTracker, { verbose: false })
   })
 

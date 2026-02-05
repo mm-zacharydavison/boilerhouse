@@ -3,7 +3,6 @@
  */
 
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { SyncStatusRepository } from '@boilerhouse/db'
 import { createTestDb } from '../../test/db'
 import { createSyncId, createTenantId } from '../../test/fixtures'
 import { SyncStatusTracker } from './status'
@@ -13,8 +12,7 @@ describe('SyncStatusTracker', () => {
 
   beforeEach(() => {
     const db = createTestDb()
-    const syncStatusRepo = new SyncStatusRepository(db)
-    tracker = new SyncStatusTracker(syncStatusRepo)
+    tracker = new SyncStatusTracker(db)
   })
 
   describe('getStatus', () => {

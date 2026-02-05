@@ -15,13 +15,6 @@ import type {
   TenantId,
   WorkloadSpec,
 } from '@boilerhouse/core'
-import {
-  ActivityRepository,
-  AffinityRepository,
-  ClaimRepository,
-  PoolRepository,
-} from '@boilerhouse/db'
-import { SyncStatusRepository } from '@boilerhouse/db'
 import { DockerRuntime } from '@boilerhouse/docker'
 import type { Elysia } from 'elysia'
 import { ActivityLog } from '../lib/activity'
@@ -148,16 +141,11 @@ export class TestHarness {
       this._runtime = createMockRuntime()
     }
 
-    // Create in-memory test DB and repos
+    // Create in-memory test DB
     const db = createTestDb()
-    const claimRepo = new ClaimRepository(db)
-    const affinityRepo = new AffinityRepository(db)
-    const activityRepo = new ActivityRepository(db)
-    const syncStatusRepo = new SyncStatusRepository(db)
-    const poolRepo = new PoolRepository(db)
 
     // Create activity log
-    this._activityLog = new ActivityLog(activityRepo)
+    this._activityLog = new ActivityLog(db)
 
     // Create container manager
     this._manager = new ContainerManager(
@@ -167,7 +155,7 @@ export class TestHarness {
         secretsBaseDir: secretsDir,
         socketBaseDir: socketDir,
       },
-      claimRepo,
+      db,
     )
 
     // Create workload registry and save test workload to file
@@ -207,14 +195,12 @@ healthcheck:
       this._manager,
       this._workloadRegistry,
       this._activityLog,
-      claimRepo,
-      affinityRepo,
-      poolRepo,
+      db,
     )
 
     // Create sync components
     const rcloneExecutor = new RcloneSyncExecutor()
-    this._syncStatusTracker = new SyncStatusTracker(syncStatusRepo)
+    this._syncStatusTracker = new SyncStatusTracker(db)
     this._syncCoordinator = new SyncCoordinator(rcloneExecutor, this._syncStatusTracker)
 
     // Create default pool
