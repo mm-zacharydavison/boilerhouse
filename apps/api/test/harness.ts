@@ -18,6 +18,7 @@ import type {
 import { DockerRuntime } from '@boilerhouse/docker'
 import type { Elysia } from 'elysia'
 import { ActivityLog } from '../lib/activity'
+import { IdleReaper } from '../lib/container/idle-reaper'
 import { ContainerManager } from '../lib/container/manager'
 import { ContainerPool } from '../lib/container/pool'
 import { PoolRegistry } from '../lib/pool/registry'
@@ -209,6 +210,12 @@ healthcheck:
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? 1000,
     } as Parameters<typeof this._poolRegistry.createPool>[2])
 
+    // Create idle reaper (no-op expiry in tests unless overridden)
+    const idleReaper = new IdleReaper({
+      db,
+      onExpiry: async () => {},
+    })
+
     // Create server
     this._app = createServer({
       poolRegistry: this._poolRegistry,
@@ -217,6 +224,7 @@ healthcheck:
       syncCoordinator: this._syncCoordinator,
       syncStatusTracker: this._syncStatusTracker,
       activityLog: this._activityLog,
+      idleReaper,
     })
 
     this._initialized = true

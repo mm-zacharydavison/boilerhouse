@@ -215,6 +215,12 @@ export const poolConfigSchema = z.object({
     .union([z.number().int().min(0), durationString.transform(parseDuration)])
     .optional()
     .describe('Time before an idle container is evicted (e.g., "5m")'),
+  file_idle_ttl: z
+    .union([z.number().int().min(0), durationString.transform(parseDuration)])
+    .optional()
+    .describe(
+      'Filesystem inactivity timeout before auto-releasing a claimed container (e.g., "5m")',
+    ),
   networks: z
     .array(z.string())
     .optional()

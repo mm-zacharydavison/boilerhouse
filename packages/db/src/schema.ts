@@ -89,6 +89,7 @@ export const pools = sqliteTable('pools', {
   acquireTimeoutMs: integer('acquire_timeout_ms').notNull(),
   networks: jsonStringArray('networks'),
   affinityTimeoutMs: integer('affinity_timeout_ms').notNull(),
+  fileIdleTtl: integer('file_idle_ttl'),
   createdAt: timestamp('created_at')
     .notNull()
     .$defaultFn(() => new Date()),

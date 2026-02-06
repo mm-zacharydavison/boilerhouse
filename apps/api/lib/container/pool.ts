@@ -62,6 +62,9 @@ export interface ContainerPoolConfig {
 
   /** Time to keep a released container reserved for the same tenant before returning to pool */
   affinityTimeoutMs: number
+
+  /** Filesystem inactivity timeout (ms) before auto-releasing a claimed container */
+  fileIdleTtl?: number
 }
 
 export interface PoolStats {
@@ -114,6 +117,7 @@ export class ContainerPool {
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? config.pool.containerStartTimeoutMs,
       networks: poolConfig.networks,
       affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 0,
+      fileIdleTtl: poolConfig.fileIdleTtl,
     }
 
     this.loadFromDb()
@@ -676,6 +680,13 @@ export class ContainerPool {
    */
   getWorkload(): WorkloadSpec {
     return this.poolConfig.workload
+  }
+
+  /**
+   * Get the pool configuration
+   */
+  getConfig(): Readonly<ContainerPoolConfig> {
+    return this.poolConfig
   }
 
   /**

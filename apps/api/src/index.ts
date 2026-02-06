@@ -2,7 +2,7 @@ import { closeDatabase, initDatabase } from '@boilerhouse/db'
 import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
 import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
-import { ContainerManager } from '../lib/container'
+import { ContainerManager, IdleReaper, releaseContainer } from '../lib/container'
 import { PoolRegistry } from '../lib/pool/registry'
 import { recoverState } from '../lib/recovery'
 import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
@@ -102,6 +102,19 @@ const syncStatusTracker = new SyncStatusTracker(db)
 const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
 const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
 
+// Initialize idle reaper for filesystem-based TTL expiry
+const idleReaper = new IdleReaper({
+  db,
+  onExpiry: async (_containerId, tenantId, poolId) => {
+    const pool = poolRegistry.getPool(poolId)
+    if (!pool) return
+    await releaseContainer(tenantId, pool, { syncCoordinator, activityLog })
+  },
+})
+
+// Restore idle reaper watches for claimed containers from before restart
+idleReaper.restoreFromDb(poolRegistry.getPools(), manager)
+
 // Create and start Elysia server
 const server = createServer({
   poolRegistry,
@@ -110,6 +123,7 @@ const server = createServer({
   syncCoordinator,
   syncStatusTracker,
   activityLog,
+  idleReaper,
 })
 
 server.listen({
@@ -142,6 +156,7 @@ if (process.env.NODE_ENV !== 'production') {
 async function shutdown() {
   console.log('Shutting down...')
   workloadRegistry.stopWatching()
+  idleReaper.shutdown()
   await syncCoordinator.shutdown()
   poolRegistry.shutdown()
   closeDatabase(db)

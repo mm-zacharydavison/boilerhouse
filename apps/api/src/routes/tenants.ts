@@ -4,17 +4,16 @@
  * Endpoints for tenant operations: listing, claiming, releasing, and syncing.
  */
 
-import type { TenantId } from '@boilerhouse/core'
+import type { PoolId, TenantId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import {
   type ActivityLog,
   logContainerClaimed,
-  logContainerReleased,
   logSyncCompleted,
   logSyncFailed,
   logSyncStarted,
 } from '../../lib/activity'
-import type { ContainerManager } from '../../lib/container'
+import { type ContainerManager, type IdleReaper, releaseContainer } from '../../lib/container'
 import type { PoolRegistry } from '../../lib/pool/registry'
 import type { SyncCoordinator } from '../../lib/sync'
 import type { SyncStatusTracker } from '../../lib/sync/status'
@@ -25,10 +24,18 @@ export interface TenantsControllerDeps {
   syncCoordinator: SyncCoordinator
   syncStatusTracker: SyncStatusTracker
   activityLog: ActivityLog
+  idleReaper: IdleReaper
 }
 
 export function tenantsController(deps: TenantsControllerDeps) {
-  const { poolRegistry, containerManager, syncCoordinator, syncStatusTracker, activityLog } = deps
+  const {
+    poolRegistry,
+    containerManager,
+    syncCoordinator,
+    syncStatusTracker,
+    activityLog,
+    idleReaper,
+  } = deps
 
   return new Elysia({ prefix: '/api/v1/tenants' })
     .get('/', () => {
@@ -167,6 +174,18 @@ export function tenantsController(deps: TenantsControllerDeps) {
           // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
           await containerManager.restartContainer(container.containerId, 2)
 
+          // Start filesystem idle TTL watch if configured
+          const fileIdleTtl = pool.getConfig().fileIdleTtl
+          if (fileIdleTtl) {
+            idleReaper.watch(
+              container.containerId,
+              params.id as TenantId,
+              body.poolId as PoolId,
+              container.stateDir,
+              fileIdleTtl,
+            )
+          }
+
           return {
             containerId: container.containerId,
             endpoints: {
@@ -204,22 +223,17 @@ export function tenantsController(deps: TenantsControllerDeps) {
           return { error: `No container for tenant ${params.id}` }
         }
 
-        // Trigger onRelease sync if requested
-        const workload = pool.getWorkload()
-        if (body.sync !== false && workload.sync) {
-          logSyncStarted(params.id, 'upload', activityLog)
-          const results = await syncCoordinator.onRelease(params.id, container, workload.sync)
-          const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
-          if (results.every((r) => r.success)) {
-            logSyncCompleted(params.id, totalBytes, activityLog)
-          } else {
-            const errors = results.filter((r) => !r.success).flatMap((r) => r.errors ?? [])
-            logSyncFailed(params.id, errors.join('; '), activityLog)
-          }
-        }
+        // Stop filesystem idle watch before release
+        idleReaper.unwatch(container.containerId)
 
-        logContainerReleased(container.containerId, params.id, pool.getPoolId(), activityLog)
-        await pool.releaseForTenant(params.id)
+        await releaseContainer(
+          params.id,
+          pool,
+          { syncCoordinator, activityLog },
+          {
+            skipSync: body.sync === false,
+          },
+        )
 
         return { success: true }
       },

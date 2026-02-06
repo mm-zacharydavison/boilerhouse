@@ -7,7 +7,7 @@
 import { cors } from '@elysiajs/cors'
 import { Elysia } from 'elysia'
 import type { ActivityLog } from '../lib/activity'
-import type { ContainerManager } from '../lib/container'
+import type { ContainerManager, IdleReaper } from '../lib/container'
 import { httpMetricsMiddleware } from '../lib/metrics'
 import type { PoolRegistry } from '../lib/pool/registry'
 import type { SyncCoordinator } from '../lib/sync'
@@ -33,6 +33,7 @@ export interface ServerDependencies {
   syncCoordinator: SyncCoordinator
   syncStatusTracker: SyncStatusTracker
   activityLog: ActivityLog
+  idleReaper: IdleReaper
 }
 
 /**
@@ -46,6 +47,7 @@ export function createServer(deps: ServerDependencies) {
     syncCoordinator,
     syncStatusTracker,
     activityLog,
+    idleReaper,
   } = deps
 
   return new Elysia()
@@ -63,6 +65,7 @@ export function createServer(deps: ServerDependencies) {
         syncCoordinator,
         syncStatusTracker,
         activityLog,
+        idleReaper,
       }),
     )
     .use(

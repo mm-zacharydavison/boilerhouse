@@ -1,0 +1,1 @@
+ALTER TABLE `pools` ADD `file_idle_ttl` integer;

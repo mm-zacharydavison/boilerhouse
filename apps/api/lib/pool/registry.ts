@@ -203,6 +203,7 @@ export class PoolRegistry {
           acquireTimeoutMs: record.acquireTimeoutMs,
           networks: record.networks ?? undefined,
           affinityTimeoutMs: record.affinityTimeoutMs,
+          fileIdleTtl: record.fileIdleTtl ?? undefined,
         },
         this.db,
       )
@@ -227,6 +228,7 @@ export class PoolRegistry {
       networks: string[]
       affinityTimeoutMs: number
       acquireTimeoutMs: number
+      fileIdleTtl: number
     }>,
   ): ContainerPool {
     if (this.pools.has(poolId)) {
@@ -244,6 +246,7 @@ export class PoolRegistry {
       maxSize: workload.pool?.maxSize,
       idleTimeoutMs: workload.pool?.idleTimeout,
       networks: workload.pool?.networks ?? workload.networks,
+      fileIdleTtl: workload.pool?.fileIdleTtl,
     }
 
     const pool = new ContainerPool(
@@ -273,6 +276,7 @@ export class PoolRegistry {
         acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
         networks: resolvedNetworks,
         affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
+        fileIdleTtl: config?.fileIdleTtl ?? workloadPoolDefaults.fileIdleTtl ?? null,
       })
       .onConflictDoUpdate({
         target: schema.pools.poolId,
@@ -284,6 +288,7 @@ export class PoolRegistry {
           acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
           networks: resolvedNetworks,
           affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
+          fileIdleTtl: config?.fileIdleTtl ?? workloadPoolDefaults.fileIdleTtl ?? null,
         },
       })
       .run()
@@ -305,6 +310,13 @@ export class PoolRegistry {
    */
   hasPool(poolId: PoolId): boolean {
     return this.pools.has(poolId)
+  }
+
+  /**
+   * Get all pools as a read-only map.
+   */
+  getPools(): ReadonlyMap<PoolId, ContainerPool> {
+    return this.pools
   }
 
   /**

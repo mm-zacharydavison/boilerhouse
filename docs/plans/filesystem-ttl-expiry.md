@@ -30,16 +30,18 @@ The only edge case is **bisync** — remote changes synced back down would reset
 
 ## Design
 
-### New Config: `fileIdleTtlMs`
+### New Config: `fileIdleTtl`
 
-Add an optional `file_idle_ttl_ms` field to the pool configuration in the workload YAML:
+Add an optional `file_idle_ttl` field to the pool configuration in the workload YAML:
 
 ```yaml
 pool:
   min_size: 2
   max_size: 20
-  file_idle_ttl_ms: 300000  # 5 minutes of filesystem inactivity triggers release
+  file_idle_ttl: "5m"  # 5 minutes of filesystem inactivity triggers release
 ```
+
+Follows the existing duration field convention (same as `idle_timeout`) — accepts both numbers (ms) and duration strings (`"5m"`, `"300s"`, etc.). After schema parsing via `durationString.transform(parseDuration)`, the value is always a number in milliseconds. Through the `CamelCasedPropertiesDeep` pipeline (`PoolConfigRaw` → `PoolConfig`), it becomes `fileIdleTtl` in TypeScript code.
 
 When set, boilerhouse watches the state directory of each claimed container and releases it if no writes occur within the TTL window. When unset (default), the existing behaviour is preserved — containers are only released via explicit API calls or the existing `idleTimeoutMs` eviction.
 
@@ -48,22 +50,25 @@ When set, boilerhouse watches the state directory of each claimed container and 
 A new `IdleReaper` class that monitors claimed containers for filesystem inactivity.
 
 ```
-┌─────────────────────────────────────────────────┐
-│ IdleReaper                                      │
-│                                                 │
-│   For each claimed container with fileIdleTtlMs │
-│   configured:                                   │
-│                                                 │
-│   1. fs.watch(stateDir) via inotify             │
-│   2. On write event → reset idle timer          │
-│   3. On timer expiry → trigger release          │
-│                                                 │
-│   Hooks into:                                   │
-│   - pool.acquireForTenant() → start watching    │
-│   - pool.releaseForTenant() → stop watching     │
-│   - syncCoordinator.onRelease() → final sync    │
-│                                                 │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│ IdleReaper                                          │
+│                                                     │
+│   For each claimed container with fileIdleTtl       │
+│   configured:                                       │
+│                                                     │
+│   1. fs.watch(stateDir) via inotify                 │
+│   2. On write event → reset idle timer              │
+│   3. On timer expiry → trigger release              │
+│                                                     │
+│   Called from route handler (tenants.ts):            │
+│   - POST /:id/claim  (after sync+restart) → watch   │
+│   - POST /:id/release (before sync)      → unwatch  │
+│                                                     │
+│   On expiry:                                        │
+│   - syncCoordinator.onRelease() → final sync        │
+│   - pool.releaseForTenant() → return to pool        │
+│                                                     │
+└─────────────────────────────────────────────────────┘
 ```
 
 #### Why `fs.watch` (inotify) Instead of Polling
@@ -81,36 +86,42 @@ Note: Bun's `fs.watch` supports recursive watching on Linux via inotify.
 
 ### Integration Points
 
-#### On Claim
+The claim/release flow (including sync coordination) currently lives in the **route handler** (`apps/api/src/routes/tenants.ts`), not in `PoolRegistry`. The IdleReaper hooks into this same layer.
 
-When `ContainerPool.acquireForTenant()` completes (after sync download finishes):
+#### On Claim (route handler: `POST /:id/claim`)
 
-1. Check if pool has `fileIdleTtlMs` configured
-2. If so, call `idleReaper.watch(containerId, stateDir, fileIdleTtlMs)`
+After the full claim flow completes (acquire → wipe → sync download → restart):
+
+1. Check if pool has `fileIdleTtl` configured (via `pool.getConfig().fileIdleTtl`)
+2. If so, call `idleReaper.watch(containerId, tenantId, poolId, stateDir, fileIdleTtl)`
 3. The reaper starts an `fs.watch` on the state directory and sets an initial idle timer
+
+The watch starts *after* the container restart, so sync-engine writes and wipe operations don't reset the timer.
 
 #### On Write Detected
 
 When inotify fires for any file change in the state directory:
 
 1. Clear the existing idle timer
-2. Reset a new timer for `fileIdleTtlMs` from now
-3. Update `lastActivity` in the claims table (debounced — at most once per second to avoid DB thrash)
+2. Reset a new timer for `fileIdleTtl` from now
+3. Update `lastActivity` in the `containers` table (debounced — at most once per second to avoid DB thrash)
 
 #### On Timer Expiry
 
-When the idle timer fires (no writes for `fileIdleTtlMs`):
+When the idle timer fires (no writes for `fileIdleTtl`):
 
 1. Log the expiry event
-2. Trigger the standard release flow: `syncCoordinator.onRelease()` then `pool.releaseForTenant()`
+2. Trigger the same release flow as the API route: `syncCoordinator.onRelease()` then `pool.releaseForTenant()`
 3. The reaper cleans up its own watcher as part of the release
 
-#### On Explicit Release
+The `onExpiry` callback needs access to `syncCoordinator`, `poolRegistry`, and `containerManager` — these are provided at construction time (same dependencies the route handler has).
+
+#### On Explicit Release (route handler: `POST /:id/release`)
 
 When `releaseForTenant()` is called via the API (before TTL):
 
 1. `idleReaper.unwatch(containerId)` — closes the fs.watch and clears the timer
-2. Normal release flow proceeds
+2. Normal release flow proceeds (sync → release)
 
 ### Metrics
 
@@ -124,11 +135,12 @@ When `releaseForTenant()` is called via the API (before TTL):
 
 On startup, `IdleReaper` needs to restore watches for containers that were claimed before the restart:
 
-1. During `poolRegistry.restoreFromDb()`, after restoring claimed containers
-2. For each claimed container in a pool with `fileIdleTtlMs` configured:
+1. After `poolRegistry.restoreFromDb()` completes (pools and containers are loaded), call `idleReaper.restoreFromDb()`
+2. Query `containers` table for all `claimed` containers where the owning pool has `fileIdleTtl` set (join with `pools` table)
+3. For each such container:
    - `stat()` the state directory to get last mtime
-   - If `now - mtime > fileIdleTtlMs` — release immediately (was idle through the restart)
-   - Otherwise — start watching with remaining TTL (`fileIdleTtlMs - (now - mtime)`)
+   - If `now - mtime > fileIdleTtl` — release immediately (was idle through the restart)
+   - Otherwise — start watching with remaining TTL (`fileIdleTtl - (now - mtime)`)
 
 ## Implementation
 
@@ -150,54 +162,66 @@ interface WatchedContainer {
   lastWrite: number  // timestamp of last detected write
 }
 
+interface IdleReaperDeps {
+  db: DrizzleDb
+  onExpiry: (containerId: ContainerId, tenantId: TenantId, poolId: PoolId) => Promise<void>
+}
+
 class IdleReaper {
   private watches: Map<ContainerId, WatchedContainer>
-  private db: DrizzleDb
-  private onExpiry: (containerId: ContainerId, tenantId: TenantId, poolId: PoolId) => Promise<void>
+
+  constructor(deps: IdleReaperDeps)
 
   watch(containerId, tenantId, poolId, stateDir, ttlMs): void
   unwatch(containerId): void
-  restoreWatch(containerId, tenantId, poolId, stateDir, ttlMs, lastMtime): void
+  restoreFromDb(pools: Map<PoolId, ContainerPool>, manager: ContainerManager): void
   shutdown(): void
 }
 ```
 
 Key implementation details:
 - `watch()` creates an `fs.watch(stateDir, { recursive: true })` and starts the idle timer
-- On `'change'` events, debounce the `lastActivity` DB update (max once per second)
-- `onExpiry` callback is provided by the caller (pool registry or coordinator) to trigger the release flow
+- On `'change'` events, debounce the `lastActivity` DB update on the `containers` table (max once per second)
+- `onExpiry` callback is provided at construction time — it receives the full release flow (sync + release + logging) as a closure with captured dependencies
+- `restoreFromDb()` queries claimed containers in pools with `fileIdleTtl`, checks mtime, and either releases immediately or starts watching with remaining TTL
 - `shutdown()` closes all watchers and clears all timers
 
 ### Files to Modify
 
 #### `packages/core/src/schemas/workload.ts`
 
-Add `file_idle_ttl_ms` to the pool config schema:
+Add `file_idle_ttl` to the pool config schema, using the same duration pattern as `idle_timeout`:
 
 ```typescript
 // In poolConfigSchema
-file_idle_ttl_ms: z.number().positive().optional()
+file_idle_ttl: z
+  .union([z.number().int().min(0), durationString.transform(parseDuration)])
+  .optional()
+  .describe('Filesystem inactivity timeout before auto-releasing a claimed container (e.g., "5m")'),
 ```
 
 #### `apps/api/lib/container/pool.ts`
 
-- Add `fileIdleTtlMs` to `ContainerPoolConfig`
-- Expose it so the idle reaper can read the config per pool
+- Add optional `fileIdleTtl?: number` to `ContainerPoolConfig` interface (line 38)
+- Expose via `getConfig()` or similar so the route handler can check if file idle TTL is enabled
 
 #### `apps/api/lib/pool/registry.ts`
 
-- Create `IdleReaper` instance during startup
-- After `acquireForTenant()`, call `idleReaper.watch()` if pool has `fileIdleTtlMs`
-- On release (both explicit and TTL-triggered), call `idleReaper.unwatch()`
-- During `restoreFromDb()`, restore watches for claimed containers
+- Pass `fileIdleTtl` through in `createPool()` config parameter and `restoreFromDb()` (from DB record)
 - On `shutdown()`, call `idleReaper.shutdown()`
+
+#### `apps/api/src/routes/tenants.ts`
+
+- **On claim** (after sync + restart): call `idleReaper.watch()` if pool has `fileIdleTtl`
+- **On release** (before sync): call `idleReaper.unwatch(containerId)`
+- The IdleReaper instance is passed as a dependency alongside `poolRegistry`, `syncCoordinator`, etc.
 
 #### `packages/db/src/schema.ts`
 
-Add `fileIdleTtlMs` to the pools table:
+Add `fileIdleTtl` to the pools table:
 
 ```typescript
-fileIdleTtlMs: integer('file_idle_ttl_ms'),
+fileIdleTtl: integer('file_idle_ttl'),
 ```
 
 #### `apps/api/lib/metrics/pool.ts`
@@ -209,16 +233,16 @@ Add the three new metrics for the idle reaper.
 One new nullable column on the `pools` table:
 
 ```sql
-ALTER TABLE pools ADD COLUMN file_idle_ttl_ms INTEGER;
+ALTER TABLE pools ADD COLUMN file_idle_ttl INTEGER;
 ```
 
 ## Edge Cases
 
 ### Container writes during sync download (onClaim)
 
-The idle reaper should only be started *after* the claim flow completes (including sync download). This avoids counting sync-engine writes as tenant activity.
+The idle reaper should only be started *after* the full claim flow completes (acquire → wipe → sync download → restart). This avoids counting sync-engine writes and wipe operations as tenant activity.
 
-Sequence: `acquireForTenant()` → `syncCoordinator.onClaim()` → `idleReaper.watch()`
+Sequence in route handler: `pool.acquireForTenant()` → `manager.wipeForNewTenant()` → `syncCoordinator.onClaim()` → `manager.restartContainer()` → `idleReaper.watch()`
 
 ### Rapid file changes (write storms)
 
@@ -244,13 +268,14 @@ Bun uses inotify on Linux. `{ recursive: true }` is supported by walking the dir
 
 ## Tasks
 
-- [ ] 1. Add `file_idle_ttl_ms` to pool config schema in `packages/core/src/schemas/workload.ts`
-- [ ] 2. Add `fileIdleTtlMs` column to pools table in `packages/db/src/schema.ts`, generate migration
-- [ ] 3. Add `fileIdleTtlMs` to `ContainerPoolConfig` in `apps/api/lib/container/pool.ts`
-- [ ] 4. Create `IdleReaper` class in `apps/api/lib/container/idle-reaper.ts`
-- [ ] 5. Add idle reaper metrics to `apps/api/lib/metrics/pool.ts`
-- [ ] 6. Integrate `IdleReaper` into `PoolRegistry` (watch on claim, unwatch on release, restore on startup)
-- [ ] 7. Wire up the expiry callback to trigger `syncCoordinator.onRelease()` then `pool.releaseForTenant()`
-- [ ] 8. Add recovery logic: restore watches from DB on startup, handle containers idle through restart
-- [ ] 9. Unit tests: timer reset on write, expiry triggers release, unwatch on explicit release, recovery
-- [ ] 10. Integration test: claim container, write to state dir, verify timer resets, stop writing, verify release
+- [ ] 1. Add `file_idle_ttl` to pool config schema in `packages/core/src/schemas/workload.ts` (duration string support)
+- [ ] 2. Add `fileIdleTtl` column to `pools` table in `packages/db/src/schema.ts`, generate migration
+- [ ] 3. Add optional `fileIdleTtl` to `ContainerPoolConfig` in `apps/api/lib/container/pool.ts`
+- [ ] 4. Thread `fileIdleTtl` through `PoolRegistry.createPool()` and `restoreFromDb()` (config param + DB persist/restore)
+- [ ] 5. Create `IdleReaper` class in `apps/api/lib/container/idle-reaper.ts`
+- [ ] 6. Add idle reaper metrics to `apps/api/lib/metrics/pool.ts` (Gauge + 2 Counters)
+- [ ] 7. Integrate `IdleReaper` into route handler (`tenants.ts`): watch after claim, unwatch before release
+- [ ] 8. Wire up the expiry callback with access to `syncCoordinator`, `poolRegistry`, `containerManager`
+- [ ] 9. Add recovery logic: `idleReaper.restoreFromDb()` after pool restore, handle containers idle through restart
+- [ ] 10. Unit tests: timer reset on write, expiry triggers release, unwatch on explicit release, recovery
+- [ ] 11. Integration test: claim container, write to state dir, verify timer resets, stop writing, verify release

@@ -4,7 +4,7 @@
  * Gauges tracking container pool state.
  */
 
-import { Gauge } from 'prom-client'
+import { Counter, Gauge } from 'prom-client'
 import { registry } from './registry'
 
 const labelNames = ['pool_id', 'workload_id'] as const
@@ -48,6 +48,35 @@ export const poolMaxSize = new Gauge({
   name: 'boilerhouse_pool_max_size',
   help: 'Configured maximum pool size',
   labelNames,
+  registers: [registry],
+})
+
+// Idle reaper metrics
+export const idleReaperWatchesActive = new Gauge({
+  name: 'boilerhouse_idle_reaper_watches_active',
+  help: 'Number of containers currently being watched for filesystem inactivity',
+  labelNames: ['pool_id'],
+  registers: [registry],
+})
+
+export const idleReaperFileWatchCount = new Gauge({
+  name: 'boilerhouse_idle_reaper_file_watch_count',
+  help: 'Number of files/directories being polled for a watched container',
+  labelNames: ['pool_id', 'container_id'],
+  registers: [registry],
+})
+
+export const idleReaperExpirations = new Counter({
+  name: 'boilerhouse_idle_reaper_expirations_total',
+  help: 'Containers released due to filesystem idle TTL expiry',
+  labelNames: ['pool_id'],
+  registers: [registry],
+})
+
+export const idleReaperResets = new Counter({
+  name: 'boilerhouse_idle_reaper_resets_total',
+  help: 'Timer resets from filesystem activity',
+  labelNames: ['pool_id'],
   registers: [registry],
 })
 

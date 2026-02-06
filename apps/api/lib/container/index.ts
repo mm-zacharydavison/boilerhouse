@@ -18,3 +18,9 @@ export { ContainerManager, type ContainerManagerConfig } from './manager'
 
 // Container pool (uses manager)
 export { ContainerPool, type ContainerPoolConfig, type PoolStats } from './pool'
+
+// Idle reaper (filesystem-based TTL expiry)
+export { IdleReaper, type IdleReaperDeps } from './idle-reaper'
+
+// Shared release flow
+export { releaseContainer, type ReleaseContainerDeps } from './release'
