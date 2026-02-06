@@ -138,6 +138,12 @@ networks:
   boilerhouse:
     internal: true
 
+  # Egress network for managed containers that need internet access
+  # (e.g., OpenClaw containers contacting Claude API, browsing the web)
+  # NOT internal — has outbound internet access via Docker NAT
+  boilerhouse-egress:
+    name: boilerhouse-egress    # Explicit name, no project prefix
+
   # Uncomment for your app's public network
   # public:
 

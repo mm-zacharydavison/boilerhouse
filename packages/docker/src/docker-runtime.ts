@@ -92,13 +92,22 @@ export class DockerRuntime implements ContainerRuntime {
             `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
         ),
 
-        // Network
-        NetworkMode: spec.network.network,
+        // Network (first network is primary)
+        NetworkMode: spec.network.networks[0] ?? 'bridge',
         Dns: spec.network.dnsServers,
 
         // Don't auto-restart, we manage lifecycle
         RestartPolicy: { Name: 'no' },
       },
+      // Additional networks via EndpointsConfig
+      NetworkingConfig:
+        spec.network.networks.length > 1
+          ? {
+              EndpointsConfig: Object.fromEntries(
+                spec.network.networks.slice(1).map((net) => [net, {}]),
+              ),
+            }
+          : undefined,
       // Run as specific user if set
       User: spec.security.runAsUser?.toString(),
     })

@@ -201,7 +201,7 @@ export class PoolRegistry {
           idleTimeoutMs: record.idleTimeoutMs,
           evictionIntervalMs: record.evictionIntervalMs,
           acquireTimeoutMs: record.acquireTimeoutMs,
-          networkName: record.networkName ?? undefined,
+          networks: record.networks ?? undefined,
           affinityTimeoutMs: record.affinityTimeoutMs,
         },
         this.db,
@@ -224,7 +224,7 @@ export class PoolRegistry {
       minSize: number
       maxSize: number
       idleTimeoutMs: number
-      networkName: string
+      networks: string[]
       affinityTimeoutMs: number
       acquireTimeoutMs: number
     }>,
@@ -238,11 +238,20 @@ export class PoolRegistry {
       throw new Error(`Workload ${workloadId} not found`)
     }
 
+    // Use workload pool config as defaults, then override with explicit config
+    const workloadPoolDefaults = {
+      minSize: workload.pool?.minSize,
+      maxSize: workload.pool?.maxSize,
+      idleTimeoutMs: workload.pool?.idleTimeout,
+      networks: workload.pool?.networks ?? workload.networks,
+    }
+
     const pool = new ContainerPool(
       this.manager,
       {
         workload,
         poolId,
+        ...workloadPoolDefaults,
         ...config,
       },
       this.db,
@@ -250,29 +259,30 @@ export class PoolRegistry {
 
     this.pools.set(poolId, pool)
 
-    // Persist pool config to DB
+    // Persist pool config to DB (uses resolved values from pool stats)
+    const resolvedNetworks = config?.networks ?? workloadPoolDefaults.networks ?? null
     this.db
       .insert(schema.pools)
       .values({
         poolId,
         workloadId,
-        minSize: config?.minSize ?? pool.getStats().min,
-        maxSize: config?.maxSize ?? pool.getStats().max,
-        idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
+        minSize: pool.getStats().min,
+        maxSize: pool.getStats().max,
+        idleTimeoutMs: config?.idleTimeoutMs ?? workloadPoolDefaults.idleTimeoutMs ?? 300000,
         evictionIntervalMs: 30000,
         acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
-        networkName: config?.networkName ?? null,
+        networks: resolvedNetworks,
         affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
       })
       .onConflictDoUpdate({
         target: schema.pools.poolId,
         set: {
           workloadId,
-          minSize: config?.minSize ?? pool.getStats().min,
-          maxSize: config?.maxSize ?? pool.getStats().max,
-          idleTimeoutMs: config?.idleTimeoutMs ?? 300000,
+          minSize: pool.getStats().min,
+          maxSize: pool.getStats().max,
+          idleTimeoutMs: config?.idleTimeoutMs ?? workloadPoolDefaults.idleTimeoutMs ?? 300000,
           acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
-          networkName: config?.networkName ?? null,
+          networks: resolvedNetworks,
           affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
         },
       })

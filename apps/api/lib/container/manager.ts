@@ -38,8 +38,8 @@ export interface ContainerManagerConfig {
   /** Base directory for Unix sockets (host path) */
   socketBaseDir: string
 
-  /** Default network name for container isolation (can be overridden by workload) */
-  networkName: string
+  /** Default Docker networks for containers (can be overridden by workload/pool) */
+  networks: string[]
 
   /** Default resource limits per container (can be overridden by workload) */
   resources: DefaultResourceLimits
@@ -52,7 +52,7 @@ const DEFAULT_CONFIG: ContainerManagerConfig = {
   stateBaseDir: config.stateBaseDir,
   secretsBaseDir: config.secretsBaseDir,
   socketBaseDir: config.socketBaseDir,
-  networkName: 'bridge', // Docker's default network
+  networks: ['bridge'], // Docker's default network
   resources: config.resources,
   labelPrefix: 'boilerhouse',
 }
@@ -105,12 +105,12 @@ export class ContainerManager {
    *
    * @param workload - Workload specification defining image, volumes, env, etc.
    * @param poolId - ID of the pool this container belongs to
-   * @param networkName - Optional network name override (defaults to pool config or manager config)
+   * @param networks - Optional network names override (defaults to workload config or manager config)
    */
   async createContainer(
     workload: WorkloadSpec,
     poolId: PoolId,
-    networkName?: string,
+    networks?: string[],
   ): Promise<PoolContainer> {
     const containerId = this.generateContainerId()
     const containerName = `container-${containerId}`
@@ -227,8 +227,8 @@ export class ContainerManager {
       resources,
       security,
       network: {
-        network: networkName ?? this.config.networkName,
-        dnsServers: ['8.8.8.8', '1.1.1.1'],
+        networks: networks ?? workload.networks ?? this.config.networks,
+        dnsServers: workload.dns ?? ['8.8.8.8', '1.1.1.1'],
       },
       labels: {
         [`${this.config.labelPrefix}.managed`]: 'true',

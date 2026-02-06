@@ -134,12 +134,16 @@ export interface TmpfsMount {
  */
 export interface NetworkConfig {
   /**
-   * Network name/mode.
-   * - Docker: network name (e.g., "boilerhouse-egress")
-   * - Kubernetes: network policy name
-   * @example 'boilerhouse-egress'
+   * Docker networks to attach the container to.
+   * First entry is the primary network (Docker NetworkMode).
+   * Additional entries are connected via NetworkingConfig.EndpointsConfig.
+   *
+   * - Docker: network names (e.g., ["boilerhouse-egress"])
+   * - Kubernetes: network policy names
+   * @example ['boilerhouse-egress']
+   * @example ['boilerhouse-egress', 'service-mesh']
    */
-  network: string
+  networks: string[]
 
   /**
    * DNS servers to use (bypasses internal DNS).

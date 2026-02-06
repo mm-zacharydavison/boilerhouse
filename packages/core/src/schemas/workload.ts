@@ -206,14 +206,6 @@ export const securityConfigSchema = z.object({
 // =============================================================================
 
 /**
- * Network configuration for a pool
- */
-export const poolNetworkConfigSchema = z.object({
-  name: z.string().describe('Name of the Docker network to attach containers to'),
-  dns: z.array(z.string()).optional().describe('Custom DNS servers for containers'),
-})
-
-/**
  * Pool configuration schema - defines how many container instances to maintain
  */
 export const poolConfigSchema = z.object({
@@ -223,7 +215,11 @@ export const poolConfigSchema = z.object({
     .union([z.number().int().min(0), durationString.transform(parseDuration)])
     .optional()
     .describe('Time before an idle container is evicted (e.g., "5m")'),
-  network: poolNetworkConfigSchema.optional().describe('Network configuration for containers'),
+  networks: z
+    .array(z.string())
+    .optional()
+    .describe('Docker networks to attach containers to (first is primary)'),
+  dns: z.array(z.string()).optional().describe('Custom DNS servers for containers'),
 })
 
 // =============================================================================
@@ -347,7 +343,12 @@ export const workloadSpecSchema = z.object({
     .enum(['none', 'bridge', 'host'])
     .or(z.string())
     .optional()
-    .describe('Network mode for the container'),
+    .describe('Network mode for the container (legacy, prefer "networks")'),
+  networks: z
+    .array(z.string())
+    .optional()
+    .describe('Docker networks to attach containers to (first is primary)'),
+  dns: z.array(z.string()).optional().describe('Custom DNS servers for containers'),
 
   // Pool configuration (boilerhouse-specific)
   pool: poolConfigSchema.optional().describe('Pool sizing and network configuration'),

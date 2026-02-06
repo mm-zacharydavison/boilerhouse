@@ -40,6 +40,21 @@ const jsonObject = customType<{ data: Record<string, unknown>; driverData: strin
   },
 })
 
+/**
+ * Custom column type: stores string[] as JSON text in SQLite.
+ */
+const jsonStringArray = customType<{ data: string[]; driverData: string }>({
+  dataType() {
+    return 'text'
+  },
+  toDriver(value: string[]): string {
+    return JSON.stringify(value)
+  },
+  fromDriver(value: string): string[] {
+    return JSON.parse(value) as string[]
+  },
+})
+
 export const claims = sqliteTable(
   'claims',
   {
@@ -65,7 +80,7 @@ export const pools = sqliteTable('pools', {
   idleTimeoutMs: integer('idle_timeout_ms').notNull(),
   evictionIntervalMs: integer('eviction_interval_ms').notNull(),
   acquireTimeoutMs: integer('acquire_timeout_ms').notNull(),
-  networkName: text('network_name'),
+  networks: jsonStringArray('networks'),
   affinityTimeoutMs: integer('affinity_timeout_ms').notNull(),
   createdAt: timestamp('created_at')
     .notNull()

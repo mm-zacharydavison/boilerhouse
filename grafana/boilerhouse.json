@@ -182,40 +182,27 @@
           },
           {
             "matcher": { "id": "byName", "options": "Affinity Hit %" },
-            "properties": [
-              { "id": "unit", "value": "percent" },
-              { "id": "decimals", "value": 1 }
-            ]
+            "properties": [{ "id": "unit", "value": "percent" }, { "id": "decimals", "value": 1 }]
           },
           {
             "matcher": { "id": "byName", "options": "Total" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Min" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Max" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Claimed" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Idle" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           }
         ]
       },
@@ -235,7 +222,7 @@
     },
     {
       "type": "table",
-      "title": "Container Operations",
+      "title": "Containers",
       "id": 4,
       "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
@@ -243,122 +230,35 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "D",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "E",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "F",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "G",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"create\", status=\"success\"}[$__rate_interval])) * 60",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "H",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"destroy\", status=\"success\"}[$__rate_interval])) * 60",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "I",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"wipe\", status=\"success\"}[$__rate_interval])) * 60",
-          "format": "table",
-          "instant": true
-        },
-        {
-          "refId": "J",
-          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (pool_id) (rate(boilerhouse_container_health_check_failures_total{pool_id=~\"$pool_id\"}[$__rate_interval])) * 60",
+          "expr": "boilerhouse_container_info{pool_id=~\"$pool_id\"}",
           "format": "table",
           "instant": true
         }
       ],
       "transformations": [
-        { "id": "merge", "options": {} },
-        {
-          "id": "groupBy",
-          "options": {
-            "fields": {
-              "pool_id": { "operation": "groupby", "aggregations": [] },
-              "Value #A": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #B": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #C": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #D": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #E": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #F": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #G": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #H": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #I": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
-              "Value #J": { "operation": "aggregate", "aggregations": ["lastNotNull"] }
-            }
-          }
-        },
         {
           "id": "organize",
           "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
             "indexByName": {
-              "pool_id": 0,
-              "Value #A (lastNotNull)": 1,
-              "Value #B (lastNotNull)": 2,
-              "Value #C (lastNotNull)": 3,
-              "Value #D (lastNotNull)": 4,
-              "Value #E (lastNotNull)": 5,
-              "Value #F (lastNotNull)": 6,
-              "Value #G (lastNotNull)": 7,
-              "Value #H (lastNotNull)": 8,
-              "Value #I (lastNotNull)": 9,
-              "Value #J (lastNotNull)": 10
+              "container_id": 0,
+              "pool_id": 1,
+              "workload_id": 2,
+              "status": 3,
+              "tenant_id": 4
             },
             "renameByName": {
-              "pool_id": "Pool ID",
-              "Value #A (lastNotNull)": "Acquire p50",
-              "Value #B (lastNotNull)": "Acquire p95",
-              "Value #C (lastNotNull)": "Release p50",
-              "Value #D (lastNotNull)": "Release p95",
-              "Value #E (lastNotNull)": "Create p50",
-              "Value #F (lastNotNull)": "Create p95",
-              "Value #G (lastNotNull)": "Creates/min",
-              "Value #H (lastNotNull)": "Destroys/min",
-              "Value #I (lastNotNull)": "Wipes/min",
-              "Value #J (lastNotNull)": "Health Failures/min"
+              "container_id": "Container",
+              "pool_id": "Pool",
+              "workload_id": "Workload",
+              "status": "Status",
+              "tenant_id": "Tenant"
             }
           }
         }
@@ -373,82 +273,25 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Acquire p50" },
+            "matcher": { "id": "byName", "options": "Status" },
             "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Acquire p95" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Release p50" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Release p95" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Create p50" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Create p95" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Creates/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Destroys/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Wipes/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Health Failures/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 },
               {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "red", "value": 1 }
-                  ]
-                }
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "idle": { "text": "Idle", "color": "green" } } },
+                  {
+                    "type": "value",
+                    "options": { "claimed": { "text": "Claimed", "color": "blue" } }
+                  },
+                  {
+                    "type": "value",
+                    "options": { "reserved": { "text": "Reserved", "color": "orange" } }
+                  }
+                ]
               },
               {
                 "id": "custom.cellOptions",
-                "value": { "type": "color-background", "mode": "basic" }
+                "value": { "type": "color-text" }
               }
             ]
           }
@@ -457,7 +300,8 @@
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
-        "footer": { "show": false }
+        "footer": { "show": false },
+        "sortBy": [{ "displayName": "Status", "desc": false }]
       }
     },
     {
@@ -478,21 +322,21 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"upload\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"upload\"}[$__range]))",
           "format": "table",
           "instant": true
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"download\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"download\"}[$__range]))",
           "format": "table",
           "instant": true
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"bidirectional\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"bidirectional\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -513,14 +357,14 @@
         {
           "refId": "F",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_bytes_transferred_total{workload_id=~\"$workload_id\"}[$__rate_interval]))",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_bytes_transferred_total{workload_id=~\"$workload_id\"}[$__range]))",
           "format": "table",
           "instant": true
         },
         {
           "refId": "G",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_files_transferred_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_files_transferred_total{workload_id=~\"$workload_id\"}[$__range]))",
           "format": "table",
           "instant": true
         },
@@ -541,14 +385,14 @@
         {
           "refId": "J",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_errors_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_errors_total{workload_id=~\"$workload_id\"}[$__range]))",
           "format": "table",
           "instant": true
         },
         {
           "refId": "K",
           "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
-          "expr": "sum by (workload_id) (rate(boilerhouse_sync_bisync_resync_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "expr": "sum by (workload_id) (increase(boilerhouse_sync_bisync_resync_total{workload_id=~\"$workload_id\"}[$__range]))",
           "format": "table",
           "instant": true
         }
@@ -593,17 +437,17 @@
             },
             "renameByName": {
               "workload_id": "Workload",
-              "Value #A (lastNotNull)": "Ops/min (upload)",
-              "Value #B (lastNotNull)": "Ops/min (download)",
-              "Value #C (lastNotNull)": "Ops/min (bidir)",
+              "Value #A (lastNotNull)": "Uploads",
+              "Value #B (lastNotNull)": "Downloads",
+              "Value #C (lastNotNull)": "Bidirectional",
               "Value #D (lastNotNull)": "Duration p50",
               "Value #E (lastNotNull)": "Duration p95",
-              "Value #F (lastNotNull)": "Bytes/s",
-              "Value #G (lastNotNull)": "Files/min",
+              "Value #F (lastNotNull)": "Bytes",
+              "Value #G (lastNotNull)": "Files",
               "Value #H (lastNotNull)": "Active Syncs",
               "Value #I (lastNotNull)": "Queued",
-              "Value #J (lastNotNull)": "Errors/min",
-              "Value #K (lastNotNull)": "Bisync Resyncs/min"
+              "Value #J (lastNotNull)": "Errors",
+              "Value #K (lastNotNull)": "Resyncs"
             }
           }
         }
@@ -619,73 +463,49 @@
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "Duration p50" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
+            "properties": [{ "id": "unit", "value": "s" }, { "id": "decimals", "value": 2 }]
           },
           {
             "matcher": { "id": "byName", "options": "Duration p95" },
-            "properties": [
-              { "id": "unit", "value": "s" },
-              { "id": "decimals", "value": 2 }
-            ]
+            "properties": [{ "id": "unit", "value": "s" }, { "id": "decimals", "value": 2 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Bytes/s" },
-            "properties": [
-              { "id": "unit", "value": "Bps" },
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Bytes" },
+            "properties": [{ "id": "unit", "value": "bytes" }, { "id": "decimals", "value": 1 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Ops/min (upload)" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Uploads" },
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Ops/min (download)" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Downloads" },
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Ops/min (bidir)" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Bidirectional" },
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Files/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Files" },
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Active Syncs" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
             "matcher": { "id": "byName", "options": "Queued" },
-            "properties": [
-              { "id": "decimals", "value": 0 }
-            ]
+            "properties": [{ "id": "decimals", "value": 0 }]
           },
           {
-            "matcher": { "id": "byName", "options": "Errors/min" },
+            "matcher": { "id": "byName", "options": "Errors" },
             "properties": [
-              { "id": "decimals", "value": 1 },
+              { "id": "decimals", "value": 0 },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
-                  "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "red", "value": 1 }
-                  ]
+                  "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }]
                 }
               },
               {
@@ -695,10 +515,8 @@
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Bisync Resyncs/min" },
-            "properties": [
-              { "id": "decimals", "value": 1 }
-            ]
+            "matcher": { "id": "byName", "options": "Resyncs" },
+            "properties": [{ "id": "decimals", "value": 0 }]
           }
         ]
       },

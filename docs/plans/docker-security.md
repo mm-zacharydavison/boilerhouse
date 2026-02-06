@@ -40,17 +40,17 @@ The proxy (tecnativa/docker-socket-proxy) is ~5MB, zero-config, and we include i
 
 ### Allowed Docker API endpoints
 
-| Endpoint   | Allowed | Why                                        |
-|------------|---------|-------------------------------------------|
-| CONTAINERS | Yes     | Create, start, stop, remove, inspect, list |
-| IMAGES     | Yes     | Pull images for workloads                  |
-| POST       | Yes     | Write operations (create, start, stop)     |
-| EXEC       | No      | Not needed, would allow shell into tenants |
-| NETWORKS   | No      | Boilerhouse uses default bridge network    |
-| VOLUMES    | No      | Uses bind mounts, not Docker volumes       |
-| SWARM      | No      | Single-node only                           |
-| NODES      | No      | Single-node only                           |
-| SERVICES   | No      | Not using Docker services                  |
+| Endpoint   | Allowed | Why                                                     |
+|------------|---------|--------------------------------------------------------|
+| CONTAINERS | Yes     | Create, start, stop, remove, inspect, list              |
+| IMAGES     | Yes     | Pull images for workloads                               |
+| POST       | Yes     | Write operations (create, start, stop)                  |
+| EXEC       | No      | Not needed, would allow shell into tenants              |
+| NETWORKS   | No      | Egress network is pre-created in docker-compose         |
+| VOLUMES    | No      | Uses bind mounts, not Docker volumes                    |
+| SWARM      | No      | Single-node only                                        |
+| NODES      | No      | Single-node only                                        |
+| SERVICES   | No      | Not using Docker services                               |
 
 ## Security layers
 
@@ -59,6 +59,14 @@ The proxy (tecnativa/docker-socket-proxy) is ~5MB, zero-config, and we include i
 - Only containers on the `boilerhouse` network can reach its API
 - The docker-proxy is on a separate internal network — only Boilerhouse can reach it
 - Your app joins the `boilerhouse` network to communicate
+
+### Layer 1b: Egress network for managed containers
+- Managed containers that need internet access (e.g., OpenClaw contacting Claude API) use the
+  `boilerhouse-egress` network, which is pre-created in docker-compose with outbound NAT
+- The network is NOT `internal`, so containers on it can reach the internet
+- The network name is set explicitly (`name: boilerhouse-egress`) to avoid project prefix issues
+- NETWORKS endpoint stays blocked on the proxy — the network is pre-created, not managed at runtime
+- Workloads configure their network via `network_mode` or `pool.network.name` in the YAML spec
 
 ### Layer 2: Docker socket proxy
 - Whitelists only CONTAINERS and IMAGES endpoints

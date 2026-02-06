@@ -38,7 +38,7 @@ CREATE TABLE `pools` (
 	`idle_timeout_ms` integer NOT NULL,
 	`eviction_interval_ms` integer NOT NULL,
 	`acquire_timeout_ms` integer NOT NULL,
-	`network_name` text,
+	`networks` text,
 	`affinity_timeout_ms` integer NOT NULL,
 	`created_at` integer NOT NULL
 );

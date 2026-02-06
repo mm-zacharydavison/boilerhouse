@@ -25,6 +25,8 @@ import {
   containerOperationsTotal,
   containerReleaseDuration,
   containerWipeDuration,
+  removeContainerInfo,
+  setContainerInfo,
   updatePoolMetrics,
 } from '../metrics'
 import type { ContainerManager } from './manager'
@@ -51,8 +53,8 @@ export interface ContainerPoolConfig {
   /** Maximum time to wait when acquiring a container */
   acquireTimeoutMs: number
 
-  /** Optional network name override */
-  networkName?: string
+  /** Optional Docker networks override */
+  networks?: string[]
 
   /** Time to keep a released container reserved for the same tenant before returning to pool */
   affinityTimeoutMs: number
@@ -105,7 +107,7 @@ export class ContainerPool {
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? config.pool.containerIdleTimeoutMs,
       evictionIntervalMs: poolConfig.evictionIntervalMs ?? 30000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? config.pool.containerStartTimeoutMs,
-      networkName: poolConfig.networkName,
+      networks: poolConfig.networks,
       affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 0 * 60 * 1000, // 0 minutes default
     }
 
@@ -120,12 +122,19 @@ export class ContainerPool {
           const container = await this.manager.createContainer(
             this.poolConfig.workload,
             this.poolConfig.poolId,
-            this.poolConfig.networkName,
+            this.poolConfig.networks,
           )
           console.log(`[Pool] Created container ${container.containerId}`)
           this._lastError = null
           // Track container for later lookup
           this.allContainers.set(container.containerId, container)
+          setContainerInfo(
+            container.containerId,
+            this.poolConfig.poolId,
+            this.poolConfig.workload.id,
+            'idle',
+            '',
+          )
           endTimer()
           containerOperationsTotal.inc({
             pool_id: this.poolConfig.poolId,
@@ -157,6 +166,7 @@ export class ContainerPool {
           await this.manager.destroyContainer(container.containerId)
           // Remove from tracking
           this.allContainers.delete(container.containerId)
+          removeContainerInfo(container.containerId)
           console.log(`[Pool] Destroyed container ${container.containerId}`)
           endTimer()
           containerOperationsTotal.inc({
@@ -266,6 +276,13 @@ export class ContainerPool {
               tenantId,
               affinityContainer,
             )
+            setContainerInfo(
+              affinityContainer.containerId,
+              this.poolConfig.poolId,
+              this.poolConfig.workload.id,
+              'claimed',
+              tenantId,
+            )
             console.log(
               `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
             )
@@ -281,6 +298,7 @@ export class ContainerPool {
           )
           await this.manager.destroyContainer(affinityContainer.containerId)
           this.allContainers.delete(affinityContainer.containerId)
+          removeContainerInfo(affinityContainer.containerId)
         } else {
           // Container not in allContainers (maybe crashed), clean up DB
           this.db
@@ -297,6 +315,13 @@ export class ContainerPool {
 
       // Claim for tenant
       await this.manager.claimForTenant(container.containerId, tenantId, container)
+      setContainerInfo(
+        container.containerId,
+        this.poolConfig.poolId,
+        this.poolConfig.workload.id,
+        'claimed',
+        tenantId,
+      )
 
       console.log(`[Pool] Claimed container ${container.containerId} for tenant ${tenantId}`)
 
@@ -387,6 +412,14 @@ export class ContainerPool {
         .run()
       this.updateAffinityMetrics()
 
+      setContainerInfo(
+        container.containerId,
+        this.poolConfig.poolId,
+        this.poolConfig.workload.id,
+        'reserved',
+        tenantId,
+      )
+
       // Set timeout to return to pool if tenant doesn't come back
       const timeout = setTimeout(async () => {
         this.affinityTimeouts.delete(tenantId)
@@ -432,6 +465,13 @@ export class ContainerPool {
       })
       // Return to pool
       await this.pool.release(container)
+      setContainerInfo(
+        container.containerId,
+        this.poolConfig.poolId,
+        this.poolConfig.workload.id,
+        'idle',
+        '',
+      )
       console.log(`[Pool] Flushed affinity container ${container.containerId} back to pool`)
       this.emitPoolMetrics()
     } catch (err) {
@@ -445,6 +485,7 @@ export class ContainerPool {
       try {
         await this.manager.destroyContainer(container.containerId)
         this.allContainers.delete(container.containerId)
+        removeContainerInfo(container.containerId)
       } catch {
         // Best effort
       }
@@ -853,6 +894,13 @@ export class ContainerPool {
     }, remainingMs)
 
     this.affinityTimeouts.set(tenantId, timeout)
+    setContainerInfo(
+      container.containerId,
+      this.poolConfig.poolId,
+      this.poolConfig.workload.id,
+      'reserved',
+      tenantId,
+    )
     console.log(
       `[Pool] Restored affinity for tenant ${tenantId}, container ${container.containerId}, expires in ${remainingMs}ms`,
     )
@@ -864,6 +912,13 @@ export class ContainerPool {
    */
   restoreClaimed(container: PoolContainer): void {
     this.allContainers.set(container.containerId, container)
+    setContainerInfo(
+      container.containerId,
+      this.poolConfig.poolId,
+      this.poolConfig.workload.id,
+      'claimed',
+      container.tenantId ?? '',
+    )
     console.log(`[Pool] Restored claimed container ${container.containerId}`)
   }
 
@@ -873,6 +928,13 @@ export class ContainerPool {
    */
   async restoreIdle(container: PoolContainer): Promise<void> {
     this.allContainers.set(container.containerId, container)
+    setContainerInfo(
+      container.containerId,
+      this.poolConfig.poolId,
+      this.poolConfig.workload.id,
+      'idle',
+      '',
+    )
     console.log(`[Pool] Restored idle container ${container.containerId}`)
   }
 

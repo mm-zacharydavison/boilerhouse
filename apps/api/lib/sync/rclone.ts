@@ -296,6 +296,10 @@ export class RcloneSyncExecutor {
       args.push('--resync')
     }
 
+    // Stats flags (needed for parseRcloneStats to extract bytes/files)
+    args.push('--progress')
+    args.push('--stats-one-line')
+
     if (this.config.verbose) {
       args.push('-v')
     }

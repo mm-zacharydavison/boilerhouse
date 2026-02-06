@@ -4,7 +4,7 @@
  * Histograms and counters for container operations.
  */
 
-import { Counter, Histogram } from 'prom-client'
+import { Counter, Gauge, Histogram } from 'prom-client'
 import { registry } from './registry'
 
 // Histogram bucket definitions for different operation types
@@ -67,6 +67,47 @@ export const containerHealthCheckFailuresTotal = new Counter({
   labelNames: ['pool_id'],
   registers: [registry],
 })
+
+// Per-container info gauge (one entry per container, labels describe current state)
+const containerInfo = new Gauge({
+  name: 'boilerhouse_container_info',
+  help: 'Per-container state (1 per container with informational labels)',
+  labelNames: ['container_id', 'pool_id', 'workload_id', 'status', 'tenant_id'],
+  registers: [registry],
+})
+
+/** Tracks current label values per container so we can remove stale entries on status change. */
+const containerInfoLabels = new Map<string, Record<string, string>>()
+
+export function setContainerInfo(
+  containerId: string,
+  poolId: string,
+  workloadId: string,
+  status: string,
+  tenantId: string,
+): void {
+  const prev = containerInfoLabels.get(containerId)
+  if (prev) {
+    containerInfo.remove(prev)
+  }
+  const labels = {
+    container_id: containerId,
+    pool_id: poolId,
+    workload_id: workloadId,
+    status,
+    tenant_id: tenantId,
+  }
+  containerInfo.set(labels, 1)
+  containerInfoLabels.set(containerId, labels)
+}
+
+export function removeContainerInfo(containerId: string): void {
+  const prev = containerInfoLabels.get(containerId)
+  if (prev) {
+    containerInfo.remove(prev)
+    containerInfoLabels.delete(containerId)
+  }
+}
 
 // Affinity counters
 export const affinityHitsTotal = new Counter({

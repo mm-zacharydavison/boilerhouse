@@ -12,7 +12,6 @@ import type {
   deployConfigSchema,
   healthCheckConfigSchema,
   poolConfigSchema,
-  poolNetworkConfigSchema,
   resourceLimitsSchema,
   resourcesConfigSchema,
   s3SinkConfigSchema,
@@ -127,9 +126,6 @@ export type DeployConfigRaw = z.infer<typeof deployConfigSchema>
 /** Raw security config from YAML (snake_case). */
 export type SecurityConfigRaw = z.infer<typeof securityConfigSchema>
 
-/** Raw pool network config from YAML (snake_case). */
-export type PoolNetworkConfigRaw = z.infer<typeof poolNetworkConfigSchema>
-
 /** Raw pool config from YAML (snake_case). */
 export type PoolConfigRaw = z.infer<typeof poolConfigSchema>
 
@@ -173,9 +169,6 @@ export type DeployConfig = CamelCasedPropertiesDeep<DeployConfigRaw>
 /** Security configuration for containers. */
 export type SecurityConfig = CamelCasedPropertiesDeep<SecurityConfigRaw>
 
-/** Network configuration for a pool. */
-export type PoolNetworkConfig = CamelCasedPropertiesDeep<PoolNetworkConfigRaw>
-
 /** Pool configuration - defines how many container instances to maintain. */
 export type PoolConfig = CamelCasedPropertiesDeep<PoolConfigRaw>
 
@@ -215,8 +208,8 @@ export interface PoolSpec {
   maxSize: number
   /** Time in milliseconds before an idle container is evicted. */
   idleTimeoutMs: number
-  /** Network configuration for containers in this pool. */
-  network?: PoolNetworkConfig
+  /** Docker networks for containers in this pool. */
+  networks?: string[]
 }
 
 // =============================================================================

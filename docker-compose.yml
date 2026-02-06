@@ -85,6 +85,10 @@ networks:
   boilerhouse-internal:
     driver: bridge
 
+  # Egress network for managed containers that need internet access
+  boilerhouse-egress:
+    name: boilerhouse-egress
+
 volumes:
   # Per-container state directories (e.g., /states/{containerId}/)
   boilerhouse-states:

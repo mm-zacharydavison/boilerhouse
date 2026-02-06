@@ -46,7 +46,8 @@ deploy:
 # Security (OpenClaw runs as 'node' user by default)
 read_only: false   # OpenClaw needs to write to ~/.openclaw
 user: "1000"       # 'node' user UID
-network_mode: bridge
+networks:
+  - boilerhouse-egress
 
 pool:
   min_size: 2

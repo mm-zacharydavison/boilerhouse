@@ -43,6 +43,7 @@ export function poolsController(deps: PoolsControllerDeps) {
           const pool = poolRegistry.createPool(body.poolId, body.workloadId, {
             minSize: body.minSize,
             maxSize: body.maxSize,
+            networks: body.networks,
           })
           return poolRegistry.getPoolInfo(pool.getPoolId())
         } catch (err) {
@@ -56,6 +57,7 @@ export function poolsController(deps: PoolsControllerDeps) {
           workloadId: t.String(),
           minSize: t.Optional(t.Number()),
           maxSize: t.Optional(t.Number()),
+          networks: t.Optional(t.Array(t.String())),
         }),
       },
     )
