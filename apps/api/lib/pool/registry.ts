@@ -211,6 +211,7 @@ export class PoolRegistry {
         },
         this.db,
       )
+      pool.start()
 
       this.pools.set(record.poolId, pool)
       restored++
@@ -262,6 +263,7 @@ export class PoolRegistry {
       },
       this.db,
     )
+    pool.start()
 
     this.pools.set(poolId, pool)
 

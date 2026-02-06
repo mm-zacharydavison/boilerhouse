@@ -2,12 +2,17 @@
  * Container Pool
  *
  * Manages a pool of pre-warmed containers with DB as the single source of truth.
- * No external pooling library — uses an in-memory idle queue backed by the
- * `containers` table and a background fill loop to maintain minimum idle count.
+ * No in-memory idle queue — all state lives in the `containers` table.
+ * A background fill loop maintains minimum idle count.
  *
  * Uses wipe-on-entry: released containers go back to idle with `lastTenantId`
  * preserved. On acquire, if the same tenant reclaims → no wipe. If a different
  * tenant claims → wipe first.
+ *
+ * Concurrency safety: acquire uses optimistic locking via conditional UPDATE
+ * with a `WHERE status = 'idle'` guard. If another request claims the container
+ * between SELECT and UPDATE, the UPDATE returns nothing and we retry the next
+ * candidate. No mutex or explicit transaction needed.
  */
 
 import type {
@@ -83,8 +88,6 @@ export class ContainerPool {
   private manager: ContainerManager
   private poolConfig: ContainerPoolConfig
   private db: DrizzleDb
-  /** In-memory queue of idle container IDs for fast acquire */
-  private idleQueue: ContainerId[] = []
   /** Background fill loop timer */
   private fillLoopInterval: ReturnType<typeof setInterval> | null = null
   private _lastError: PoolError | null = null
@@ -107,29 +110,13 @@ export class ContainerPool {
       networks: poolConfig.networks,
       fileIdleTtl: poolConfig.fileIdleTtl,
     }
-
-    this.loadFromDb()
-    this.startFillLoop()
   }
 
   /**
-   * Load idle containers from DB into in-memory idle queue.
+   * Start the background fill loop. Must be called after construction.
    */
-  private loadFromDb(): void {
-    const idleRows = this.db
-      .select({ containerId: schema.containers.containerId })
-      .from(schema.containers)
-      .where(
-        and(
-          eq(schema.containers.poolId, this.poolConfig.poolId),
-          eq(schema.containers.status, 'idle'),
-        ),
-      )
-      .all()
-
-    this.idleQueue = idleRows.map((r) => r.containerId)
-
-    console.log(`[Pool ${this.poolConfig.poolId}] Loaded ${this.idleQueue.length} idle from DB`)
+  start(): void {
+    this.startFillLoop()
   }
 
   /**
@@ -138,8 +125,11 @@ export class ContainerPool {
    * Priority:
    * 1. If tenant already has a claimed container (from DB), returns it
    * 2. If an idle container has lastTenantId matching this tenant, claim without wipe
-   * 3. Otherwise, pops from idle queue, wipes, then claims
-   * 4. If queue empty and under maxSize, creates on demand
+   * 3. Otherwise, pick an idle container from DB, wipe, then claim
+   * 4. If no idle containers and under maxSize, creates on demand
+   *
+   * Uses optimistic locking: UPDATE ... WHERE status = 'idle' + .returning()
+   * ensures only one concurrent caller wins a given container.
    */
   async acquireForTenant(tenantId: TenantId): Promise<PoolContainer> {
     const endTimer = containerAcquireDuration.startTimer({ pool_id: this.poolConfig.poolId })
@@ -184,11 +174,9 @@ export class ContainerPool {
       if (affinityRow) {
         const healthy = await this.manager.isHealthy(affinityRow.containerId)
         if (healthy) {
-          // Remove from idle queue
-          this.removeFromIdleQueue(affinityRow.containerId)
-
+          // Optimistic lock: only claim if still idle
           const now = new Date()
-          this.db
+          const claimed = this.db
             .update(schema.containers)
             .set({
               status: 'claimed' as ContainerStatus,
@@ -196,65 +184,75 @@ export class ContainerPool {
               lastActivity: now,
               claimedAt: now,
             })
-            .where(eq(schema.containers.containerId, affinityRow.containerId))
-            .run()
+            .where(
+              and(
+                eq(schema.containers.containerId, affinityRow.containerId),
+                eq(schema.containers.status, 'idle'),
+              ),
+            )
+            .returning()
+            .get()
 
-          setContainerInfo(
-            affinityRow.containerId,
-            this.poolConfig.poolId,
-            this.poolConfig.workload.id,
-            'claimed',
-            tenantId,
-          )
-          console.log(
-            `[Pool] Returned previous container ${affinityRow.containerId} to tenant ${tenantId} (no wipe)`,
-          )
-          affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
-          endTimer({ status: 'success' })
-          this.emitPoolMetrics()
-          return this.toPoolContainer({
-            ...affinityRow,
-            status: 'claimed',
-            tenantId,
-            lastActivity: now,
-            claimedAt: now,
-          })
+          if (claimed) {
+            setContainerInfo(
+              affinityRow.containerId,
+              this.poolConfig.poolId,
+              this.poolConfig.workload.id,
+              'claimed',
+              tenantId,
+            )
+            console.log(
+              `[Pool] Returned previous container ${affinityRow.containerId} to tenant ${tenantId} (no wipe)`,
+            )
+            affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
+            endTimer({ status: 'success' })
+            this.emitPoolMetrics()
+            return this.toPoolContainer({
+              ...affinityRow,
+              status: 'claimed',
+              tenantId,
+              lastActivity: now,
+              claimedAt: now,
+            })
+          }
+          // Someone else claimed it — fall through to general idle search
+        } else {
+          // Container unhealthy, destroy it and fall through
+          console.log(`[Pool] Previous container ${affinityRow.containerId} unhealthy, destroying`)
+          await this.destroyAndRemove(affinityRow.containerId)
         }
-
-        // Container unhealthy, destroy it and fall through
-        console.log(`[Pool] Previous container ${affinityRow.containerId} unhealthy, destroying`)
-        await this.destroyAndRemove(affinityRow.containerId)
       }
 
-      // 3. Pop from idle queue — wipe before claiming
-      while (this.idleQueue.length > 0) {
-        const candidateId = this.idleQueue.shift()
-        if (!candidateId) break
-        // Validate it's still idle in DB
-        const row = this.db
+      // 3. Find idle containers from DB — wipe before claiming
+      // Loop until we successfully claim one or exhaust all candidates
+      for (;;) {
+        const candidate = this.db
           .select()
           .from(schema.containers)
           .where(
             and(
-              eq(schema.containers.containerId, candidateId),
+              eq(schema.containers.poolId, this.poolConfig.poolId),
               eq(schema.containers.status, 'idle'),
             ),
           )
           .get()
-        if (!row) continue
+
+        if (!candidate) break
 
         // Validate health
-        const healthy = await this.manager.isHealthy(candidateId)
+        const healthy = await this.manager.isHealthy(candidate.containerId)
         if (!healthy) {
-          console.log(`[Pool] Idle container ${candidateId} failed health check, destroying`)
+          console.log(
+            `[Pool] Idle container ${candidate.containerId} failed health check, destroying`,
+          )
           containerHealthCheckFailuresTotal.inc({ pool_id: this.poolConfig.poolId })
-          await this.destroyAndRemove(candidateId)
+          await this.destroyAndRemove(candidate.containerId)
           continue
         }
 
         // Wipe state for new tenant
         const endWipeTimer = containerWipeDuration.startTimer({ pool_id: this.poolConfig.poolId })
-        await this.manager.wipeForNewTenant(candidateId)
+        await this.manager.wipeForNewTenant(candidate.containerId)
         endWipeTimer()
         containerOperationsTotal.inc({
           pool_id: this.poolConfig.poolId,
@@ -262,9 +260,9 @@ export class ContainerPool {
           status: 'success',
         })
 
-        // Claim it
+        // Optimistic lock: only claim if still idle
         const now = new Date()
-        this.db
+        const claimed = this.db
           .update(schema.containers)
           .set({
             status: 'claimed' as ContainerStatus,
@@ -272,22 +270,35 @@ export class ContainerPool {
             lastActivity: now,
             claimedAt: now,
           })
-          .where(eq(schema.containers.containerId, candidateId))
-          .run()
+          .where(
+            and(
+              eq(schema.containers.containerId, candidate.containerId),
+              eq(schema.containers.status, 'idle'),
+            ),
+          )
+          .returning()
+          .get()
+
+        if (!claimed) {
+          // Someone else claimed it between our SELECT and UPDATE — retry
+          continue
+        }
 
         setContainerInfo(
-          candidateId,
+          candidate.containerId,
           this.poolConfig.poolId,
           this.poolConfig.workload.id,
           'claimed',
           tenantId,
         )
 
-        console.log(`[Pool] Claimed container ${candidateId} for tenant ${tenantId} (wiped)`)
+        console.log(
+          `[Pool] Claimed container ${candidate.containerId} for tenant ${tenantId} (wiped)`,
+        )
         endTimer({ status: 'success' })
         this.emitPoolMetrics()
         return this.toPoolContainer({
-          ...row,
+          ...candidate,
           status: 'claimed',
           tenantId,
           lastActivity: now,
@@ -295,7 +306,7 @@ export class ContainerPool {
         })
       }
 
-      // 4. Queue empty — create on demand if under maxSize
+      // 4. No idle containers — create on demand if under maxSize
       const totalCount = this.getTotalCount()
       if (totalCount >= this.poolConfig.maxSize) {
         throw new Error(
@@ -355,8 +366,6 @@ export class ContainerPool {
         .where(eq(schema.containers.containerId, row.containerId))
         .run()
 
-      this.idleQueue.push(row.containerId)
-
       setContainerInfo(
         row.containerId,
         this.poolConfig.poolId,
@@ -411,9 +420,6 @@ export class ContainerPool {
       .get()
 
     if (!row) return false
-
-    // Remove from idle queue if present
-    this.removeFromIdleQueue(containerId as ContainerId)
 
     await this.destroyAndRemove(containerId as ContainerId)
     console.log(`[Pool] Destroyed container ${containerId}`)
@@ -563,11 +569,22 @@ export class ContainerPool {
 
     console.log(`[Pool] Scaling down: destroying ${toDestroy} idle containers`)
 
-    while (destroyed < toDestroy && this.idleQueue.length > 0) {
-      const containerId = this.idleQueue.shift()
-      if (!containerId) break
+    while (destroyed < toDestroy) {
+      const idleRow = this.db
+        .select({ containerId: schema.containers.containerId })
+        .from(schema.containers)
+        .where(
+          and(
+            eq(schema.containers.poolId, this.poolConfig.poolId),
+            eq(schema.containers.status, 'idle'),
+          ),
+        )
+        .get()
+
+      if (!idleRow) break
+
       try {
-        await this.destroyAndRemove(containerId)
+        await this.destroyAndRemove(idleRow.containerId)
         destroyed++
       } catch (err) {
         console.error('[Pool] Failed to destroy container during scale down:', err)
@@ -642,7 +659,7 @@ export class ContainerPool {
   /**
    * Stop the pool without destroying containers.
    *
-   * Clears timers and in-memory state but leaves Docker containers running
+   * Clears timers but leaves Docker containers running
    * and DB rows intact for recovery on restart.
    */
   stop(): void {
@@ -702,8 +719,6 @@ export class ContainerPool {
       .where(eq(schema.containers.poolId, this.poolConfig.poolId))
       .run()
 
-    this.idleQueue = []
-
     console.log('[Pool] Pool drained')
   }
 
@@ -712,7 +727,7 @@ export class ContainerPool {
   // ---------------------------------------------------------------------------
 
   /**
-   * Create a container via the manager, insert into DB, and optionally add to idle queue.
+   * Create a container via the manager and insert into DB.
    */
   private async createAndInsert(
     status: 'idle' | 'claimed',
@@ -746,10 +761,6 @@ export class ContainerPool {
           createdAt: now,
         })
         .run()
-
-      if (status === 'idle') {
-        this.idleQueue.push(container.containerId)
-      }
 
       const effectiveTenantId = tenantId ?? ''
       setContainerInfo(
@@ -798,7 +809,6 @@ export class ContainerPool {
     try {
       await this.manager.destroyContainer(containerId)
       this.db.delete(schema.containers).where(eq(schema.containers.containerId, containerId)).run()
-      this.removeFromIdleQueue(containerId)
       removeContainerInfo(containerId)
       endTimer()
       containerOperationsTotal.inc({
@@ -810,7 +820,6 @@ export class ContainerPool {
     } catch (err) {
       // Still remove the DB row even if runtime destroy fails
       this.db.delete(schema.containers).where(eq(schema.containers.containerId, containerId)).run()
-      this.removeFromIdleQueue(containerId)
       removeContainerInfo(containerId)
       endTimer()
       containerOperationsTotal.inc({
@@ -872,16 +881,6 @@ export class ContainerPool {
       .where(eq(schema.containers.poolId, this.poolConfig.poolId))
       .get()
     return result?.cnt ?? 0
-  }
-
-  /**
-   * Remove a container ID from the idle queue.
-   */
-  private removeFromIdleQueue(containerId: ContainerId): void {
-    const idx = this.idleQueue.indexOf(containerId)
-    if (idx !== -1) {
-      this.idleQueue.splice(idx, 1)
-    }
   }
 
   /**

@@ -18,7 +18,8 @@ environment:
   OPENCLAW_GATEWAY_BIND: lan
   # Gateway token for auth (set to a dummy value for dev)
   OPENCLAW_GATEWAY_TOKEN: dev-token
-  # Note: API keys should be injected per-tenant via secrets mount
+  # API key for dev testing (in production, inject per-tenant via secrets)
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 
 # Override default command to run gateway on default port
 command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--allow-unconfigured"]
@@ -52,6 +53,7 @@ pool:
   min_idle: 2
   max_size: 20
   idle_timeout: 10m
+  file_idle_ttl: 1m
 
 # Sync state to MinIO (local S3-compatible storage)
 sync:

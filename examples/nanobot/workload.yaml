@@ -1,0 +1,80 @@
+id: nanobot
+name: Nanobot AI Assistant
+image: nanobot:latest
+
+# Nanobot gateway - single Python process, connects to messaging channels
+command: ["nanobot", "gateway"]
+
+volumes:
+  state:
+    target: /root/.nanobot    # Nanobot's default state directory (sessions, workspace, config)
+  secrets:
+    target: /run/secrets/nanobot
+    read_only: true
+
+environment:
+  NANOBOT_GATEWAY__HOST: "0.0.0.0"
+  NANOBOT_GATEWAY__PORT: "18790"
+
+healthcheck:
+  test: ["CMD", "curl", "-sf", "http://localhost:18790/"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+
+deploy:
+  resources:
+    limits:
+      cpus: "1"
+      memory: 1G
+
+# Nanobot expects /root/.nanobot; revisit with custom HOME + non-root user
+user: "0"
+read_only: false
+networks:
+  - boilerhouse-egress
+
+pool:
+  min_idle: 2
+  max_size: 50
+  idle_timeout: 10m
+  file_idle_ttl: 5m    # No filesystem writes for 5 min = tenant idle, release container
+
+# Sync state to MinIO (local S3-compatible storage)
+sync:
+  sink:
+    type: s3
+    bucket: boilerhouse-nanobot
+    region: us-east-1
+    endpoint: http://localhost:9000
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    prefix: tenants/${tenantId}/
+    rclone_flags:
+      - "--s3-force-path-style"
+
+  mappings:
+    # Paths are relative to the state volume mount (mounted at /root/.nanobot)
+
+    # Session history - JSONL per-chat conversation logs (CRITICAL for continuity)
+    - path: sessions
+      direction: bidirectional
+      mode: sync
+
+    # Workspace and memory - daily notes, MEMORY.md, agent-created files
+    - path: workspace
+      direction: bidirectional
+      mode: sync
+
+    # Config - tenant credentials, channel tokens, provider API keys (download only)
+    - path: /
+      pattern: "config.json"
+      direction: download
+      mode: copy
+
+  policy:
+    on_claim: true      # Download tenant state when claiming
+    on_release: true    # Upload tenant state when releasing
+    interval: 1m        # Periodic sync while active (sessions append frequently)
+    manual: true        # Allow manual sync via API
