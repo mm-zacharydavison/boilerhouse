@@ -373,15 +373,9 @@ export class PoolRegistry {
 
   /**
    * Get container info for API responses.
-   * Looks up the container across all pools using the runtime cache.
+   * Looks up the container across all pools.
    */
   getContainerInfo(containerId: ContainerId): ContainerInfo | undefined {
-    const claim = this.db
-      .select()
-      .from(schema.claims)
-      .where(eq(schema.claims.containerId, containerId))
-      .get()
-
     for (const [poolId, pool] of this.pools) {
       const containers = pool.getAllContainers()
       const container = containers.find((c) => c.containerId === containerId)
@@ -391,7 +385,7 @@ export class PoolRegistry {
       return {
         id: containerId,
         poolId,
-        tenantId: claim?.tenantId ?? null,
+        tenantId: container.tenantId,
         status: container.status,
         workloadId: workload.id,
         workloadName: workload.name,
@@ -414,19 +408,12 @@ export class PoolRegistry {
       const pool = this.pools.get(poolId)
       if (!pool) return result
       const workload = pool.getWorkload()
-      const poolClaims = this.db
-        .select()
-        .from(schema.claims)
-        .where(eq(schema.claims.poolId, poolId))
-        .all()
-      const claimMap = new Map(poolClaims.map((c) => [c.containerId, c]))
 
       for (const container of pool.getAllContainers()) {
-        const claim = claimMap.get(container.containerId)
         result.push({
           id: container.containerId,
           poolId,
-          tenantId: claim?.tenantId ?? container.tenantId,
+          tenantId: container.tenantId,
           status: container.status,
           workloadId: workload.id,
           workloadName: workload.name,
@@ -448,20 +435,10 @@ export class PoolRegistry {
    * Destroy a container by ID
    */
   async destroyContainer(containerId: ContainerId): Promise<boolean> {
-    const claim = this.db
-      .select()
-      .from(schema.claims)
-      .where(eq(schema.claims.containerId, containerId))
-      .get()
-    const poolId = claim?.poolId
-
-    // Try to find pool
-    for (const [pId, pool] of this.pools) {
-      if (poolId && pId !== poolId) continue
+    for (const pool of this.pools.values()) {
       const destroyed = await pool.destroyContainer(containerId)
       if (destroyed) return true
     }
-
     return false
   }
 
@@ -478,10 +455,14 @@ export class PoolRegistry {
   }
 
   /**
-   * Get container for a tenant
+   * Get container for a tenant (searches all pools)
    */
   getContainerForTenant(tenantId: TenantId): PoolContainer | null {
-    return this.manager.getContainerByTenant(tenantId)
+    for (const pool of this.pools.values()) {
+      const container = pool.getContainerForTenant(tenantId)
+      if (container) return container
+    }
+    return null
   }
 
   /**

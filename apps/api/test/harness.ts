@@ -147,16 +147,12 @@ export class TestHarness {
     // Create activity log
     this._activityLog = new ActivityLog(db)
 
-    // Create container manager
-    this._manager = new ContainerManager(
-      this._runtime,
-      {
-        stateBaseDir: stateDir,
-        secretsBaseDir: secretsDir,
-        socketBaseDir: socketDir,
-      },
-      db,
-    )
+    // Create container manager (no DB dependency — pool owns DB writes)
+    this._manager = new ContainerManager(this._runtime, {
+      stateBaseDir: stateDir,
+      secretsBaseDir: secretsDir,
+      socketBaseDir: socketDir,
+    })
 
     // Create workload registry and save test workload to file
     const workload = this._config.workload ?? DEFAULT_TEST_WORKLOAD

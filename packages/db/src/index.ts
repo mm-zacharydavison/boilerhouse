@@ -21,9 +21,8 @@ export * as schema from './schema'
 
 // Domain types inferred from schema (replaces old repository interfaces)
 export type {
-  claims,
+  containers,
   pools,
-  affinityReservations,
   syncStatus,
   syncErrors,
   activityLog,
@@ -31,12 +30,10 @@ export type {
 
 import type * as s from './schema'
 
-export type Claim = typeof s.claims.$inferSelect
-export type ClaimInsert = typeof s.claims.$inferInsert
+export type ContainerRow = typeof s.containers.$inferSelect
+export type ContainerInsert = typeof s.containers.$inferInsert
 export type PoolRecord = typeof s.pools.$inferSelect
 export type PoolRecordInsert = typeof s.pools.$inferInsert
-export type AffinityReservation = typeof s.affinityReservations.$inferSelect
-export type AffinityReservationInsert = typeof s.affinityReservations.$inferInsert
 export type SyncStatusEntry = typeof s.syncStatus.$inferSelect
 export type SyncStatusInsert = typeof s.syncStatus.$inferInsert
 export type SyncErrorEntry = typeof s.syncErrors.$inferSelect

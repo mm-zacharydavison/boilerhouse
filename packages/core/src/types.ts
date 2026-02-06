@@ -76,9 +76,10 @@ export type SessionKey = string
  * Lifecycle status of a container.
  * - `idle`: Container is pre-warmed and available for claiming
  * - `claimed`: Container is claimed by a tenant and processing requests
+ * - `reserved`: Container is held for a returning tenant (affinity reservation)
  * - `stopping`: Container is being stopped or released
  */
-export type ContainerStatus = 'idle' | 'claimed' | 'stopping'
+export type ContainerStatus = 'idle' | 'claimed' | 'reserved' | 'stopping'
 
 /**
  * Represents a running container instance in the pool.

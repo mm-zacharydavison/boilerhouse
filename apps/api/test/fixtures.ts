@@ -210,6 +210,7 @@ export function createMockContainerRuntime() {
     stopContainer: mock(async () => {}),
     removeContainer: mock(async () => {}),
     destroyContainer: mock(async () => {}),
+    restartContainer: mock(async () => {}),
 
     getContainer: mock(async (id: string) => ({
       id,

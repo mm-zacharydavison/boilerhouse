@@ -55,20 +55,27 @@ const jsonStringArray = customType<{ data: string[]; driverData: string }>({
   },
 })
 
-export const claims = sqliteTable(
-  'claims',
+export const containers = sqliteTable(
+  'containers',
   {
     containerId: text('container_id').$type<ContainerId>().primaryKey(),
-    tenantId: text('tenant_id').$type<TenantId>().notNull(),
     poolId: text('pool_id').$type<PoolId>().notNull(),
+    status: text('status', {
+      enum: ['idle', 'claimed', 'reserved', 'stopping'],
+    }).notNull(),
+    tenantId: text('tenant_id').$type<TenantId>(),
     lastActivity: timestamp('last_activity').notNull(),
-    claimedAt: timestamp('claimed_at')
+    claimedAt: timestamp('claimed_at'),
+    idleExpiresAt: timestamp('idle_expires_at'),
+    affinityExpiresAt: timestamp('affinity_expires_at'),
+    createdAt: timestamp('created_at')
       .notNull()
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index('idx_claims_tenant').on(table.tenantId),
-    index('idx_claims_pool').on(table.poolId),
+    index('idx_containers_pool').on(table.poolId),
+    index('idx_containers_status').on(table.poolId, table.status),
+    index('idx_containers_tenant').on(table.tenantId),
   ],
 )
 
@@ -86,20 +93,6 @@ export const pools = sqliteTable('pools', {
     .notNull()
     .$defaultFn(() => new Date()),
 })
-
-export const affinityReservations = sqliteTable(
-  'affinity_reservations',
-  {
-    tenantId: text('tenant_id').$type<TenantId>().primaryKey(),
-    containerId: text('container_id').$type<ContainerId>().notNull(),
-    poolId: text('pool_id').$type<PoolId>().notNull(),
-    expiresAt: timestamp('expires_at').notNull(),
-    createdAt: timestamp('created_at')
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [index('idx_affinity_expires_at').on(table.expiresAt)],
-)
 
 export const syncStatus = sqliteTable(
   'sync_status',

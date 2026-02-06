@@ -1,6 +1,5 @@
-import { closeDatabase, initDatabase, schema } from '@boilerhouse/db'
+import { closeDatabase, initDatabase } from '@boilerhouse/db'
 import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
-import { gt } from 'drizzle-orm'
 import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
 import { ContainerManager } from '../lib/container'
@@ -73,8 +72,8 @@ const recoveryStats = await recoverState(runtime, db, {
   labelPrefix: 'boilerhouse',
 })
 console.log(
-  `  - Recovery: docker=${recoveryStats.dockerContainers}, staleClaims=${recoveryStats.staleClaims}, ` +
-    `staleAffinity=${recoveryStats.staleAffinity}, expiredAffinity=${recoveryStats.expiredAffinity}`,
+  `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}, ` +
+    `expiredAffinity=${recoveryStats.expiredAffinity}`,
 )
 
 // Load workloads from YAML files
@@ -86,44 +85,16 @@ console.log(
 // Initialize activity log with persistence
 const activityLog = new ActivityLog(db)
 
-// Initialize container manager with claim persistence
-const manager = new ContainerManager(runtime, undefined, db)
+// Initialize container manager (no DB dependency — pool owns DB writes)
+const manager = new ContainerManager(runtime, undefined)
 
 // Initialize pool registry
 const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog, db)
 
-// Restore pools from DB
+// Restore pools from DB — pools self-restore idle queue + affinity timeouts from containers table
 const restoredPools = poolRegistry.restoreFromDb()
 if (restoredPools > 0) {
   console.log(`  - Restored ${restoredPools} pool(s) from database`)
-}
-
-// Restore affinity reservations for each pool
-const activeAffinityReservations = db
-  .select()
-  .from(schema.affinityReservations)
-  .where(gt(schema.affinityReservations.expiresAt, new Date()))
-  .all()
-for (const reservation of activeAffinityReservations) {
-  const pool = poolRegistry.getPool(reservation.poolId)
-  if (pool) {
-    const remainingMs = reservation.expiresAt.getTime() - Date.now()
-    // Build a PoolContainer from computed paths
-    const container = {
-      containerId: reservation.containerId,
-      tenantId: null,
-      poolId: reservation.poolId,
-      socketPath: manager.getSocketPath(reservation.containerId),
-      stateDir: manager.getStateDir(reservation.containerId),
-      secretsDir: manager.getSecretsDir(reservation.containerId),
-      lastActivity: reservation.createdAt,
-      status: 'idle' as const,
-    }
-    pool.restoreAffinityTimeout(reservation.tenantId, container, remainingMs)
-  }
-}
-if (activeAffinityReservations.length > 0) {
-  console.log(`  - Restored ${activeAffinityReservations.length} affinity reservations`)
 }
 
 // Initialize sync components with persistence

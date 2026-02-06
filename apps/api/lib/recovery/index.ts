@@ -3,26 +3,23 @@
  *
  * Reconciles DB state with Docker runtime on startup.
  * Docker is the source of truth for container existence.
- * DB is the source of truth for domain state (claims, affinity).
+ * DB is the source of truth for domain state (status, affinity, claims).
  *
  * Flow:
  * 1. List Docker containers with managed label (Docker = truth for existence)
- * 2. Clean up claims for containers NOT in Docker (stale rows)
- * 3. Clean up affinity reservations for containers NOT in Docker
- * 4. Clean up expired affinity reservations
+ * 2. Clean up container rows for containers NOT in Docker (stale rows)
+ * 3. Clean up expired affinity reservations
  */
 
-import type { ContainerRuntime } from '@boilerhouse/core'
+import type { ContainerRuntime, ContainerStatus } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
-import { eq, lte } from 'drizzle-orm'
+import { and, eq, lte } from 'drizzle-orm'
 
 export interface RecoveryStats {
   /** Docker containers found with managed label */
   dockerContainers: number
-  /** Stale claim rows cleaned (container not in Docker) */
-  staleClaims: number
-  /** Stale affinity rows cleaned (container not in Docker) */
-  staleAffinity: number
+  /** Stale container rows cleaned (container not in Docker) */
+  staleContainers: number
   /** Affinity reservations cleaned (expired) */
   expiredAffinity: number
 }
@@ -42,8 +39,7 @@ export async function recoverState(
 ): Promise<RecoveryStats> {
   const stats: RecoveryStats = {
     dockerContainers: 0,
-    staleClaims: 0,
-    staleAffinity: 0,
+    staleContainers: 0,
     expiredAffinity: 0,
   }
 
@@ -71,53 +67,40 @@ export async function recoverState(
   stats.dockerContainers = dockerContainerIds.size
   console.log(`[Recovery] Found ${dockerContainerIds.size} running managed containers in Docker`)
 
-  // 2. Clean up claims for containers NOT in Docker
-  const claims = db.select().from(schema.claims).all()
-  for (const claim of claims) {
-    if (!dockerContainerIds.has(claim.containerId)) {
-      console.log(`[Recovery] Cleaning stale claim for container ${claim.containerId}`)
-      db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
-      stats.staleClaims++
+  // 2. Clean up container rows for containers NOT in Docker
+  const allContainerRows = db.select().from(schema.containers).all()
+  for (const row of allContainerRows) {
+    if (!dockerContainerIds.has(row.containerId)) {
+      console.log(`[Recovery] Cleaning stale container row for ${row.containerId}`)
+      db.delete(schema.containers).where(eq(schema.containers.containerId, row.containerId)).run()
+      stats.staleContainers++
     }
   }
 
-  // 3. Clean up affinity reservations for containers NOT in Docker
-  const affinityReservations = db.select().from(schema.affinityReservations).all()
-  for (const reservation of affinityReservations) {
-    if (!dockerContainerIds.has(reservation.containerId)) {
-      console.log(`[Recovery] Cleaning stale affinity for container ${reservation.containerId}`)
-      db.delete(schema.affinityReservations)
-        .where(eq(schema.affinityReservations.tenantId, reservation.tenantId))
-        .run()
-      stats.staleAffinity++
-    }
-  }
-
-  // 4. Clean expired affinity reservations
+  // 3. Clean expired affinity reservations (reserved containers past their expiry)
+  const now = new Date()
   const expired = db
-    .delete(schema.affinityReservations)
-    .where(lte(schema.affinityReservations.expiresAt, new Date()))
-    .returning({ tenantId: schema.affinityReservations.tenantId })
+    .update(schema.containers)
+    .set({
+      status: 'idle' as ContainerStatus,
+      tenantId: null,
+      affinityExpiresAt: null,
+      claimedAt: null,
+    })
+    .where(
+      and(eq(schema.containers.status, 'reserved'), lte(schema.containers.affinityExpiresAt, now)),
+    )
+    .returning({ containerId: schema.containers.containerId })
     .all()
   stats.expiredAffinity = expired.length
   if (stats.expiredAffinity > 0) {
-    console.log(`[Recovery] Cleaned ${stats.expiredAffinity} expired affinity reservations`)
+    console.log(`[Recovery] Reset ${stats.expiredAffinity} expired affinity reservations to idle`)
   }
 
   console.log(
-    `[Recovery] Complete: docker=${stats.dockerContainers}, staleClaims=${stats.staleClaims}, ` +
-      `staleAffinity=${stats.staleAffinity}, expiredAffinity=${stats.expiredAffinity}`,
+    `[Recovery] Complete: docker=${stats.dockerContainers}, staleContainers=${stats.staleContainers}, ` +
+      `expiredAffinity=${stats.expiredAffinity}`,
   )
 
   return stats
-}
-
-/**
- * Restore pool state from database.
- * Called after basic recovery to set up pool tracking structures.
- */
-export interface PoolRecoveryResult {
-  claimedCount: number
-  affinityCount: number
-  idleCount: number
 }

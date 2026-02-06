@@ -5,25 +5,22 @@
  * Note: Some tests require Docker to be running.
  */
 
-import type { Database } from 'bun:sqlite'
 import { describe, expect, type mock, test } from 'bun:test'
-import type { DrizzleDb } from '@boilerhouse/db'
-import { ContainerManager, ContainerPool, type ContainerRuntime, DEFAULT_SECURITY_CONFIG } from '.'
-import { createTestDb } from '../../test/db'
+import { DEFAULT_SECURITY_CONFIG } from '@boilerhouse/core'
+import { createTestDatabase } from '@boilerhouse/db'
+import type { ContainerRuntime } from '.'
 import { createMockContainerRuntime, createPoolId, createWorkloadSpec } from '../../test/fixtures'
+import { ContainerManager } from './manager'
+import { ContainerPool } from './pool'
 
 function setupTest() {
-  const db = createTestDb()
+  const db = createTestDatabase()
   const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
-  const manager = new ContainerManager(
-    runtime,
-    {
-      stateBaseDir: '/tmp/test-states',
-      secretsBaseDir: '/tmp/test-secrets',
-      socketBaseDir: '/tmp/test-sockets',
-    },
-    db,
-  )
+  const manager = new ContainerManager(runtime, {
+    stateBaseDir: '/tmp/test-states',
+    secretsBaseDir: '/tmp/test-secrets',
+    socketBaseDir: '/tmp/test-sockets',
+  })
   return { db, runtime, manager }
 }
 
@@ -42,81 +39,6 @@ describe('ContainerManager', () => {
 
       expect(id1).not.toBe(id2)
       expect(id1).toMatch(/^[a-z0-9]+-[a-z0-9]+$/)
-    })
-
-    test('claimForTenant updates container state', async () => {
-      const { manager } = setupTest()
-
-      const poolId = createPoolId()
-      const workload = createWorkloadSpec()
-      const container = await manager.createContainer(workload, poolId)
-      expect(container.tenantId).toBeNull()
-
-      await manager.claimForTenant(container.containerId, 'tenant-123', container)
-
-      expect(container.tenantId).toBe('tenant-123')
-      expect(container.status).toBe('claimed')
-    })
-
-    test('getContainerByTenant finds correct container', async () => {
-      const { manager } = setupTest()
-
-      const poolId = createPoolId()
-      const workload = createWorkloadSpec()
-      const container = await manager.createContainer(workload, poolId)
-      await manager.claimForTenant(container.containerId, 'tenant-456', container)
-
-      const found = manager.getContainerByTenant('tenant-456')
-      expect(found?.containerId).toBe(container.containerId)
-
-      const notFound = manager.getContainerByTenant('tenant-999')
-      expect(notFound).toBeNull()
-    })
-
-    test('recordActivity updates claim in DB', async () => {
-      const { manager } = setupTest()
-
-      const poolId = createPoolId()
-      const workload = createWorkloadSpec()
-      const container = await manager.createContainer(workload, poolId)
-      await manager.claimForTenant(container.containerId, 'tenant-activity', container)
-
-      const beforeContainer = manager.getContainerByTenant('tenant-activity')
-      if (!beforeContainer) throw new Error('Expected beforeContainer')
-
-      // Wait a bit
-      await new Promise((resolve) => setTimeout(resolve, 10))
-
-      manager.recordActivity(container.containerId)
-
-      const afterContainer = manager.getContainerByTenant('tenant-activity')
-      if (!afterContainer) throw new Error('Expected afterContainer')
-      expect(afterContainer.lastActivity.getTime()).toBeGreaterThanOrEqual(
-        beforeContainer.lastActivity.getTime(),
-      )
-    })
-
-    test('getStaleContainers returns containers exceeding idle timeout', async () => {
-      const { manager, db } = setupTest()
-
-      const poolId = createPoolId()
-      const workload = createWorkloadSpec()
-      const container = await manager.createContainer(workload, poolId)
-      await manager.claimForTenant(container.containerId, 'tenant-stale', container)
-
-      // Manually update last_activity to the past via raw SQLite client
-      const rawDb = (db as unknown as { $client: Database }).$client
-      rawDb.run('UPDATE claims SET last_activity = ? WHERE container_id = ?', [
-        Date.now() - 60000,
-        container.containerId,
-      ])
-
-      const stale = manager.getStaleContainers(30000) // 30 second timeout
-      expect(stale).toHaveLength(1)
-      expect(stale[0].containerId).toBe(container.containerId)
-
-      const notStale = manager.getStaleContainers(120000) // 2 minute timeout
-      expect(notStale).toHaveLength(0)
     })
 
     test('getRuntime returns the runtime instance', () => {
@@ -150,7 +72,7 @@ describe('ContainerPool', () => {
           minSize: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
-          evictionIntervalMs: 0, // Disable auto-eviction for tests
+          evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
         },
         db,
@@ -230,7 +152,7 @@ describe('ContainerPool', () => {
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
-          affinityTimeoutMs: 60000, // 60 seconds for test
+          affinityTimeoutMs: 60000,
         },
         db,
       )
@@ -341,6 +263,95 @@ describe('ContainerPool', () => {
 
       await pool.drain()
     })
+
+    test('getStats reflects claimed count correctly', async () => {
+      const { manager, db } = setupTest()
+
+      const poolId = createPoolId()
+      const pool = new ContainerPool(
+        manager,
+        {
+          workload: createWorkloadSpec(),
+          poolId,
+          minSize: 0,
+          maxSize: 5,
+          idleTimeoutMs: 60000,
+          evictionIntervalMs: 0,
+          acquireTimeoutMs: 5000,
+        },
+        db,
+      )
+
+      await pool.acquireForTenant('tenant-stats-1')
+      await pool.acquireForTenant('tenant-stats-2')
+
+      const stats = pool.getStats()
+      expect(stats.borrowed).toBe(2)
+      expect(stats.size).toBe(2)
+      expect(stats.available).toBe(0)
+
+      await pool.drain()
+    })
+
+    test('releaseForTenant makes container available via affinity', async () => {
+      const { manager, db } = setupTest()
+
+      const poolId = createPoolId()
+      const pool = new ContainerPool(
+        manager,
+        {
+          workload: createWorkloadSpec(),
+          poolId,
+          minSize: 0,
+          maxSize: 5,
+          idleTimeoutMs: 60000,
+          evictionIntervalMs: 0,
+          acquireTimeoutMs: 5000,
+          affinityTimeoutMs: 60000,
+        },
+        db,
+      )
+
+      await pool.acquireForTenant('tenant-release')
+      const statsBefore = pool.getStats()
+      expect(statsBefore.borrowed).toBe(1)
+
+      await pool.releaseForTenant('tenant-release')
+      const statsAfter = pool.getStats()
+      // Container is reserved, not claimed and not idle
+      expect(statsAfter.borrowed).toBe(0)
+      expect(statsAfter.available).toBe(0)
+      expect(statsAfter.size).toBe(1)
+
+      await pool.drain()
+    })
+
+    test('getAllContainers returns all pool containers', async () => {
+      const { manager, db } = setupTest()
+
+      const poolId = createPoolId()
+      const pool = new ContainerPool(
+        manager,
+        {
+          workload: createWorkloadSpec(),
+          poolId,
+          minSize: 0,
+          maxSize: 5,
+          idleTimeoutMs: 60000,
+          evictionIntervalMs: 0,
+          acquireTimeoutMs: 5000,
+        },
+        db,
+      )
+
+      await pool.acquireForTenant('tenant-all-1')
+      await pool.acquireForTenant('tenant-all-2')
+
+      const allContainers = pool.getAllContainers()
+      expect(allContainers).toHaveLength(2)
+
+      await pool.drain()
+    })
   })
 })
 
@@ -422,8 +433,6 @@ describe('Security Configuration', () => {
 
 describe('ContainerRuntime abstraction', () => {
   test('manager works with any ContainerRuntime implementation', async () => {
-    const db = createTestDb()
-
     // This test verifies that the manager only depends on the interface
     const customRuntime: ContainerRuntime = {
       name: 'custom-runtime',
@@ -444,15 +453,11 @@ describe('ContainerRuntime abstraction', () => {
       exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     }
 
-    const manager = new ContainerManager(
-      customRuntime,
-      {
-        stateBaseDir: '/tmp/test-states',
-        secretsBaseDir: '/tmp/test-secrets',
-        socketBaseDir: '/tmp/test-sockets',
-      },
-      db,
-    )
+    const manager = new ContainerManager(customRuntime, {
+      stateBaseDir: '/tmp/test-states',
+      secretsBaseDir: '/tmp/test-secrets',
+      socketBaseDir: '/tmp/test-sockets',
+    })
 
     expect(manager.getRuntime().name).toBe('custom-runtime')
 
