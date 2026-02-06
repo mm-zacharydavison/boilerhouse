@@ -16,17 +16,7 @@ import type {
   WorkloadSpec,
 } from '@boilerhouse/core'
 import { DockerRuntime } from '@boilerhouse/docker'
-import type { Elysia } from 'elysia'
-import { ActivityLog } from '../lib/activity'
-import { IdleReaper } from '../lib/container/idle-reaper'
-import { ContainerManager } from '../lib/container/manager'
-import { ContainerPool } from '../lib/container/pool'
-import { PoolRegistry } from '../lib/pool/registry'
-import { SyncCoordinator } from '../lib/sync/coordinator'
-import { RcloneSyncExecutor } from '../lib/sync/rclone'
-import { SyncStatusTracker } from '../lib/sync/status'
-import { WorkloadRegistry } from '../lib/workload'
-import { createServer } from '../src/server'
+import { App } from '../src/app'
 import { createTestDb } from './db'
 
 /**
@@ -97,14 +87,8 @@ export interface ExecResult {
  * Integration test harness for API and Docker testing
  */
 export class TestHarness {
-  private _app: ReturnType<typeof createServer> | null = null
+  private _app: App | null = null
   private _runtime: ContainerRuntime | null = null
-  private _manager: ContainerManager | null = null
-  private _poolRegistry: PoolRegistry | null = null
-  private _workloadRegistry: WorkloadRegistry | null = null
-  private _syncCoordinator: SyncCoordinator | null = null
-  private _syncStatusTracker: SyncStatusTracker | null = null
-  private _activityLog: ActivityLog | null = null
   private _baseDir: string
   private _config: TestHarnessConfig
   private _initialized = false
@@ -142,20 +126,7 @@ export class TestHarness {
       this._runtime = createMockRuntime()
     }
 
-    // Create in-memory test DB
-    const db = createTestDb()
-
-    // Create activity log
-    this._activityLog = new ActivityLog(db)
-
-    // Create container manager (no DB dependency — pool owns DB writes)
-    this._manager = new ContainerManager(this._runtime, {
-      stateBaseDir: stateDir,
-      secretsBaseDir: secretsDir,
-      socketBaseDir: socketDir,
-    })
-
-    // Create workload registry and save test workload to file
+    // Write test workload YAML to disk so WorkloadRegistry can load it
     const workload = this._config.workload ?? DEFAULT_TEST_WORKLOAD
     const workloadFile = join(workloadDir, `${workload.id}.yaml`)
     await writeFile(
@@ -184,48 +155,28 @@ healthcheck:
 `,
     )
 
-    this._workloadRegistry = new WorkloadRegistry(workloadDir)
-    this._workloadRegistry.load()
-
-    // Create pool registry
-    this._poolRegistry = new PoolRegistry(
-      this._manager,
-      this._workloadRegistry,
-      this._activityLog,
-      db,
-    )
-
-    // Create sync components
-    const rcloneExecutor = new RcloneSyncExecutor()
-    this._syncStatusTracker = new SyncStatusTracker(db)
-    this._syncCoordinator = new SyncCoordinator(rcloneExecutor, this._syncStatusTracker)
+    // Wire all services via App
+    this._app = new App({
+      runtime: this._runtime,
+      db: createTestDb(),
+      workloadsDir: workloadDir,
+      managerConfig: {
+        stateBaseDir: stateDir,
+        secretsBaseDir: secretsDir,
+        socketBaseDir: socketDir,
+      },
+      runRecovery: false,
+    })
 
     // Create default pool
     const poolConfig = this._config.poolConfig ?? {}
-    this._poolRegistry.createPool('test-pool', workload.id, {
+    this._app.poolRegistry.createPool('test-pool', workload.id, {
       minSize: poolConfig.minSize ?? 0,
       maxSize: poolConfig.maxSize ?? 5,
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? 60000,
       affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 5000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? 1000,
-    } as Parameters<typeof this._poolRegistry.createPool>[2])
-
-    // Create idle reaper (no-op expiry in tests unless overridden)
-    const idleReaper = new IdleReaper({
-      db,
-      onExpiry: async () => {},
-    })
-
-    // Create server
-    this._app = createServer({
-      poolRegistry: this._poolRegistry,
-      containerManager: this._manager,
-      workloadRegistry: this._workloadRegistry,
-      syncCoordinator: this._syncCoordinator,
-      syncStatusTracker: this._syncStatusTracker,
-      activityLog: this._activityLog,
-      idleReaper,
-    })
+    } as Parameters<typeof this._app.poolRegistry.createPool>[2])
 
     this._initialized = true
   }
@@ -238,14 +189,8 @@ healthcheck:
       return
     }
 
-    // Shutdown pool registry (destroys all containers)
-    if (this._poolRegistry) {
-      await this._poolRegistry.shutdown()
-    }
-
-    // Shutdown sync coordinator
-    if (this._syncCoordinator) {
-      await this._syncCoordinator.shutdown()
+    if (this._app) {
+      await this._app.shutdown()
     }
 
     // Clean up base directory
@@ -307,7 +252,7 @@ healthcheck:
       init.body = JSON.stringify(body)
     }
 
-    const response = await this._app.handle(new Request(url, init))
+    const response = await this._app.server.handle(new Request(url, init))
     const data = (await response.json()) as T
 
     return {
@@ -480,7 +425,7 @@ healthcheck:
    * Get pool statistics
    */
   getPoolStats(poolId = 'test-pool') {
-    const pool = this._poolRegistry?.getPool(poolId)
+    const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.getStats() ?? null
   }
 
@@ -488,7 +433,7 @@ healthcheck:
    * Get container for a tenant
    */
   getContainerForTenant(tenantId: TenantId, poolId = 'test-pool'): PoolContainer | undefined {
-    const pool = this._poolRegistry?.getPool(poolId)
+    const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.getContainerForTenant(tenantId)
   }
 
@@ -496,7 +441,7 @@ healthcheck:
    * Check if tenant has an assigned container
    */
   hasTenant(tenantId: TenantId, poolId = 'test-pool'): boolean {
-    const pool = this._poolRegistry?.getPool(poolId)
+    const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.hasTenant(tenantId) ?? false
   }
 
@@ -504,7 +449,7 @@ healthcheck:
    * Get activity log entries
    */
   getActivityLog(limit = 100) {
-    return this._activityLog?.getEvents(limit) ?? []
+    return this._app?.activityLog.getEvents(limit) ?? []
   }
 
   // ==========================================================================
@@ -516,19 +461,24 @@ healthcheck:
     return this._app
   }
 
+  get server() {
+    if (!this._app) throw new Error('Test harness not initialized')
+    return this._app.server
+  }
+
   get runtime(): ContainerRuntime {
     if (!this._runtime) throw new Error('Test harness not initialized')
     return this._runtime
   }
 
-  get manager(): ContainerManager {
-    if (!this._manager) throw new Error('Test harness not initialized')
-    return this._manager
+  get manager() {
+    if (!this._app) throw new Error('Test harness not initialized')
+    return this._app.manager
   }
 
-  get poolRegistry(): PoolRegistry {
-    if (!this._poolRegistry) throw new Error('Test harness not initialized')
-    return this._poolRegistry
+  get poolRegistry() {
+    if (!this._app) throw new Error('Test harness not initialized')
+    return this._app.poolRegistry
   }
 
   get baseDir(): string {

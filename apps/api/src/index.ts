@@ -1,13 +1,7 @@
 import { closeDatabase, initDatabase } from '@boilerhouse/db'
 import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
-import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
-import { ContainerManager, IdleReaper, releaseContainer } from '../lib/container'
-import { PoolRegistry } from '../lib/pool/registry'
-import { recoverState } from '../lib/recovery'
-import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
-import { createWorkloadRegistry } from '../lib/workload'
-import { createServer } from './server'
+import { App } from './app'
 
 /**
  * Parse DOCKER_HOST environment variable into DockerRuntimeConfig.
@@ -67,66 +61,32 @@ const dockerTarget = dockerConfig?.host
   : (dockerConfig?.socketPath ?? '/var/run/docker.sock')
 console.log(`  - Runtime: ${runtime.name} (${dockerTarget})`)
 
-// Run recovery/reconciliation (Docker = truth for existence, DB = truth for domain state)
-const recoveryStats = await recoverState(runtime, db, {
-  labelPrefix: 'boilerhouse',
+// Wire all services
+const app = new App({
+  runtime,
+  db,
+  workloadsDir: config.workloadsDir,
 })
+
 console.log(
-  `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}, ` +
-    `expiredAffinity=${recoveryStats.expiredAffinity}`,
+  `  - Loaded ${app.workloadRegistry.size} workload(s): ${app.workloadRegistry.ids().join(', ') || '(none)'}`,
 )
 
-// Load workloads from YAML files
-const workloadRegistry = createWorkloadRegistry(config.workloadsDir)
-console.log(
-  `  - Loaded ${workloadRegistry.size} workload(s): ${workloadRegistry.ids().join(', ') || '(none)'}`,
-)
+// Run recovery, restore pools and idle reaper watches
+const { recoveryStats } = await app.start()
+if (recoveryStats) {
+  console.log(
+    `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}, ` +
+      `expiredAffinity=${recoveryStats.expiredAffinity}`,
+  )
+}
 
-// Initialize activity log with persistence
-const activityLog = new ActivityLog(db)
-
-// Initialize container manager (no DB dependency — pool owns DB writes)
-const manager = new ContainerManager(runtime, undefined)
-
-// Initialize pool registry
-const poolRegistry = new PoolRegistry(manager, workloadRegistry, activityLog, db)
-
-// Restore pools from DB — pools self-restore idle queue + affinity timeouts from containers table
-const restoredPools = poolRegistry.restoreFromDb()
+const restoredPools = app.poolRegistry.getPools().size
 if (restoredPools > 0) {
   console.log(`  - Restored ${restoredPools} pool(s) from database`)
 }
 
-// Initialize sync components with persistence
-const syncStatusTracker = new SyncStatusTracker(db)
-const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
-const syncCoordinator = new SyncCoordinator(rcloneExecutor, syncStatusTracker, { verbose: true })
-
-// Initialize idle reaper for filesystem-based TTL expiry
-const idleReaper = new IdleReaper({
-  db,
-  onExpiry: async (_containerId, tenantId, poolId) => {
-    const pool = poolRegistry.getPool(poolId)
-    if (!pool) return
-    await releaseContainer(tenantId, pool, { syncCoordinator, activityLog })
-  },
-})
-
-// Restore idle reaper watches for claimed containers from before restart
-idleReaper.restoreFromDb(poolRegistry.getPools(), manager)
-
-// Create and start Elysia server
-const server = createServer({
-  poolRegistry,
-  workloadRegistry,
-  containerManager: manager,
-  syncCoordinator,
-  syncStatusTracker,
-  activityLog,
-  idleReaper,
-})
-
-server.listen({
+app.server.listen({
   hostname: config.apiHost,
   port: config.apiPort,
 })
@@ -135,8 +95,8 @@ console.log(`Boilerhouse API server listening on ${config.apiHost}:${config.apiP
 
 // Watch for workload file changes in development
 if (process.env.NODE_ENV !== 'production') {
-  workloadRegistry.startWatching()
-  workloadRegistry.onChange((event) => {
+  app.workloadRegistry.startWatching()
+  app.workloadRegistry.onChange((event) => {
     switch (event.type) {
       case 'added':
         console.log(`Workload added: ${event.workload.id}`)
@@ -155,10 +115,7 @@ if (process.env.NODE_ENV !== 'production') {
 // Graceful shutdown - preserves containers for recovery on restart
 async function shutdown() {
   console.log('Shutting down...')
-  workloadRegistry.stopWatching()
-  idleReaper.shutdown()
-  await syncCoordinator.shutdown()
-  poolRegistry.shutdown()
+  await app.shutdown()
   closeDatabase(db)
   process.exit(0)
 }
