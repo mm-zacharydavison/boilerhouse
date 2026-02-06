@@ -1,0 +1,97 @@
+/**
+ * Pool Metrics
+ *
+ * Gauges tracking container pool state.
+ */
+
+import { Gauge } from 'prom-client'
+import { registry } from './registry'
+
+const labelNames = ['pool_id', 'workload_id'] as const
+
+export const poolSize = new Gauge({
+  name: 'boilerhouse_pool_size',
+  help: 'Current total containers in pool',
+  labelNames,
+  registers: [registry],
+})
+
+export const poolAvailable = new Gauge({
+  name: 'boilerhouse_pool_available',
+  help: 'Idle containers ready for claim',
+  labelNames,
+  registers: [registry],
+})
+
+export const poolBorrowed = new Gauge({
+  name: 'boilerhouse_pool_borrowed',
+  help: 'Containers assigned to tenants',
+  labelNames,
+  registers: [registry],
+})
+
+export const poolPending = new Gauge({
+  name: 'boilerhouse_pool_pending',
+  help: 'Containers being created or destroyed',
+  labelNames,
+  registers: [registry],
+})
+
+export const poolMinSize = new Gauge({
+  name: 'boilerhouse_pool_min_size',
+  help: 'Configured minimum pool size',
+  labelNames,
+  registers: [registry],
+})
+
+export const poolMaxSize = new Gauge({
+  name: 'boilerhouse_pool_max_size',
+  help: 'Configured maximum pool size',
+  labelNames,
+  registers: [registry],
+})
+
+// Affinity metrics
+export const affinityReservations = new Gauge({
+  name: 'boilerhouse_affinity_reservations',
+  help: 'Current affinity reservations held',
+  labelNames: ['pool_id'],
+  registers: [registry],
+})
+
+/**
+ * Update all pool metrics for a given pool.
+ * Call this after any pool state change.
+ */
+export function updatePoolMetrics(stats: {
+  poolId: string
+  workloadId: string
+  size: number
+  available: number
+  borrowed: number
+  pending: number
+  min: number
+  max: number
+}): void {
+  const labels = { pool_id: stats.poolId, workload_id: stats.workloadId }
+  poolSize.set(labels, stats.size)
+  poolAvailable.set(labels, stats.available)
+  poolBorrowed.set(labels, stats.borrowed)
+  poolPending.set(labels, stats.pending)
+  poolMinSize.set(labels, stats.min)
+  poolMaxSize.set(labels, stats.max)
+}
+
+/**
+ * Remove metrics for a pool that has been destroyed.
+ */
+export function removePoolMetrics(poolId: string, workloadId: string): void {
+  const labels = { pool_id: poolId, workload_id: workloadId }
+  poolSize.remove(labels)
+  poolAvailable.remove(labels)
+  poolBorrowed.remove(labels)
+  poolPending.remove(labels)
+  poolMinSize.remove(labels)
+  poolMaxSize.remove(labels)
+  affinityReservations.remove({ pool_id: poolId })
+}

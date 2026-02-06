@@ -8,6 +8,7 @@ import { cors } from '@elysiajs/cors'
 import { Elysia } from 'elysia'
 import type { ActivityLog } from '../lib/activity'
 import type { ContainerManager } from '../lib/container'
+import { httpMetricsMiddleware } from '../lib/metrics'
 import type { PoolRegistry } from '../lib/pool/registry'
 import type { SyncCoordinator } from '../lib/sync'
 import type { SyncStatusTracker } from '../lib/sync/status'
@@ -15,6 +16,7 @@ import type { WorkloadRegistry } from '../lib/workload'
 import {
   containersController,
   healthController,
+  metricsController,
   poolsController,
   syncController,
   tenantsController,
@@ -48,6 +50,8 @@ export function createServer(deps: ServerDependencies) {
 
   return new Elysia()
     .use(cors())
+    .use(httpMetricsMiddleware)
+    .use(metricsController())
     .use(healthController({ poolRegistry, syncStatusTracker, activityLog }))
     .use(workloadsController({ workloadRegistry }))
     .use(poolsController({ poolRegistry }))

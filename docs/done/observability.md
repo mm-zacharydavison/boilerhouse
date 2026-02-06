@@ -207,6 +207,10 @@ export function updatePoolMetrics(pool: ContainerPool): void {
 
 ### Histogram Buckets
 
+Histogram buckets are defined in Prometheus metrics (not Grafana) because Prometheus histograms work by counting observations into pre-defined buckets at scrape time. Each observation increments the count for all buckets where the value is ≤ the bucket boundary. Grafana then uses PromQL's `histogram_quantile()` to calculate percentiles from these pre-bucketed counts.
+
+Bucket boundaries must be chosen based on expected value distributions:
+
 Use appropriate bucket sizes for different operations:
 
 ```typescript
@@ -395,30 +399,65 @@ groups:
 
 ## Grafana Dashboard
 
-A Grafana dashboard JSON can be generated to visualize:
+Three sections (Pools, Containers, Syncs) using table panels where each row is a pool/container.
 
-**Row 1: Overview**
-- Total pools (stat)
-- Total containers (stat)
-- Active containers (stat)
-- Idle containers (stat)
-- Overall utilization % (gauge)
+### Template Variables
 
-**Row 2: Pool Details**
-- Pool size by pool (time series)
-- Pool utilization by pool (time series)
-- Container acquisition latency p50/p95/p99 (time series)
+- `$pool_id` — multi-select dropdown from `label_values(boilerhouse_pool_size, pool_id)`
+- `$workload_id` — multi-select dropdown from `label_values(boilerhouse_pool_size, workload_id)`
 
-**Row 3: Sync Operations**
-- Sync operations/minute by direction (time series)
-- Sync duration by workload (heatmap)
-- Sync errors by type (time series)
-- Bytes transferred (time series)
+### Section 1: Pools
 
-**Row 4: API Performance**
-- Request rate by endpoint (time series)
-- Request latency by endpoint (heatmap)
-- Error rate by endpoint (time series)
+Table panel — one row per pool.
+
+| Column           | Query                                                                                                                                        |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| Pool ID          | `pool_id` label                                                                                                                              |
+| Workload         | `workload_id` label                                                                                                                          |
+| Total            | `boilerhouse_pool_size{pool_id=~"$pool_id"}`                                                                                                 |
+| Min              | `boilerhouse_pool_min_size{pool_id=~"$pool_id"}`                                                                                             |
+| Max              | `boilerhouse_pool_max_size{pool_id=~"$pool_id"}`                                                                                             |
+| Claimed          | `boilerhouse_pool_borrowed{pool_id=~"$pool_id"}`                                                                                             |
+| Idle             | `boilerhouse_pool_available{pool_id=~"$pool_id"}`                                                                                            |
+| Utilization %    | `boilerhouse_pool_borrowed{pool_id=~"$pool_id"} / boilerhouse_pool_size{pool_id=~"$pool_id"} * 100`                                          |
+| Affinity Hit %   | `rate(boilerhouse_affinity_hits_total{pool_id=~"$pool_id"}[5m]) / (rate(boilerhouse_affinity_hits_total[5m]) + rate(boilerhouse_affinity_misses_total[5m])) * 100` |
+
+### Section 2: Containers
+
+Table panel — one row per pool, showing container lifecycle operation metrics.
+
+| Column              | Query                                                                                                                              |
+|---------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| Pool ID             | `pool_id` label                                                                                                                    |
+| Acquire p50 (s)     | `histogram_quantile(0.5, rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                     |
+| Acquire p95 (s)     | `histogram_quantile(0.95, rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                    |
+| Release p50 (s)     | `histogram_quantile(0.5, rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                     |
+| Release p95 (s)     | `histogram_quantile(0.95, rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                    |
+| Create p50 (s)      | `histogram_quantile(0.5, rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                      |
+| Create p95 (s)      | `histogram_quantile(0.95, rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~"$pool_id"}[5m]))`                     |
+| Creates/min         | `rate(boilerhouse_container_operations_total{pool_id=~"$pool_id", operation="create", status="success"}[5m]) * 60`                  |
+| Destroys/min        | `rate(boilerhouse_container_operations_total{pool_id=~"$pool_id", operation="destroy", status="success"}[5m]) * 60`                 |
+| Wipes/min           | `rate(boilerhouse_container_operations_total{pool_id=~"$pool_id", operation="wipe", status="success"}[5m]) * 60`                    |
+| Health Failures/min | `rate(boilerhouse_container_health_check_failures_total{pool_id=~"$pool_id"}[5m]) * 60`                                             |
+
+### Section 3: Syncs
+
+Table panel — one row per workload, showing sync throughput and health.
+
+| Column             | Query                                                                                                                |
+|--------------------|----------------------------------------------------------------------------------------------------------------------|
+| Workload           | `workload_id` label                                                                                                  |
+| Ops/min (upload)   | `rate(boilerhouse_sync_operations_total{workload_id=~"$workload_id", direction="upload"}[5m]) * 60`                   |
+| Ops/min (download) | `rate(boilerhouse_sync_operations_total{workload_id=~"$workload_id", direction="download"}[5m]) * 60`                 |
+| Ops/min (bidir)    | `rate(boilerhouse_sync_operations_total{workload_id=~"$workload_id", direction="bidirectional"}[5m]) * 60`            |
+| Duration p50 (s)   | `histogram_quantile(0.5, rate(boilerhouse_sync_duration_seconds_bucket{workload_id=~"$workload_id"}[5m]))`            |
+| Duration p95 (s)   | `histogram_quantile(0.95, rate(boilerhouse_sync_duration_seconds_bucket{workload_id=~"$workload_id"}[5m]))`           |
+| Bytes/s            | `rate(boilerhouse_sync_bytes_transferred_total{workload_id=~"$workload_id"}[5m])`                                     |
+| Files/min          | `rate(boilerhouse_sync_files_transferred_total{workload_id=~"$workload_id"}[5m]) * 60`                                |
+| Active Syncs       | `boilerhouse_sync_concurrent_operations{workload_id=~"$workload_id"}`                                                 |
+| Queued             | `boilerhouse_sync_queue_length{workload_id=~"$workload_id"}`                                                          |
+| Errors/min         | `rate(boilerhouse_sync_errors_total{workload_id=~"$workload_id"}[5m]) * 60`                                           |
+| Bisync Resyncs/min | `rate(boilerhouse_sync_bisync_resync_total{workload_id=~"$workload_id"}[5m]) * 60`                                    |
 
 ## Tasks
 
@@ -503,3 +542,67 @@ Following Prometheus best practices:
 - **Push gateway**: For short-lived containers or batch jobs, consider Prometheus Pushgateway
 - **OpenTelemetry**: Consider migrating to OpenTelemetry for unified metrics/traces/logs
 - **Exemplars**: Add trace ID exemplars to histograms for correlation with distributed tracing
+
+## Structured Logging
+
+Complement metrics with structured logging for debugging and audit trails.
+
+### Library: @boilerhouse/logger or Elysia Logger Plugin
+
+Use `@elysiajs/logger` or a custom logger with JSON output:
+
+```typescript
+// apps/api/lib/logger.ts
+import { Elysia } from 'elysia'
+
+export const logger = new Elysia()
+  .onRequest(({ request }) => {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'request_start',
+      method: request.method,
+      path: new URL(request.url).pathname,
+      timestamp: new Date().toISOString(),
+    }))
+  })
+  .onAfterResponse(({ request, response, store }) => {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'request_end',
+      method: request.method,
+      path: new URL(request.url).pathname,
+      status: response.status,
+      duration_ms: performance.now() - store.requestStart,
+      timestamp: new Date().toISOString(),
+    }))
+  })
+```
+
+### Log Events
+
+| Event                      | Level | Fields                                           |
+|----------------------------|-------|--------------------------------------------------|
+| `container_acquired`       | info  | `tenant_id`, `container_id`, `pool_id`           |
+| `container_released`       | info  | `tenant_id`, `container_id`, `pool_id`           |
+| `container_created`        | info  | `container_id`, `pool_id`, `workload_id`         |
+| `container_destroyed`      | info  | `container_id`, `pool_id`, `reason`              |
+| `sync_started`             | info  | `tenant_id`, `direction`, `mode`                 |
+| `sync_completed`           | info  | `tenant_id`, `direction`, `bytes`, `files`, `duration_ms` |
+| `sync_failed`              | error | `tenant_id`, `direction`, `error`, `stderr`      |
+| `pool_scaled`              | info  | `pool_id`, `old_size`, `new_size`, `reason`      |
+| `health_check_failed`      | warn  | `container_id`, `pool_id`, `error`               |
+
+### Configuration
+
+| Variable                   | Default | Description                        |
+|----------------------------|---------|-----------------------------------|
+| `BOILERHOUSE_LOG_LEVEL`    | `info`  | Minimum log level (debug/info/warn/error) |
+| `BOILERHOUSE_LOG_FORMAT`   | `json`  | Output format (json/pretty)        |
+
+### Tasks
+
+- [ ] Add structured logger module to `apps/api/lib/logger.ts`
+- [ ] Integrate logger middleware with Elysia app
+- [ ] Add log events to ContainerPool lifecycle methods
+- [ ] Add log events to SyncCoordinator operations
+- [ ] Document log event schemas

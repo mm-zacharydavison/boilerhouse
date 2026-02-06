@@ -1,0 +1,761 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource for Boilerhouse metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Pools",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Pool Status",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_size{pool_id=~\"$pool_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_min_size{pool_id=~\"$pool_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_max_size{pool_id=~\"$pool_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_borrowed{pool_id=~\"$pool_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_available{pool_id=~\"$pool_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_pool_borrowed{pool_id=~\"$pool_id\"} / boilerhouse_pool_size{pool_id=~\"$pool_id\"} * 100",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "rate(boilerhouse_affinity_hits_total{pool_id=~\"$pool_id\"}[$__rate_interval]) / (rate(boilerhouse_affinity_hits_total{pool_id=~\"$pool_id\"}[$__rate_interval]) + rate(boilerhouse_affinity_misses_total{pool_id=~\"$pool_id\"}[$__rate_interval])) * 100",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "pool_id": { "operation": "groupby", "aggregations": [] },
+              "workload_id": { "operation": "groupby", "aggregations": [] },
+              "Value #A": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #B": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #C": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #D": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #E": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #F": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #G": { "operation": "aggregate", "aggregations": ["lastNotNull"] }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "pool_id": 0,
+              "workload_id": 1,
+              "Value #A (lastNotNull)": 2,
+              "Value #B (lastNotNull)": 3,
+              "Value #C (lastNotNull)": 4,
+              "Value #D (lastNotNull)": 5,
+              "Value #E (lastNotNull)": 6,
+              "Value #F (lastNotNull)": 7,
+              "Value #G (lastNotNull)": 8
+            },
+            "renameByName": {
+              "pool_id": "Pool ID",
+              "workload_id": "Workload",
+              "Value #A (lastNotNull)": "Total",
+              "Value #B (lastNotNull)": "Min",
+              "Value #C (lastNotNull)": "Max",
+              "Value #D (lastNotNull)": "Claimed",
+              "Value #E (lastNotNull)": "Idle",
+              "Value #F (lastNotNull)": "Utilization %",
+              "Value #G (lastNotNull)": "Affinity Hit %"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Utilization %" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 80 },
+                    { "color": "red", "value": 90 }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "basic" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Affinity Hit %" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Total" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Min" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Max" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Claimed" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Idle" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Containers",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 3,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Container Operations",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_acquire_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_release_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.5, sum by (pool_id, le) (rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.95, sum by (pool_id, le) (rate(boilerhouse_container_create_duration_seconds_bucket{pool_id=~\"$pool_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"create\", status=\"success\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "H",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"destroy\", status=\"success\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "I",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (pool_id) (rate(boilerhouse_container_operations_total{pool_id=~\"$pool_id\", operation=\"wipe\", status=\"success\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "J",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (pool_id) (rate(boilerhouse_container_health_check_failures_total{pool_id=~\"$pool_id\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "pool_id": { "operation": "groupby", "aggregations": [] },
+              "Value #A": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #B": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #C": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #D": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #E": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #F": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #G": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #H": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #I": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #J": { "operation": "aggregate", "aggregations": ["lastNotNull"] }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "pool_id": 0,
+              "Value #A (lastNotNull)": 1,
+              "Value #B (lastNotNull)": 2,
+              "Value #C (lastNotNull)": 3,
+              "Value #D (lastNotNull)": 4,
+              "Value #E (lastNotNull)": 5,
+              "Value #F (lastNotNull)": 6,
+              "Value #G (lastNotNull)": 7,
+              "Value #H (lastNotNull)": 8,
+              "Value #I (lastNotNull)": 9,
+              "Value #J (lastNotNull)": 10
+            },
+            "renameByName": {
+              "pool_id": "Pool ID",
+              "Value #A (lastNotNull)": "Acquire p50",
+              "Value #B (lastNotNull)": "Acquire p95",
+              "Value #C (lastNotNull)": "Release p50",
+              "Value #D (lastNotNull)": "Release p95",
+              "Value #E (lastNotNull)": "Create p50",
+              "Value #F (lastNotNull)": "Create p95",
+              "Value #G (lastNotNull)": "Creates/min",
+              "Value #H (lastNotNull)": "Destroys/min",
+              "Value #I (lastNotNull)": "Wipes/min",
+              "Value #J (lastNotNull)": "Health Failures/min"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Acquire p50" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Acquire p95" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Release p50" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Release p95" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Create p50" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Create p95" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Creates/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Destroys/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Wipes/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Health Failures/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1 }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "basic" }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Syncs",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 5,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Sync Operations",
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"upload\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"download\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_operations_total{workload_id=~\"$workload_id\", direction=\"bidirectional\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.5, sum by (workload_id, le) (rate(boilerhouse_sync_duration_seconds_bucket{workload_id=~\"$workload_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "histogram_quantile(0.95, sum by (workload_id, le) (rate(boilerhouse_sync_duration_seconds_bucket{workload_id=~\"$workload_id\"}[$__rate_interval])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "F",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_bytes_transferred_total{workload_id=~\"$workload_id\"}[$__rate_interval]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "G",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_files_transferred_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "H",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_sync_concurrent_operations{workload_id=~\"$workload_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "I",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "boilerhouse_sync_queue_length{workload_id=~\"$workload_id\"}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "J",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_errors_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "K",
+          "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+          "expr": "sum by (workload_id) (rate(boilerhouse_sync_bisync_resync_total{workload_id=~\"$workload_id\"}[$__rate_interval])) * 60",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "workload_id": { "operation": "groupby", "aggregations": [] },
+              "Value #A": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #B": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #C": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #D": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #E": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #F": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #G": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #H": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #I": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #J": { "operation": "aggregate", "aggregations": ["lastNotNull"] },
+              "Value #K": { "operation": "aggregate", "aggregations": ["lastNotNull"] }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "workload_id": 0,
+              "Value #A (lastNotNull)": 1,
+              "Value #B (lastNotNull)": 2,
+              "Value #C (lastNotNull)": 3,
+              "Value #D (lastNotNull)": 4,
+              "Value #E (lastNotNull)": 5,
+              "Value #F (lastNotNull)": 6,
+              "Value #G (lastNotNull)": 7,
+              "Value #H (lastNotNull)": 8,
+              "Value #I (lastNotNull)": 9,
+              "Value #J (lastNotNull)": 10,
+              "Value #K (lastNotNull)": 11
+            },
+            "renameByName": {
+              "workload_id": "Workload",
+              "Value #A (lastNotNull)": "Ops/min (upload)",
+              "Value #B (lastNotNull)": "Ops/min (download)",
+              "Value #C (lastNotNull)": "Ops/min (bidir)",
+              "Value #D (lastNotNull)": "Duration p50",
+              "Value #E (lastNotNull)": "Duration p95",
+              "Value #F (lastNotNull)": "Bytes/s",
+              "Value #G (lastNotNull)": "Files/min",
+              "Value #H (lastNotNull)": "Active Syncs",
+              "Value #I (lastNotNull)": "Queued",
+              "Value #J (lastNotNull)": "Errors/min",
+              "Value #K (lastNotNull)": "Bisync Resyncs/min"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Duration p50" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Duration p95" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Bytes/s" },
+            "properties": [
+              { "id": "unit", "value": "Bps" },
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Ops/min (upload)" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Ops/min (download)" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Ops/min (bidir)" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Files/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Active Syncs" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Queued" },
+            "properties": [
+              { "id": "decimals", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Errors/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1 }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "basic" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Bisync Resyncs/min" },
+            "properties": [
+              { "id": "decimals", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["boilerhouse"],
+  "templating": {
+    "list": [
+      {
+        "name": "pool_id",
+        "label": "Pool",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+        "query": "label_values(boilerhouse_pool_size, pool_id)",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "workload_id",
+        "label": "Workload",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
+        "query": "label_values(boilerhouse_pool_size, workload_id)",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Boilerhouse",
+  "uid": "boilerhouse-overview",
+  "version": 1
+}

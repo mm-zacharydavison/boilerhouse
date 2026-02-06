@@ -6,6 +6,7 @@
 
 export { containersController, type ContainersControllerDeps } from './containers'
 export { healthController, type HealthControllerDeps } from './health'
+export { metricsController } from './metrics'
 export { poolsController, type PoolsControllerDeps } from './pools'
 export { syncController, type SyncControllerDeps } from './sync'
 export { tenantsController, type TenantsControllerDeps } from './tenants'

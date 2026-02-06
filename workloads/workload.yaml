@@ -1,0 +1,96 @@
+id: openclaw
+name: OpenClaw Agent
+image: ghcr.io/openclaw/openclaw:latest
+
+volumes:
+  state:
+    target: /home/node/.openclaw    # OpenClaw's default state directory
+  secrets:
+    target: /secrets
+    read_only: true
+
+# OpenClaw gateway configuration
+environment:
+  NODE_ENV: production
+  HOME: /home/node
+  TERM: xterm-256color
+  # Gateway binding - use 'lan' for container access from host
+  OPENCLAW_GATEWAY_BIND: lan
+  # Gateway token for auth (set to a dummy value for dev)
+  OPENCLAW_GATEWAY_TOKEN: dev-token
+  # Note: API keys should be injected per-tenant via secrets mount
+
+# Override default command to run gateway on default port
+command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--allow-unconfigured"]
+
+# Health check via HTTP GET to canvas endpoint (gateway is WebSocket, not HTTP)
+healthcheck:
+  test: ["CMD", "curl", "-sf", "http://localhost:18789/__openclaw__/canvas/"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 10s
+
+# Expose the gateway port
+ports:
+  - container: 18789
+    protocol: tcp
+
+deploy:
+  resources:
+    limits:
+      cpus: "2"
+      memory: 2G
+
+# Security (OpenClaw runs as 'node' user by default)
+read_only: false   # OpenClaw needs to write to ~/.openclaw
+user: "1000"       # 'node' user UID
+network_mode: bridge
+
+pool:
+  min_size: 2
+  max_size: 20
+  idle_timeout: 10m
+
+# Sync state to MinIO (local S3-compatible storage)
+sync:
+  sink:
+    type: s3
+    bucket: boilerhouse
+    region: us-east-1                        # Required but ignored by MinIO
+    endpoint: http://localhost:9000  # MinIO (sync runs from host, not inside container)
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    prefix: tenants/${tenantId}/             # Each tenant gets isolated prefix
+    rclone_flags:
+      - "--s3-force-path-style"              # Required for MinIO
+
+  mappings:
+    # Paths are relative to the state volume mount (mounted at /home/node/.openclaw)
+    # So "/" syncs everything in the .openclaw directory
+
+    # Credentials - OAuth tokens and API keys (CRITICAL)
+    - path: credentials
+      direction: bidirectional
+      mode: sync
+
+    # Agent data - sessions, memory, auth profiles (CRITICAL)
+    - path: agents
+      direction: bidirectional
+      mode: sync
+
+    # Workspace - SOUL.md, USER.md, MEMORY.md, etc. (IMPORTANT)
+    - path: workspace
+      direction: bidirectional
+      mode: sync
+
+    # Main config file (IMPORTANT)
+    - path: /
+      pattern: "openclaw.json"
+      direction: bidirectional
+      mode: sync
+
+  policy:
+    on_claim: true      # Download tenant state when claiming
+    on_release: true    # Upload tenant state when releasing
+    manual: true        # Allow manual sync via API

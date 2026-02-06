@@ -45,6 +45,41 @@ services:
     networks:
       - boilerhouse-internal
 
+  # Prometheus - scrapes /metrics from Boilerhouse
+  # extra_hosts maps 'boilerhouse' to the host so the same prometheus.yml
+  # works for both local dev (API on host) and the deploy example (API in container)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "boilerhouse:host-gateway"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - boilerhouse-internal
+    restart: unless-stopped
+
+  # Grafana - dashboard UI at http://localhost:3001
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/boilerhouse.json:/var/lib/grafana/dashboards/boilerhouse.json:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - boilerhouse-internal
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 networks:
   # Internal network for API <-> Redis communication
   boilerhouse-internal:
@@ -61,3 +96,6 @@ volumes:
   redis-data:
   # MinIO data
   minio-data:
+  # Monitoring
+  prometheus-data:
+  grafana-data:

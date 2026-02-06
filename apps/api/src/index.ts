@@ -1,5 +1,5 @@
 import { closeDatabase, initDatabase, schema } from '@boilerhouse/db'
-import { DockerRuntime } from '@boilerhouse/docker'
+import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
 import { gt } from 'drizzle-orm'
 import { ActivityLog } from '../lib/activity'
 import { config } from '../lib/config'
@@ -9,6 +9,43 @@ import { recoverState } from '../lib/recovery'
 import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
 import { createWorkloadRegistry } from '../lib/workload'
 import { createServer } from './server'
+
+/**
+ * Parse DOCKER_HOST environment variable into DockerRuntimeConfig.
+ *
+ * Supports:
+ * - tcp://host:port → { host, port }
+ * - unix:///path → { socketPath }
+ * - unset → undefined (uses default /var/run/docker.sock)
+ */
+function parseDockerHost(dockerHost: string | undefined): DockerRuntimeConfig | undefined {
+  if (!dockerHost) {
+    return undefined
+  }
+
+  if (dockerHost.startsWith('tcp://')) {
+    const url = new URL(dockerHost)
+    return {
+      host: url.hostname,
+      port: url.port ? Number.parseInt(url.port, 10) : 2375,
+    }
+  }
+
+  if (dockerHost.startsWith('unix://')) {
+    return {
+      socketPath: dockerHost.slice('unix://'.length),
+    }
+  }
+
+  // Treat as socket path if it starts with /
+  if (dockerHost.startsWith('/')) {
+    return { socketPath: dockerHost }
+  }
+
+  throw new Error(
+    `Invalid DOCKER_HOST: ${dockerHost}. Expected tcp://host:port, unix:///path, or /path`,
+  )
+}
 
 console.log('Starting Boilerhouse API server...')
 console.log('Configuration:')
@@ -21,9 +58,15 @@ console.log(`  - Database: ${config.dbPath}`)
 // Initialize SQLite database with WAL mode
 const db = initDatabase({ path: config.dbPath })
 
-// Initialize container runtime
-const runtime = new DockerRuntime()
-console.log(`  - Runtime: ${runtime.name}`)
+// Initialize container runtime with optional DOCKER_HOST configuration
+const dockerConfig = parseDockerHost(process.env.DOCKER_HOST)
+const runtime = new DockerRuntime(dockerConfig)
+
+// Log Docker connection target
+const dockerTarget = dockerConfig?.host
+  ? `tcp://${dockerConfig.host}:${dockerConfig.port ?? 2375}`
+  : (dockerConfig?.socketPath ?? '/var/run/docker.sock')
+console.log(`  - Runtime: ${runtime.name} (${dockerTarget})`)
 
 // Run recovery/reconciliation (Docker = truth for existence, DB = truth for domain state)
 const recoveryStats = await recoverState(runtime, db, {
