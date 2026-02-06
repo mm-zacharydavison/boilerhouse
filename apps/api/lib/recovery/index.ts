@@ -3,25 +3,22 @@
  *
  * Reconciles DB state with Docker runtime on startup.
  * Docker is the source of truth for container existence.
- * DB is the source of truth for domain state (status, affinity, claims).
+ * DB is the source of truth for domain state (status, claims).
  *
  * Flow:
  * 1. List Docker containers with managed label (Docker = truth for existence)
  * 2. Clean up container rows for containers NOT in Docker (stale rows)
- * 3. Clean up expired affinity reservations
  */
 
-import type { ContainerRuntime, ContainerStatus } from '@boilerhouse/core'
+import type { ContainerRuntime } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
-import { and, eq, lte } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
 export interface RecoveryStats {
   /** Docker containers found with managed label */
   dockerContainers: number
   /** Stale container rows cleaned (container not in Docker) */
   staleContainers: number
-  /** Affinity reservations cleaned (expired) */
-  expiredAffinity: number
 }
 
 export interface RecoveryConfig {
@@ -40,7 +37,6 @@ export async function recoverState(
   const stats: RecoveryStats = {
     dockerContainers: 0,
     staleContainers: 0,
-    expiredAffinity: 0,
   }
 
   console.log('[Recovery] Starting state recovery...')
@@ -77,29 +73,8 @@ export async function recoverState(
     }
   }
 
-  // 3. Clean expired affinity reservations (reserved containers past their expiry)
-  const now = new Date()
-  const expired = db
-    .update(schema.containers)
-    .set({
-      status: 'idle' as ContainerStatus,
-      tenantId: null,
-      affinityExpiresAt: null,
-      claimedAt: null,
-    })
-    .where(
-      and(eq(schema.containers.status, 'reserved'), lte(schema.containers.affinityExpiresAt, now)),
-    )
-    .returning({ containerId: schema.containers.containerId })
-    .all()
-  stats.expiredAffinity = expired.length
-  if (stats.expiredAffinity > 0) {
-    console.log(`[Recovery] Reset ${stats.expiredAffinity} expired affinity reservations to idle`)
-  }
-
   console.log(
-    `[Recovery] Complete: docker=${stats.dockerContainers}, staleContainers=${stats.staleContainers}, ` +
-      `expiredAffinity=${stats.expiredAffinity}`,
+    `[Recovery] Complete: docker=${stats.dockerContainers}, staleContainers=${stats.staleContainers}`,
   )
 
   return stats

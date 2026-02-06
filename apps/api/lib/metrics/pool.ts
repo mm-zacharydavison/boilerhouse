@@ -80,14 +80,6 @@ export const idleReaperResets = new Counter({
   registers: [registry],
 })
 
-// Affinity metrics
-export const affinityReservations = new Gauge({
-  name: 'boilerhouse_affinity_reservations',
-  help: 'Current affinity reservations held',
-  labelNames: ['pool_id'],
-  registers: [registry],
-})
-
 /**
  * Update all pool metrics for a given pool.
  * Call this after any pool state change.
@@ -122,5 +114,4 @@ export function removePoolMetrics(poolId: string, workloadId: string): void {
   poolPending.remove(labels)
   poolMinSize.remove(labels)
   poolMaxSize.remove(labels)
-  affinityReservations.remove({ pool_id: poolId })
 }

@@ -61,13 +61,13 @@ export const containers = sqliteTable(
     containerId: text('container_id').$type<ContainerId>().primaryKey(),
     poolId: text('pool_id').$type<PoolId>().notNull(),
     status: text('status', {
-      enum: ['idle', 'claimed', 'reserved', 'stopping'],
+      enum: ['idle', 'claimed', 'stopping'],
     }).notNull(),
     tenantId: text('tenant_id').$type<TenantId>(),
+    lastTenantId: text('last_tenant_id').$type<TenantId>(),
     lastActivity: timestamp('last_activity').notNull(),
     claimedAt: timestamp('claimed_at'),
     idleExpiresAt: timestamp('idle_expires_at'),
-    affinityExpiresAt: timestamp('affinity_expires_at'),
     createdAt: timestamp('created_at')
       .notNull()
       .$defaultFn(() => new Date()),
@@ -88,7 +88,6 @@ export const pools = sqliteTable('pools', {
   evictionIntervalMs: integer('eviction_interval_ms').notNull(),
   acquireTimeoutMs: integer('acquire_timeout_ms').notNull(),
   networks: jsonStringArray('networks'),
-  affinityTimeoutMs: integer('affinity_timeout_ms').notNull(),
   fileIdleTtl: integer('file_idle_ttl'),
   createdAt: timestamp('created_at')
     .notNull()

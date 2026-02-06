@@ -4,6 +4,10 @@
  * Manages a pool of pre-warmed containers with DB as the single source of truth.
  * No external pooling library — uses an in-memory idle queue backed by the
  * `containers` table and a background fill loop to maintain minimum idle count.
+ *
+ * Uses wipe-on-entry: released containers go back to idle with `lastTenantId`
+ * preserved. On acquire, if the same tenant reclaims → no wipe. If a different
+ * tenant claims → wipe first.
  */
 
 import type {
@@ -15,13 +19,10 @@ import type {
   WorkloadSpec,
 } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
-import { and, count, eq, gt } from 'drizzle-orm'
+import { and, count, eq } from 'drizzle-orm'
 import { config } from '../config'
 import {
-  affinityEvictionsTotal,
   affinityHitsTotal,
-  affinityMissesTotal,
-  affinityReservations,
   containerAcquireDuration,
   containerCreateDuration,
   containerDestroyDuration,
@@ -60,9 +61,6 @@ export interface ContainerPoolConfig {
   /** Optional Docker networks override */
   networks?: string[]
 
-  /** Time to keep a released container reserved for the same tenant before returning to pool */
-  affinityTimeoutMs: number
-
   /** Filesystem inactivity timeout (ms) before auto-releasing a claimed container */
   fileIdleTtl?: number
 }
@@ -81,21 +79,12 @@ export interface PoolError {
   timestamp: Date
 }
 
-/** Result of acquiring a container, includes affinity match info */
-export interface AcquireResult {
-  container: PoolContainer
-  /** True if this tenant is returning to their previous container (state intact) */
-  isAffinityMatch: boolean
-}
-
 export class ContainerPool {
   private manager: ContainerManager
   private poolConfig: ContainerPoolConfig
   private db: DrizzleDb
   /** In-memory queue of idle container IDs for fast acquire */
   private idleQueue: ContainerId[] = []
-  /** Timeouts to return affinity containers to pool */
-  private affinityTimeouts: Map<TenantId, ReturnType<typeof setTimeout>> = new Map()
   /** Background fill loop timer */
   private fillLoopInterval: ReturnType<typeof setInterval> | null = null
   private _lastError: PoolError | null = null
@@ -116,7 +105,6 @@ export class ContainerPool {
       evictionIntervalMs: poolConfig.evictionIntervalMs ?? 30000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? config.pool.containerStartTimeoutMs,
       networks: poolConfig.networks,
-      affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 0,
       fileIdleTtl: poolConfig.fileIdleTtl,
     }
 
@@ -125,10 +113,9 @@ export class ContainerPool {
   }
 
   /**
-   * Load idle containers and affinity reservations from DB into in-memory structures.
+   * Load idle containers from DB into in-memory idle queue.
    */
   private loadFromDb(): void {
-    // Restore idle queue
     const idleRows = this.db
       .select({ containerId: schema.containers.containerId })
       .from(schema.containers)
@@ -142,36 +129,7 @@ export class ContainerPool {
 
     this.idleQueue = idleRows.map((r) => r.containerId)
 
-    // Restore affinity timeouts
-    const now = new Date()
-    const reservedRows = this.db
-      .select()
-      .from(schema.containers)
-      .where(
-        and(
-          eq(schema.containers.poolId, this.poolConfig.poolId),
-          eq(schema.containers.status, 'reserved'),
-          gt(schema.containers.affinityExpiresAt, now),
-        ),
-      )
-      .all()
-
-    for (const row of reservedRows) {
-      if (!row.tenantId || !row.affinityExpiresAt) continue
-      const remainingMs = row.affinityExpiresAt.getTime() - Date.now()
-      if (remainingMs > 0) {
-        this.startAffinityTimeout(row.tenantId, row.containerId, remainingMs)
-      } else {
-        // Already expired, flush to idle
-        this.flushAffinityToIdle(row.containerId).catch((err) => {
-          console.error(`[Pool] Failed to flush expired affinity for ${row.tenantId}:`, err)
-        })
-      }
-    }
-
-    console.log(
-      `[Pool ${this.poolConfig.poolId}] Loaded ${this.idleQueue.length} idle, ${reservedRows.length} reserved from DB`,
-    )
+    console.log(`[Pool ${this.poolConfig.poolId}] Loaded ${this.idleQueue.length} idle from DB`)
   }
 
   /**
@@ -179,11 +137,11 @@ export class ContainerPool {
    *
    * Priority:
    * 1. If tenant already has a claimed container (from DB), returns it
-   * 2. If tenant has an affinity container (their previous container), returns it
-   * 3. Otherwise, pops from idle queue
+   * 2. If an idle container has lastTenantId matching this tenant, claim without wipe
+   * 3. Otherwise, pops from idle queue, wipes, then claims
    * 4. If queue empty and under maxSize, creates on demand
    */
-  async acquireForTenant(tenantId: TenantId): Promise<AcquireResult> {
+  async acquireForTenant(tenantId: TenantId): Promise<PoolContainer> {
     const endTimer = containerAcquireDuration.startTimer({ pool_id: this.poolConfig.poolId })
 
     try {
@@ -206,43 +164,37 @@ export class ContainerPool {
           .set({ lastActivity: new Date() })
           .where(eq(schema.containers.containerId, existingClaim.containerId))
           .run()
-        affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
         endTimer({ status: 'success' })
-        return { container: this.toPoolContainer(existingClaim), isAffinityMatch: true }
+        return this.toPoolContainer(existingClaim)
       }
 
-      // 2. Check for affinity reservation
+      // 2. Check for idle container with matching lastTenantId (no wipe needed)
       const affinityRow = this.db
         .select()
         .from(schema.containers)
         .where(
           and(
-            eq(schema.containers.tenantId, tenantId),
+            eq(schema.containers.lastTenantId, tenantId),
             eq(schema.containers.poolId, this.poolConfig.poolId),
-            eq(schema.containers.status, 'reserved'),
+            eq(schema.containers.status, 'idle'),
           ),
         )
         .get()
 
       if (affinityRow) {
-        // Clear the timeout
-        const timeout = this.affinityTimeouts.get(tenantId)
-        if (timeout) {
-          clearTimeout(timeout)
-          this.affinityTimeouts.delete(tenantId)
-        }
-
-        // Validate health
         const healthy = await this.manager.isHealthy(affinityRow.containerId)
         if (healthy) {
+          // Remove from idle queue
+          this.removeFromIdleQueue(affinityRow.containerId)
+
           const now = new Date()
           this.db
             .update(schema.containers)
             .set({
               status: 'claimed' as ContainerStatus,
+              tenantId,
               lastActivity: now,
               claimedAt: now,
-              affinityExpiresAt: null,
             })
             .where(eq(schema.containers.containerId, affinityRow.containerId))
             .run()
@@ -255,30 +207,26 @@ export class ContainerPool {
             tenantId,
           )
           console.log(
-            `[Pool] Returned affinity container ${affinityRow.containerId} to tenant ${tenantId}`,
+            `[Pool] Returned previous container ${affinityRow.containerId} to tenant ${tenantId} (no wipe)`,
           )
           affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
           endTimer({ status: 'success' })
           this.emitPoolMetrics()
-          return {
-            container: this.toPoolContainer({
-              ...affinityRow,
-              status: 'claimed',
-              lastActivity: now,
-              claimedAt: now,
-            }),
-            isAffinityMatch: true,
-          }
+          return this.toPoolContainer({
+            ...affinityRow,
+            status: 'claimed',
+            tenantId,
+            lastActivity: now,
+            claimedAt: now,
+          })
         }
 
         // Container unhealthy, destroy it and fall through
-        console.log(`[Pool] Affinity container ${affinityRow.containerId} unhealthy, destroying`)
+        console.log(`[Pool] Previous container ${affinityRow.containerId} unhealthy, destroying`)
         await this.destroyAndRemove(affinityRow.containerId)
       }
 
-      // 3. Pop from idle queue
-      affinityMissesTotal.inc({ pool_id: this.poolConfig.poolId })
-
+      // 3. Pop from idle queue — wipe before claiming
       while (this.idleQueue.length > 0) {
         const candidateId = this.idleQueue.shift()
         if (!candidateId) break
@@ -304,6 +252,16 @@ export class ContainerPool {
           continue
         }
 
+        // Wipe state for new tenant
+        const endWipeTimer = containerWipeDuration.startTimer({ pool_id: this.poolConfig.poolId })
+        await this.manager.wipeForNewTenant(candidateId)
+        endWipeTimer()
+        containerOperationsTotal.inc({
+          pool_id: this.poolConfig.poolId,
+          operation: 'wipe',
+          status: 'success',
+        })
+
         // Claim it
         const now = new Date()
         this.db
@@ -325,19 +283,16 @@ export class ContainerPool {
           tenantId,
         )
 
-        console.log(`[Pool] Claimed container ${candidateId} for tenant ${tenantId}`)
+        console.log(`[Pool] Claimed container ${candidateId} for tenant ${tenantId} (wiped)`)
         endTimer({ status: 'success' })
         this.emitPoolMetrics()
-        return {
-          container: this.toPoolContainer({
-            ...row,
-            status: 'claimed',
-            tenantId,
-            lastActivity: now,
-            claimedAt: now,
-          }),
-          isAffinityMatch: false,
-        }
+        return this.toPoolContainer({
+          ...row,
+          status: 'claimed',
+          tenantId,
+          lastActivity: now,
+          claimedAt: now,
+        })
       }
 
       // 4. Queue empty — create on demand if under maxSize
@@ -351,7 +306,7 @@ export class ContainerPool {
       const container = await this.createAndInsert('claimed', tenantId)
       endTimer({ status: 'success' })
       this.emitPoolMetrics()
-      return { container, isAffinityMatch: false }
+      return container
     } catch (err) {
       endTimer({ status: 'failure' })
       throw err
@@ -361,8 +316,8 @@ export class ContainerPool {
   /**
    * Release a tenant's container
    *
-   * Sets status to 'reserved' with an affinity timeout. After timeout,
-   * the container is wiped and returned to idle for other tenants.
+   * Sets status to 'idle' with lastTenantId preserved. No wipe on release.
+   * Wipe happens on next acquire by a different tenant.
    */
   async releaseForTenant(tenantId: TenantId): Promise<void> {
     const endTimer = containerReleaseDuration.startTimer({ pool_id: this.poolConfig.poolId })
@@ -387,56 +342,30 @@ export class ContainerPool {
         return
       }
 
-      // Clear any existing affinity for this tenant
-      const existingTimeout = this.affinityTimeouts.get(tenantId)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-        this.affinityTimeouts.delete(tenantId)
-      }
-
-      // Check for existing affinity container (from a previous release) and flush it
-      const existingAffinity = this.db
-        .select()
-        .from(schema.containers)
-        .where(
-          and(
-            eq(schema.containers.tenantId, tenantId),
-            eq(schema.containers.poolId, this.poolConfig.poolId),
-            eq(schema.containers.status, 'reserved'),
-          ),
-        )
-        .get()
-      if (existingAffinity) {
-        await this.flushAffinityToIdle(existingAffinity.containerId)
-      }
-
-      // Update container to reserved with affinity timeout
-      const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
+      // Set to idle, preserve lastTenantId for affinity matching on next acquire
       this.db
         .update(schema.containers)
         .set({
-          status: 'reserved' as ContainerStatus,
+          status: 'idle' as ContainerStatus,
+          tenantId: null,
+          lastTenantId: tenantId,
           lastActivity: new Date(),
           claimedAt: null,
-          affinityExpiresAt: expiresAt,
         })
         .where(eq(schema.containers.containerId, row.containerId))
         .run()
+
+      this.idleQueue.push(row.containerId)
 
       setContainerInfo(
         row.containerId,
         this.poolConfig.poolId,
         this.poolConfig.workload.id,
-        'reserved',
-        tenantId,
+        'idle',
+        '',
       )
 
-      // Start affinity timeout
-      this.startAffinityTimeout(tenantId, row.containerId, this.poolConfig.affinityTimeoutMs)
-
-      console.log(
-        `[Pool] Released container ${row.containerId} from tenant ${tenantId} (reserved for ${this.poolConfig.affinityTimeoutMs}ms)`,
-      )
+      console.log(`[Pool] Released container ${row.containerId} from tenant ${tenantId} to idle`)
       endTimer({ status: 'success' })
       this.emitPoolMetrics()
     } catch (err) {
@@ -482,15 +411,6 @@ export class ContainerPool {
       .get()
 
     if (!row) return false
-
-    // If claimed, clear tenant's affinity timeout
-    if (row.tenantId) {
-      const timeout = this.affinityTimeouts.get(row.tenantId)
-      if (timeout) {
-        clearTimeout(timeout)
-        this.affinityTimeouts.delete(row.tenantId)
-      }
-    }
 
     // Remove from idle queue if present
     this.removeFromIdleQueue(containerId as ContainerId)
@@ -577,11 +497,10 @@ export class ContainerPool {
 
     const idle = statusCounts.idle ?? 0
     const claimed = statusCounts.claimed ?? 0
-    const reserved = statusCounts.reserved ?? 0
     const stopping = statusCounts.stopping ?? 0
 
     return {
-      size: idle + claimed + reserved + stopping,
+      size: idle + claimed + stopping,
       available: idle,
       borrowed: claimed,
       pending: 0,
@@ -729,17 +648,10 @@ export class ContainerPool {
   stop(): void {
     console.log('[Pool] Stopping pool (preserving containers)...')
 
-    // Stop fill loop
     if (this.fillLoopInterval) {
       clearInterval(this.fillLoopInterval)
       this.fillLoopInterval = null
     }
-
-    // Clear all affinity timeouts
-    for (const timeout of this.affinityTimeouts.values()) {
-      clearTimeout(timeout)
-    }
-    this.affinityTimeouts.clear()
 
     console.log('[Pool] Pool stopped')
   }
@@ -752,17 +664,10 @@ export class ContainerPool {
   async drain(): Promise<void> {
     console.log('[Pool] Draining pool...')
 
-    // Stop fill loop
     if (this.fillLoopInterval) {
       clearInterval(this.fillLoopInterval)
       this.fillLoopInterval = null
     }
-
-    // Clear all affinity timeouts
-    for (const timeout of this.affinityTimeouts.values()) {
-      clearTimeout(timeout)
-    }
-    this.affinityTimeouts.clear()
 
     // Get all containers for this pool
     const rows = this.db
@@ -918,85 +823,6 @@ export class ContainerPool {
   }
 
   /**
-   * Wipe an affinity container and return it to idle in DB and queue.
-   */
-  private async flushAffinityToIdle(containerId: ContainerId): Promise<void> {
-    try {
-      const endWipeTimer = containerWipeDuration.startTimer({ pool_id: this.poolConfig.poolId })
-      await this.manager.wipeForNewTenant(containerId)
-      endWipeTimer()
-      containerOperationsTotal.inc({
-        pool_id: this.poolConfig.poolId,
-        operation: 'wipe',
-        status: 'success',
-      })
-
-      this.db
-        .update(schema.containers)
-        .set({
-          status: 'idle' as ContainerStatus,
-          tenantId: null,
-          lastActivity: new Date(),
-          claimedAt: null,
-          affinityExpiresAt: null,
-        })
-        .where(eq(schema.containers.containerId, containerId))
-        .run()
-
-      this.idleQueue.push(containerId)
-      setContainerInfo(containerId, this.poolConfig.poolId, this.poolConfig.workload.id, 'idle', '')
-      console.log(`[Pool] Flushed affinity container ${containerId} back to idle`)
-      this.emitPoolMetrics()
-    } catch (err) {
-      containerOperationsTotal.inc({
-        pool_id: this.poolConfig.poolId,
-        operation: 'wipe',
-        status: 'failure',
-      })
-      console.error(`[Pool] Failed to flush affinity container ${containerId}:`, err)
-      // Try to destroy it since we couldn't return it cleanly
-      try {
-        await this.destroyAndRemove(containerId)
-      } catch {
-        // Best effort
-      }
-    }
-  }
-
-  /**
-   * Start an affinity timeout for a tenant's container.
-   */
-  private startAffinityTimeout(
-    tenantId: TenantId,
-    containerId: ContainerId,
-    timeoutMs: number,
-  ): void {
-    const timeout = setTimeout(async () => {
-      this.affinityTimeouts.delete(tenantId)
-      affinityEvictionsTotal.inc({ pool_id: this.poolConfig.poolId })
-
-      // Verify container is still reserved
-      const row = this.db
-        .select()
-        .from(schema.containers)
-        .where(
-          and(
-            eq(schema.containers.containerId, containerId),
-            eq(schema.containers.status, 'reserved'),
-          ),
-        )
-        .get()
-
-      if (row) {
-        await this.flushAffinityToIdle(containerId)
-      }
-    }, timeoutMs)
-
-    this.affinityTimeouts.set(tenantId, timeout)
-    this.updateAffinityMetrics()
-  }
-
-  /**
    * Background fill loop — maintains minimum idle count.
    */
   private startFillLoop(): void {
@@ -1066,8 +892,10 @@ export class ContainerPool {
     poolId: PoolId
     status: string
     tenantId: TenantId | null
+    lastTenantId?: TenantId | null
     lastActivity: Date
     claimedAt?: Date | null
+    idleExpiresAt?: Date | null
   }): PoolContainer {
     return {
       containerId: row.containerId,
@@ -1078,6 +906,8 @@ export class ContainerPool {
       secretsDir: this.manager.getSecretsDir(row.containerId),
       lastActivity: row.lastActivity,
       status: row.status as ContainerStatus,
+      lastTenantId: row.lastTenantId,
+      idleExpiresAt: row.idleExpiresAt,
     }
   }
 
@@ -1096,22 +926,5 @@ export class ContainerPool {
       min: stats.min,
       max: stats.max,
     })
-  }
-
-  /**
-   * Update affinity reservation gauge.
-   */
-  private updateAffinityMetrics(): void {
-    const result = this.db
-      .select({ cnt: count() })
-      .from(schema.containers)
-      .where(
-        and(
-          eq(schema.containers.poolId, this.poolConfig.poolId),
-          eq(schema.containers.status, 'reserved'),
-        ),
-      )
-      .get()
-    affinityReservations.set({ pool_id: this.poolConfig.poolId }, result?.cnt ?? 0)
   }
 }

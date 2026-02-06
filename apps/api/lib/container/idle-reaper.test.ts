@@ -343,7 +343,7 @@ describe('IdleReaper', () => {
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
         acquireTimeoutMs: 30000,
-        affinityTimeoutMs: 0,
+
         fileIdleTtl: 60000,
       })
       .run()
@@ -401,7 +401,7 @@ describe('IdleReaper', () => {
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
         acquireTimeoutMs: 30000,
-        affinityTimeoutMs: 0,
+
         fileIdleTtl: 1, // 1ms TTL — effectively always expired
       })
       .run()
@@ -464,7 +464,6 @@ describe('IdleReaper', () => {
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
         acquireTimeoutMs: 30000,
-        affinityTimeoutMs: 0,
       })
       .run()
 

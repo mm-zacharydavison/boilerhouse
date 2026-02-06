@@ -78,8 +78,8 @@ describe('ContainerPool', () => {
         db,
       )
 
-      const { container: container1 } = await pool.acquireForTenant('tenant-pool-1')
-      const { container: container2 } = await pool.acquireForTenant('tenant-pool-1')
+      const container1 = await pool.acquireForTenant('tenant-pool-1')
+      const container2 = await pool.acquireForTenant('tenant-pool-1')
 
       expect(container1.containerId).toBe(container2.containerId)
 
@@ -104,8 +104,8 @@ describe('ContainerPool', () => {
         db,
       )
 
-      const { container: container1 } = await pool.acquireForTenant('tenant-a')
-      const { container: container2 } = await pool.acquireForTenant('tenant-b')
+      const container1 = await pool.acquireForTenant('tenant-a')
+      const container2 = await pool.acquireForTenant('tenant-b')
 
       expect(container1.containerId).not.toBe(container2.containerId)
 
@@ -138,7 +138,7 @@ describe('ContainerPool', () => {
       await pool.drain()
     })
 
-    test('acquireForTenant returns affinity match when tenant reclaims their container', async () => {
+    test('acquireForTenant returns same container when tenant reclaims (no wipe)', async () => {
       const { manager, db } = setupTest()
 
       const poolId = createPoolId()
@@ -152,29 +152,21 @@ describe('ContainerPool', () => {
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
-          affinityTimeoutMs: 60000,
         },
         db,
       )
 
-      // First claim - should not be affinity match
-      const { container: container1, isAffinityMatch: match1 } =
-        await pool.acquireForTenant('tenant-affinity')
-      expect(match1).toBe(false)
-
-      // Release the container
+      const container1 = await pool.acquireForTenant('tenant-affinity')
       await pool.releaseForTenant('tenant-affinity')
 
-      // Reclaim - should get same container with affinity match
-      const { container: container2, isAffinityMatch: match2 } =
-        await pool.acquireForTenant('tenant-affinity')
-      expect(match2).toBe(true)
+      // Reclaim - should get same container via lastTenantId match
+      const container2 = await pool.acquireForTenant('tenant-affinity')
       expect(container2.containerId).toBe(container1.containerId)
 
       await pool.drain()
     })
 
-    test('acquireForTenant returns no affinity for different tenant', async () => {
+    test('different tenant gets same container but wipe happens', async () => {
       const { manager, db } = setupTest()
 
       const poolId = createPoolId()
@@ -184,25 +176,21 @@ describe('ContainerPool', () => {
           workload: createWorkloadSpec(),
           poolId,
           minSize: 0,
-          maxSize: 5,
+          maxSize: 1,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
-          affinityTimeoutMs: 60000,
         },
         db,
       )
 
       // Tenant A claims and releases
-      const { container: containerA } = await pool.acquireForTenant('tenant-A')
+      const containerA = await pool.acquireForTenant('tenant-A')
       await pool.releaseForTenant('tenant-A')
 
-      // Tenant B claims - should not get affinity match
-      const { container: containerB, isAffinityMatch: matchB } =
-        await pool.acquireForTenant('tenant-B')
-      expect(matchB).toBe(false)
-      // Should get a different container (A's is reserved)
-      expect(containerB.containerId).not.toBe(containerA.containerId)
+      // Tenant B claims - with maxSize=1, gets same container (wiped)
+      const containerB = await pool.acquireForTenant('tenant-B')
+      expect(containerB.containerId).toBe(containerA.containerId)
 
       await pool.drain()
     })
@@ -293,7 +281,7 @@ describe('ContainerPool', () => {
       await pool.drain()
     })
 
-    test('releaseForTenant makes container available via affinity', async () => {
+    test('releaseForTenant returns container to idle', async () => {
       const { manager, db } = setupTest()
 
       const poolId = createPoolId()
@@ -307,7 +295,6 @@ describe('ContainerPool', () => {
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
           acquireTimeoutMs: 5000,
-          affinityTimeoutMs: 60000,
         },
         db,
       )
@@ -318,9 +305,9 @@ describe('ContainerPool', () => {
 
       await pool.releaseForTenant('tenant-release')
       const statsAfter = pool.getStats()
-      // Container is reserved, not claimed and not idle
+      // Container goes to idle
       expect(statsAfter.borrowed).toBe(0)
-      expect(statsAfter.available).toBe(0)
+      expect(statsAfter.available).toBe(1)
       expect(statsAfter.size).toBe(1)
 
       await pool.drain()

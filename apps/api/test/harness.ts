@@ -34,7 +34,6 @@ export interface TestHarnessConfig {
     minSize?: number
     maxSize?: number
     idleTimeoutMs?: number
-    affinityTimeoutMs?: number
     acquireTimeoutMs?: number
   }
 }
@@ -174,7 +173,6 @@ healthcheck:
       minSize: poolConfig.minSize ?? 0,
       maxSize: poolConfig.maxSize ?? 5,
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? 60000,
-      affinityTimeoutMs: poolConfig.affinityTimeoutMs ?? 5000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? 1000,
     } as Parameters<typeof this._app.poolRegistry.createPool>[2])
 

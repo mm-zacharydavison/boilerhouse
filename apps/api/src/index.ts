@@ -76,8 +76,7 @@ console.log(
 const { recoveryStats } = await app.start()
 if (recoveryStats) {
   console.log(
-    `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}, ` +
-      `expiredAffinity=${recoveryStats.expiredAffinity}`,
+    `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}`,
   )
 }
 

@@ -85,6 +85,7 @@ export interface ContainerInfo {
   image: string
   createdAt: string
   lastActivityAt: string
+  idleExpiresAt: string | null
   cpuUsagePercent?: number
   memoryUsageMb?: number
 }

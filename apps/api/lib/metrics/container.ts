@@ -101,6 +101,13 @@ export function setContainerInfo(
   containerInfoLabels.set(containerId, labels)
 }
 
+export const affinityHitsTotal = new Counter({
+  name: 'boilerhouse_affinity_hits_total',
+  help: 'Tenant reclaimed their previous container via lastTenantId match',
+  labelNames: ['pool_id'],
+  registers: [registry],
+})
+
 export function removeContainerInfo(containerId: string): void {
   const prev = containerInfoLabels.get(containerId)
   if (prev) {
@@ -108,25 +115,3 @@ export function removeContainerInfo(containerId: string): void {
     containerInfoLabels.delete(containerId)
   }
 }
-
-// Affinity counters
-export const affinityHitsTotal = new Counter({
-  name: 'boilerhouse_affinity_hits_total',
-  help: 'Times affinity match found',
-  labelNames: ['pool_id'],
-  registers: [registry],
-})
-
-export const affinityMissesTotal = new Counter({
-  name: 'boilerhouse_affinity_misses_total',
-  help: 'Times affinity match not found',
-  labelNames: ['pool_id'],
-  registers: [registry],
-})
-
-export const affinityEvictionsTotal = new Counter({
-  name: 'boilerhouse_affinity_evictions_total',
-  help: 'Affinity containers evicted due to timeout',
-  labelNames: ['pool_id'],
-  registers: [registry],
-})

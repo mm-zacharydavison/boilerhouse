@@ -148,6 +148,11 @@ export interface ContainerInfo {
    * @example '2024-02-05T11:30:00.000Z'
    */
   lastActivityAt: string
+
+  /**
+   * ISO 8601 timestamp when this idle container will be evicted, or null.
+   */
+  idleExpiresAt: string | null
 }
 
 /**
@@ -202,7 +207,6 @@ export class PoolRegistry {
           evictionIntervalMs: record.evictionIntervalMs,
           acquireTimeoutMs: record.acquireTimeoutMs,
           networks: record.networks ?? undefined,
-          affinityTimeoutMs: record.affinityTimeoutMs,
           fileIdleTtl: record.fileIdleTtl ?? undefined,
         },
         this.db,
@@ -226,7 +230,6 @@ export class PoolRegistry {
       maxSize: number
       idleTimeoutMs: number
       networks: string[]
-      affinityTimeoutMs: number
       acquireTimeoutMs: number
       fileIdleTtl: number
     }>,
@@ -275,7 +278,6 @@ export class PoolRegistry {
         evictionIntervalMs: 30000,
         acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
         networks: resolvedNetworks,
-        affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
         fileIdleTtl: config?.fileIdleTtl ?? workloadPoolDefaults.fileIdleTtl ?? null,
       })
       .onConflictDoUpdate({
@@ -287,7 +289,6 @@ export class PoolRegistry {
           idleTimeoutMs: config?.idleTimeoutMs ?? workloadPoolDefaults.idleTimeoutMs ?? 300000,
           acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
           networks: resolvedNetworks,
-          affinityTimeoutMs: config?.affinityTimeoutMs ?? 0,
           fileIdleTtl: config?.fileIdleTtl ?? workloadPoolDefaults.fileIdleTtl ?? null,
         },
       })
@@ -404,6 +405,7 @@ export class PoolRegistry {
         image: workload.image,
         createdAt: container.lastActivity.toISOString(),
         lastActivityAt: container.lastActivity.toISOString(),
+        idleExpiresAt: container.idleExpiresAt?.toISOString() ?? null,
       }
     }
 
@@ -432,6 +434,7 @@ export class PoolRegistry {
           image: workload.image,
           createdAt: container.lastActivity.toISOString(),
           lastActivityAt: container.lastActivity.toISOString(),
+          idleExpiresAt: container.idleExpiresAt?.toISOString() ?? null,
         })
       }
     } else {

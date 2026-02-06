@@ -1,3 +1,4 @@
+import { CountdownCell } from '@/components/CountdownCell'
 import { Layout } from '@/components/layout'
 import {
   Badge,
@@ -223,6 +224,7 @@ export function PoolDetailPage() {
                   <TableHead>Container ID</TableHead>
                   <TableHead>Tenant</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>TTL</TableHead>
                   <TableHead>CPU</TableHead>
                   <TableHead>Memory</TableHead>
                   <TableHead>Last Activity</TableHead>
@@ -244,6 +246,12 @@ export function PoolDetailPage() {
                     </TableCell>
                     <TableCell>
                       <ContainerStatusBadge status={container.status} />
+                    </TableCell>
+                    <TableCell>
+                      <CountdownCell
+                        status={container.status}
+                        idleExpiresAt={container.idleExpiresAt}
+                      />
                     </TableCell>
                     <TableCell>
                       {container.cpuUsagePercent !== undefined
@@ -271,7 +279,7 @@ export function PoolDetailPage() {
                 ))}
                 {containers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
                       No containers in this pool
                     </TableCell>
                   </TableRow>

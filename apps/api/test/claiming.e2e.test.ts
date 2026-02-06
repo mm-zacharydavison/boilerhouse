@@ -18,7 +18,6 @@ describe('Container Claiming', () => {
       poolConfig: {
         minSize: 0,
         maxSize: 3,
-        affinityTimeoutMs: 60000,
         acquireTimeoutMs: 500, // Short timeout for capacity tests
       },
     })
@@ -120,13 +119,12 @@ describe('Container State Wiping', () => {
     await harness.teardown()
   })
 
-  test('same tenant reclaiming does NOT wipe state (affinity)', async () => {
+  test('same tenant reclaiming does NOT wipe state', async () => {
     harness = createTestHarness({
       useRealDocker: false,
       poolConfig: {
         minSize: 0,
         maxSize: 3,
-        affinityTimeoutMs: 60000,
         acquireTimeoutMs: 500,
       },
     })
@@ -172,7 +170,6 @@ describe('Container State Wiping', () => {
       poolConfig: {
         minSize: 0,
         maxSize: 1, // Only 1 container, forces reuse
-        affinityTimeoutMs: 100, // Short timeout so container returns to pool
         acquireTimeoutMs: 2000,
       },
     })
@@ -195,14 +192,11 @@ describe('Container State Wiping', () => {
     let files = await readdir(stateDir)
     expect(files).toContain('tenant-a-secret.txt')
 
-    // Release container
+    // Release container (goes straight to idle with lastTenantId set)
     const release = await harness.releaseContainer(tenantA)
     expect(release.status).toBe(200)
 
-    // Wait for affinity timeout to expire so container returns to pool
-    await new Promise((resolve) => setTimeout(resolve, 150))
-
-    // Tenant B claims - should get the same container but wiped
+    // Tenant B claims - gets same container (only 1 in pool), wipe-on-entry triggers
     const claimB = await harness.claimContainer(tenantB)
     expect(claimB.status).toBe(200)
     expect(claimB.data.containerId).toBe(containerId) // Same container (only 1 in pool)

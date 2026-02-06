@@ -141,25 +141,24 @@ export function tenantsController(deps: TenantsControllerDeps) {
         }
 
         try {
-          const { container, isAffinityMatch } = await pool.acquireForTenant(params.id)
+          // Wipe-on-entry happens inside acquireForTenant when a different tenant
+          // claims a container. Same tenant reclaiming skips the wipe.
+          const container = await pool.acquireForTenant(params.id)
           logContainerClaimed(container.containerId, params.id, body.poolId, activityLog)
 
-          // If this is a new container (not tenant's previous), wipe it first
-          if (!isAffinityMatch) {
-            await containerManager.wipeForNewTenant(container.containerId)
-          }
+          // Determine if this tenant is returning to their previous container.
+          // If so, state is intact → incremental bisync. Otherwise → full download.
+          const isReturningTenant = container.lastTenantId === params.id
 
           // Trigger onClaim sync
-          // initialSync=true for new containers (full download with --resync)
-          // initialSync=false for affinity match (incremental bisync)
           const workload = pool.getWorkload()
           if (workload.sync) {
-            logSyncStarted(params.id, isAffinityMatch ? 'bisync' : 'download', activityLog)
+            logSyncStarted(params.id, isReturningTenant ? 'bisync' : 'download', activityLog)
             const results = await syncCoordinator.onClaim(
               params.id,
               container,
               workload.sync,
-              !isAffinityMatch,
+              !isReturningTenant,
             )
             const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
             if (results.every((r) => r.success)) {

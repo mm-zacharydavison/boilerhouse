@@ -1,3 +1,4 @@
+import { CountdownCell } from '@/components/CountdownCell'
 import { Layout } from '@/components/layout'
 import {
   Badge,
@@ -90,6 +91,7 @@ export function ContainersPage() {
                   <TableHead>Pool</TableHead>
                   <TableHead>Tenant</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>TTL</TableHead>
                   <TableHead>Workload</TableHead>
                   <TableHead>CPU</TableHead>
                   <TableHead>Memory</TableHead>
@@ -116,6 +118,12 @@ export function ContainersPage() {
                     </TableCell>
                     <TableCell>
                       <ContainerStatusBadge status={container.status} />
+                    </TableCell>
+                    <TableCell>
+                      <CountdownCell
+                        status={container.status}
+                        idleExpiresAt={container.idleExpiresAt}
+                      />
                     </TableCell>
                     <TableCell>{container.workloadName}</TableCell>
                     <TableCell>
