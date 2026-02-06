@@ -1,0 +1,55 @@
+docs/plans/refactor-gear-1.md
+  81a93acbebff5aea 1-20,23-39,42-50,53-63,66-71,75-81,83-108,111-123,126-136,139-169,172-185,188-194,197-230,233-259,262-270,273-300,302-334
+apps/api/lib/pool/registry.ts
+  8c1826b89cd75f93 214,266
+apps/api/config/workloads/nanobot.yaml
+  35b81fe76a382c9a 1
+apps/api/lib/container/pool.ts
+  8c1826b89cd75f93 5-6,11-15,116,118-119,128-132,177,179,188-196,200-206,211-220,222,226-229,234,239-240,243,249,255,263,265,274-277,279-285,288,301,309,572-573,582-584,587,730
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "4bdc9ac38a36b84393be4b8406a0a86b4e1e4ba6",
+  "prompts": {
+    "35b81fe76a382c9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b817940c-6cbe-4225-b174-5c80d2b0ee73",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 0,
+      "accepted_lines": 80,
+      "overriden_lines": 0
+    },
+    "81a93acbebff5aea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "615f97d5-bd89-46e7-a04b-18d8032885b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 354,
+      "total_deletions": 54,
+      "accepted_lines": 303,
+      "overriden_lines": 0
+    },
+    "8c1826b89cd75f93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2c499ac-fc34-47bb-a3c0-bde35b2ecaed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 103,
+      "accepted_lines": 80,
+      "overriden_lines": 2
+    }
+  }
+}
