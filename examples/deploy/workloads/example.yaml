@@ -24,6 +24,6 @@ healthcheck:
   retries: 3
 
 pool:
-  min_size: 2
+  min_idle: 2
   max_size: 10
   idle_timeout: 5m

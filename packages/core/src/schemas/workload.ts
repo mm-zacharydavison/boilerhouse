@@ -209,7 +209,7 @@ export const securityConfigSchema = z.object({
  * Pool configuration schema - defines how many container instances to maintain
  */
 export const poolConfigSchema = z.object({
-  min_size: z.number().int().min(0).default(1).describe('Minimum number of idle containers'),
+  min_idle: z.number().int().min(0).default(1).describe('Minimum number of idle containers'),
   max_size: z.number().int().min(1).default(10).describe('Maximum total containers'),
   idle_timeout: z
     .union([z.number().int().min(0), durationString.transform(parseDuration)])

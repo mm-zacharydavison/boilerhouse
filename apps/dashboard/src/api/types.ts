@@ -48,7 +48,7 @@ export interface PoolInfo {
   workloadId: WorkloadId
   workloadName: string
   image: string
-  minSize: number
+  minIdle: number
   maxSize: number
   currentSize: number
   claimedCount: number

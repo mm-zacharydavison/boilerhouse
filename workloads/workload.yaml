@@ -48,7 +48,7 @@ user: "1000"       # 'node' user UID
 network_mode: bridge
 
 pool:
-  min_size: 2
+  min_idle: 2
   max_size: 20
   idle_timeout: 10m
 

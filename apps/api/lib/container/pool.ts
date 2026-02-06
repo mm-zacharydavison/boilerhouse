@@ -44,7 +44,7 @@ export interface ContainerPoolConfig {
   poolId: PoolId
 
   /** Minimum number of idle containers to maintain */
-  minSize: number
+  minIdle: number
 
   /** Maximum total containers in this pool */
   maxSize: number
@@ -70,7 +70,7 @@ export interface PoolStats {
   available: number
   borrowed: number
   pending: number
-  min: number
+  minIdle: number
   max: number
 }
 
@@ -99,7 +99,7 @@ export class ContainerPool {
     this.poolConfig = {
       workload: poolConfig.workload,
       poolId: poolConfig.poolId,
-      minSize: poolConfig.minSize ?? config.pool.minPoolSize,
+      minIdle: poolConfig.minIdle ?? config.pool.minPoolIdle,
       maxSize: poolConfig.maxSize ?? config.pool.maxContainersPerNode,
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? config.pool.containerIdleTimeoutMs,
       evictionIntervalMs: poolConfig.evictionIntervalMs ?? 30000,
@@ -504,7 +504,7 @@ export class ContainerPool {
       available: idle,
       borrowed: claimed,
       pending: 0,
-      min: this.poolConfig.minSize,
+      minIdle: this.poolConfig.minIdle,
       max: this.poolConfig.maxSize,
     }
   }
@@ -837,12 +837,12 @@ export class ContainerPool {
   }
 
   /**
-   * Fill the pool up to minSize idle containers.
+   * Fill the pool up to minIdle idle containers.
    */
   private async fillPool(): Promise<void> {
     try {
       const stats = this.getStats()
-      const idleNeeded = this.poolConfig.minSize - stats.available
+      const idleNeeded = this.poolConfig.minIdle - stats.available
       const capacityLeft = this.poolConfig.maxSize - stats.size
 
       if (idleNeeded > 0 && capacityLeft > 0) {
@@ -923,7 +923,7 @@ export class ContainerPool {
       available: stats.available,
       borrowed: stats.borrowed,
       pending: stats.pending,
-      min: stats.min,
+      minIdle: stats.minIdle,
       max: stats.max,
     })
   }

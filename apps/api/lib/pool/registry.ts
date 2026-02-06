@@ -53,7 +53,7 @@ export interface PoolInfo {
   image: string
 
   /** Minimum number of idle containers to maintain. */
-  minSize: number
+  minIdle: number
 
   /** Maximum total containers allowed in this pool. */
   maxSize: number
@@ -201,7 +201,7 @@ export class PoolRegistry {
         {
           workload,
           poolId: record.poolId,
-          minSize: record.minSize,
+          minIdle: record.minIdle,
           maxSize: record.maxSize,
           idleTimeoutMs: record.idleTimeoutMs,
           evictionIntervalMs: record.evictionIntervalMs,
@@ -226,7 +226,7 @@ export class PoolRegistry {
     poolId: PoolId,
     workloadId: WorkloadId,
     config?: Partial<{
-      minSize: number
+      minIdle: number
       maxSize: number
       idleTimeoutMs: number
       networks: string[]
@@ -245,7 +245,7 @@ export class PoolRegistry {
 
     // Use workload pool config as defaults, then override with explicit config
     const workloadPoolDefaults = {
-      minSize: workload.pool?.minSize,
+      minIdle: workload.pool?.minIdle,
       maxSize: workload.pool?.maxSize,
       idleTimeoutMs: workload.pool?.idleTimeout,
       networks: workload.pool?.networks ?? workload.networks,
@@ -272,7 +272,7 @@ export class PoolRegistry {
       .values({
         poolId,
         workloadId,
-        minSize: pool.getStats().min,
+        minIdle: pool.getStats().minIdle,
         maxSize: pool.getStats().max,
         idleTimeoutMs: config?.idleTimeoutMs ?? workloadPoolDefaults.idleTimeoutMs ?? 300000,
         evictionIntervalMs: 30000,
@@ -284,7 +284,7 @@ export class PoolRegistry {
         target: schema.pools.poolId,
         set: {
           workloadId,
-          minSize: pool.getStats().min,
+          minIdle: pool.getStats().minIdle,
           maxSize: pool.getStats().max,
           idleTimeoutMs: config?.idleTimeoutMs ?? workloadPoolDefaults.idleTimeoutMs ?? 300000,
           acquireTimeoutMs: config?.acquireTimeoutMs ?? 30000,
@@ -359,7 +359,7 @@ export class PoolRegistry {
       workloadId: workload.id,
       workloadName: workload.name,
       image: workload.image,
-      minSize: stats.min,
+      minIdle: stats.minIdle,
       maxSize: stats.max,
       currentSize: stats.size,
       claimedCount: stats.borrowed,

@@ -31,7 +31,7 @@ export interface TestHarnessConfig {
   workload?: WorkloadSpec
   /** Pool configuration overrides */
   poolConfig?: {
-    minSize?: number
+    minIdle?: number
     maxSize?: number
     idleTimeoutMs?: number
     acquireTimeoutMs?: number
@@ -170,7 +170,7 @@ healthcheck:
     // Create default pool
     const poolConfig = this._config.poolConfig ?? {}
     this._app.poolRegistry.createPool('test-pool', workload.id, {
-      minSize: poolConfig.minSize ?? 0,
+      minIdle: poolConfig.minIdle ?? 0,
       maxSize: poolConfig.maxSize ?? 5,
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? 60000,
       acquireTimeoutMs: poolConfig.acquireTimeoutMs ?? 1000,

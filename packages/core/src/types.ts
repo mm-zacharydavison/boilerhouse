@@ -205,7 +205,7 @@ export interface PoolSpec {
   /** ID of the workload this pool runs. */
   workloadId: WorkloadId
   /** Minimum number of idle containers to maintain. */
-  minSize: number
+  minIdle: number
   /** Maximum total containers in this pool. */
   maxSize: number
   /** Time in milliseconds before an idle container is evicted. */
@@ -314,8 +314,8 @@ export interface TenantStatus {
  * Configuration for the container pool.
  */
 export interface ContainerPoolConfig {
-  /** Minimum number of pre-warmed containers to maintain. */
-  minPoolSize: number
+  /** Minimum number of idle containers to maintain. */
+  minPoolIdle: number
   /** Maximum containers allowed per node. */
   maxContainersPerNode: number
   /** Time in milliseconds before an idle container is evicted. */

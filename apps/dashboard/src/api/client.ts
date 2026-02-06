@@ -90,7 +90,7 @@ export async function scalePool(poolId: PoolId, targetSize: number): Promise<voi
 export async function createPool(
   poolId: string,
   workloadId: string,
-  options?: { minSize?: number; maxSize?: number },
+  options?: { minIdle?: number; maxSize?: number },
 ): Promise<PoolInfo> {
   return fetchApi<PoolInfo>('/pools', {
     method: 'POST',

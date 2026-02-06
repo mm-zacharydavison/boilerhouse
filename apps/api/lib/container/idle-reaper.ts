@@ -72,15 +72,23 @@ export class IdleReaper {
       this.unwatch(containerId)
     }
 
+    const now = Date.now()
     this.watches.set(containerId, {
       containerId,
       tenantId,
       poolId,
       stateDir,
       ttlMs,
-      lastModified: Date.now(),
+      lastModified: now,
       dbUpdatePending: false,
     })
+
+    // Persist expiry timestamp so the dashboard can show a countdown
+    this.db
+      .update(schema.containers)
+      .set({ idleExpiresAt: new Date(now + ttlMs) })
+      .where(eq(schema.containers.containerId, containerId))
+      .run()
 
     idleReaperWatchesActive.inc({ pool_id: poolId })
 
@@ -96,6 +104,14 @@ export class IdleReaper {
     if (!entry) return
 
     this.watches.delete(containerId)
+
+    // Clear the expiry timestamp in DB
+    this.db
+      .update(schema.containers)
+      .set({ idleExpiresAt: null })
+      .where(eq(schema.containers.containerId, containerId))
+      .run()
+
     idleReaperWatchesActive.dec({ pool_id: entry.poolId })
     idleReaperFileWatchCount.remove({ pool_id: entry.poolId, container_id: containerId })
 
@@ -163,6 +179,7 @@ export class IdleReaper {
             })
           } else {
             // Start watching — set lastModified to the actual mtime so TTL is accurate
+            const expiresAt = new Date(maxMtime + ttlMs)
             this.watches.set(row.containerId, {
               containerId: row.containerId,
               tenantId,
@@ -172,6 +189,11 @@ export class IdleReaper {
               lastModified: maxMtime,
               dbUpdatePending: false,
             })
+            this.db
+              .update(schema.containers)
+              .set({ idleExpiresAt: expiresAt })
+              .where(eq(schema.containers.containerId, row.containerId))
+              .run()
             idleReaperWatchesActive.inc({ pool_id: poolId })
           }
         } catch {
@@ -247,12 +269,13 @@ export class IdleReaper {
           // Debounced DB update (at most once per poll cycle)
           if (!entry.dbUpdatePending) {
             entry.dbUpdatePending = true
+            const newExpiry = new Date(now + entry.ttlMs)
             // Use setTimeout so it doesn't block the poll loop
             setTimeout(() => {
               entry.dbUpdatePending = false
               this.db
                 .update(schema.containers)
-                .set({ lastActivity: new Date() })
+                .set({ lastActivity: new Date(), idleExpiresAt: newExpiry })
                 .where(eq(schema.containers.containerId, containerId))
                 .run()
             }, 0)

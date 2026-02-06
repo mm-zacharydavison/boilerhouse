@@ -42,7 +42,7 @@ function parseDockerHost(dockerHost: string | undefined): DockerRuntimeConfig | 
 
 console.log('Starting Boilerhouse API server...')
 console.log('Configuration:')
-console.log(`  - Pool size: ${config.pool.minPoolSize}`)
+console.log(`  - Min idle: ${config.pool.minPoolIdle}`)
 console.log(`  - Max containers: ${config.pool.maxContainersPerNode}`)
 console.log(`  - API: ${config.apiHost}:${config.apiPort}`)
 console.log(`  - Workloads dir: ${config.workloadsDir}`)

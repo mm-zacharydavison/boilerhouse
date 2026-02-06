@@ -108,14 +108,14 @@ export function useCreatePool() {
     mutationFn: ({
       poolId,
       workloadId,
-      minSize,
+      minIdle,
       maxSize,
     }: {
       poolId: string
       workloadId: string
-      minSize?: number
+      minIdle?: number
       maxSize?: number
-    }) => api.createPool(poolId, workloadId, { minSize, maxSize }),
+    }) => api.createPool(poolId, workloadId, { minIdle, maxSize }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.pools })
       queryClient.invalidateQueries({ queryKey: queryKeys.stats })

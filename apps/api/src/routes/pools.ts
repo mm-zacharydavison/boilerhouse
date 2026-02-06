@@ -41,7 +41,7 @@ export function poolsController(deps: PoolsControllerDeps) {
       async ({ body, set }) => {
         try {
           const pool = poolRegistry.createPool(body.poolId, body.workloadId, {
-            minSize: body.minSize,
+            minIdle: body.minIdle,
             maxSize: body.maxSize,
             networks: body.networks,
           })
@@ -55,7 +55,7 @@ export function poolsController(deps: PoolsControllerDeps) {
         body: t.Object({
           poolId: t.String(),
           workloadId: t.String(),
-          minSize: t.Optional(t.Number()),
+          minIdle: t.Optional(t.Number()),
           maxSize: t.Optional(t.Number()),
           networks: t.Optional(t.Array(t.String())),
         }),

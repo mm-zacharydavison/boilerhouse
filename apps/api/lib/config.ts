@@ -23,7 +23,7 @@ export const config: BoilerhouseConfig & { workloadsDir: string; dbPath: string 
   dbPath: getEnvPath('BOILERHOUSE_DB_PATH', 'data/boilerhouse.db'),
 
   pool: {
-    minPoolSize: getEnvNumber('BOILERHOUSE_POOL_SIZE', 5),
+    minPoolIdle: getEnvNumber('BOILERHOUSE_POOL_SIZE', 5),
     maxContainersPerNode: getEnvNumber('BOILERHOUSE_MAX_CONTAINERS', 50),
     containerIdleTimeoutMs: getEnvNumber('BOILERHOUSE_IDLE_TIMEOUT_MS', 5 * 60 * 1000),
     containerStartTimeoutMs: getEnvNumber('BOILERHOUSE_START_TIMEOUT_MS', 30 * 1000),

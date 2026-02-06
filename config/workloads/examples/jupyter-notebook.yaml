@@ -37,7 +37,7 @@ network_mode: bridge
 
 # Pool configuration (boilerhouse-specific)
 pool:
-  min_size: 2
+  min_idle: 2
   max_size: 25
   idle_timeout: 30m
 

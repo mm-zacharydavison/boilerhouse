@@ -50,9 +50,10 @@ networks:
   - boilerhouse-egress
 
 pool:
-  min_size: 2
+  min_idle: 2
   max_size: 20
   idle_timeout: 10m
+  file_idle_ttl: 1m
 
 # Sync state to MinIO (local S3-compatible storage)
 sync:

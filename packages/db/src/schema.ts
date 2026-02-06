@@ -82,7 +82,7 @@ export const containers = sqliteTable(
 export const pools = sqliteTable('pools', {
   poolId: text('pool_id').$type<PoolId>().primaryKey(),
   workloadId: text('workload_id').$type<WorkloadId>().notNull(),
-  minSize: integer('min_size').notNull(),
+  minIdle: integer('min_idle').notNull(),
   maxSize: integer('max_size').notNull(),
   idleTimeoutMs: integer('idle_timeout_ms').notNull(),
   evictionIntervalMs: integer('eviction_interval_ms').notNull(),

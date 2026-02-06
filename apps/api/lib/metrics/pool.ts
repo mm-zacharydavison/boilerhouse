@@ -37,9 +37,9 @@ export const poolPending = new Gauge({
   registers: [registry],
 })
 
-export const poolMinSize = new Gauge({
-  name: 'boilerhouse_pool_min_size',
-  help: 'Configured minimum pool size',
+export const poolMinIdle = new Gauge({
+  name: 'boilerhouse_pool_min_idle',
+  help: 'Configured minimum idle containers',
   labelNames,
   registers: [registry],
 })
@@ -91,7 +91,7 @@ export function updatePoolMetrics(stats: {
   available: number
   borrowed: number
   pending: number
-  min: number
+  minIdle: number
   max: number
 }): void {
   const labels = { pool_id: stats.poolId, workload_id: stats.workloadId }
@@ -99,7 +99,7 @@ export function updatePoolMetrics(stats: {
   poolAvailable.set(labels, stats.available)
   poolBorrowed.set(labels, stats.borrowed)
   poolPending.set(labels, stats.pending)
-  poolMinSize.set(labels, stats.min)
+  poolMinIdle.set(labels, stats.minIdle)
   poolMaxSize.set(labels, stats.max)
 }
 
@@ -112,6 +112,6 @@ export function removePoolMetrics(poolId: string, workloadId: string): void {
   poolAvailable.remove(labels)
   poolBorrowed.remove(labels)
   poolPending.remove(labels)
-  poolMinSize.remove(labels)
+  poolMinIdle.remove(labels)
   poolMaxSize.remove(labels)
 }

@@ -29,6 +29,13 @@
       "when": 1770494400000,
       "tag": "0003_wipe_on_entry",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1770580800000,
+      "tag": "0004_rename_min_idle",
+      "breakpoints": true
     }
   ]
 }

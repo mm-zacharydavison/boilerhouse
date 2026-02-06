@@ -16,11 +16,12 @@ function formatCountdown(ms: number): string {
 
 /**
  * Picks the relevant TTL timestamp based on container status:
- * - idle → idleExpiresAt
- * - claimed/stopping → no TTL
+ * - idle → idleExpiresAt (pool idle timeout)
+ * - claimed → idleExpiresAt (file idle TTL, if configured)
+ * - stopping → no TTL
  */
 function getRelevantExpiry(status: ContainerStatus, idleExpiresAt: string | null): string | null {
-  if (status === 'idle') return idleExpiresAt
+  if (status === 'idle' || status === 'claimed') return idleExpiresAt
   return null
 }
 

@@ -338,7 +338,7 @@ describe('IdleReaper', () => {
       .values({
         poolId,
         workloadId: 'workload-1',
-        minSize: 1,
+        minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
@@ -369,7 +369,7 @@ describe('IdleReaper', () => {
         secretsBaseDir: join(TEST_DIR, 'secrets'),
         socketBaseDir: join(TEST_DIR, 'sockets'),
       }),
-      { workload: WORKLOAD_FIXTURE, poolId, minSize: 0, maxSize: 5, fileIdleTtl: 60000 },
+      { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5, fileIdleTtl: 60000 },
       db,
     )
 
@@ -396,7 +396,7 @@ describe('IdleReaper', () => {
       .values({
         poolId,
         workloadId: 'workload-1',
-        minSize: 1,
+        minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
@@ -427,7 +427,7 @@ describe('IdleReaper', () => {
         secretsBaseDir: join(TEST_DIR, 'secrets'),
         socketBaseDir: join(TEST_DIR, 'sockets'),
       }),
-      { workload: WORKLOAD_FIXTURE, poolId, minSize: 0, maxSize: 5, fileIdleTtl: 1 },
+      { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5, fileIdleTtl: 1 },
       db,
     )
 
@@ -459,7 +459,7 @@ describe('IdleReaper', () => {
       .values({
         poolId,
         workloadId: 'workload-1',
-        minSize: 1,
+        minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
         evictionIntervalMs: 30000,
@@ -488,7 +488,7 @@ describe('IdleReaper', () => {
         secretsBaseDir: join(TEST_DIR, 'secrets'),
         socketBaseDir: join(TEST_DIR, 'sockets'),
       }),
-      { workload: WORKLOAD_FIXTURE, poolId, minSize: 0, maxSize: 5 },
+      { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5 },
       db,
     )
 

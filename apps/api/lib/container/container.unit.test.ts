@@ -69,7 +69,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -95,7 +95,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -121,7 +121,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -147,7 +147,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -175,7 +175,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 1,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -204,7 +204,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 10,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -214,7 +214,7 @@ describe('ContainerPool', () => {
       )
 
       const stats = pool.getStats()
-      expect(stats.min).toBe(0)
+      expect(stats.minIdle).toBe(0)
       expect(stats.max).toBe(10)
       expect(typeof stats.size).toBe('number')
       expect(typeof stats.available).toBe('number')
@@ -232,7 +232,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -261,7 +261,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -290,7 +290,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,
@@ -322,7 +322,7 @@ describe('ContainerPool', () => {
         {
           workload: createWorkloadSpec(),
           poolId,
-          minSize: 0,
+          minIdle: 0,
           maxSize: 5,
           idleTimeoutMs: 60000,
           evictionIntervalMs: 0,

@@ -75,7 +75,7 @@ export function PoolsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newPoolId, setNewPoolId] = useState('')
   const [selectedWorkload, setSelectedWorkload] = useState('')
-  const [minSize, setMinSize] = useState('2')
+  const [minIdle, setMinSize] = useState('2')
   const [maxSize, setMaxSize] = useState('10')
 
   const handleCreatePool = async () => {
@@ -84,7 +84,7 @@ export function PoolsPage() {
       await createPool.mutateAsync({
         poolId: newPoolId,
         workloadId: selectedWorkload,
-        minSize: Number.parseInt(minSize, 10),
+        minIdle: Number.parseInt(minIdle, 10),
         maxSize: Number.parseInt(maxSize, 10),
       })
       setDialogOpen(false)
@@ -153,12 +153,12 @@ export function PoolsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="minSize">Min Size</Label>
+                  <Label htmlFor="minIdle">Min Idle</Label>
                   <Input
-                    id="minSize"
+                    id="minIdle"
                     type="number"
                     min="0"
-                    value={minSize}
+                    value={minIdle}
                     onChange={(e) => setMinSize(e.target.value)}
                   />
                 </div>
@@ -259,7 +259,7 @@ export function PoolsPage() {
                       {pool.image}
                     </TableCell>
                     <TableCell>
-                      {pool.minSize} / {pool.maxSize}
+                      {pool.minIdle} / {pool.maxSize}
                     </TableCell>
                     <TableCell>{pool.currentSize}</TableCell>
                     <TableCell>{pool.claimedCount}</TableCell>

@@ -16,7 +16,7 @@ describe('Container Claiming', () => {
     harness = createTestHarness({
       useRealDocker: false,
       poolConfig: {
-        minSize: 0,
+        minIdle: 0,
         maxSize: 3,
         acquireTimeoutMs: 500, // Short timeout for capacity tests
       },
@@ -123,7 +123,7 @@ describe('Container State Wiping', () => {
     harness = createTestHarness({
       useRealDocker: false,
       poolConfig: {
-        minSize: 0,
+        minIdle: 0,
         maxSize: 3,
         acquireTimeoutMs: 500,
       },
@@ -168,7 +168,7 @@ describe('Container State Wiping', () => {
     harness = createTestHarness({
       useRealDocker: false,
       poolConfig: {
-        minSize: 0,
+        minIdle: 0,
         maxSize: 1, // Only 1 container, forces reuse
         acquireTimeoutMs: 2000,
       },

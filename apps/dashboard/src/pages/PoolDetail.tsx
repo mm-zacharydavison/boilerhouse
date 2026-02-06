@@ -60,7 +60,7 @@ export function PoolDetailPage() {
   }
 
   const handleScaleDown = () => {
-    if (pool && pool.currentSize > pool.minSize) {
+    if (pool && pool.currentSize > pool.minIdle) {
       scalePool.mutate({ poolId: poolId as PoolId, targetSize: pool.currentSize - 1 })
     }
   }
@@ -140,7 +140,7 @@ export function PoolDetailPage() {
             <CardContent>
               <div className="text-2xl font-bold">{pool.currentSize}</div>
               <p className="text-xs text-muted-foreground">
-                Min: {pool.minSize} / Max: {pool.maxSize}
+                Min idle: {pool.minIdle} / Max: {pool.maxSize}
               </p>
             </CardContent>
           </Card>
@@ -190,7 +190,7 @@ export function PoolDetailPage() {
                 <Button
                   variant="outline"
                   size="icon"
-                  disabled={pool.currentSize <= pool.minSize || scalePool.isPending}
+                  disabled={pool.currentSize <= pool.minIdle || scalePool.isPending}
                   onClick={handleScaleDown}
                 >
                   <Minus className="h-4 w-4" />
@@ -206,7 +206,7 @@ export function PoolDetailPage() {
                 </Button>
               </div>
               <span className="text-xs text-muted-foreground">
-                (min: {pool.minSize}, max: {pool.maxSize})
+                (min idle: {pool.minIdle}, max: {pool.maxSize})
               </span>
             </div>
           </CardContent>
