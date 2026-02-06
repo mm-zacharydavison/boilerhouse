@@ -13,6 +13,20 @@ import { type DrizzleDb, schema } from '@boilerhouse/db'
 import { count, eq, gt, lte } from 'drizzle-orm'
 import { type Factory, type Pool, createPool } from 'generic-pool'
 import { config } from '../config'
+import {
+  affinityEvictionsTotal,
+  affinityHitsTotal,
+  affinityMissesTotal,
+  affinityReservations,
+  containerAcquireDuration,
+  containerCreateDuration,
+  containerDestroyDuration,
+  containerHealthCheckFailuresTotal,
+  containerOperationsTotal,
+  containerReleaseDuration,
+  containerWipeDuration,
+  updatePoolMetrics,
+} from '../metrics'
 import type { ContainerManager } from './manager'
 
 export interface ContainerPoolConfig {
@@ -98,6 +112,10 @@ export class ContainerPool {
     const factory: Factory<PoolContainer> = {
       create: async () => {
         console.log('[Pool] Creating new container')
+        const endTimer = containerCreateDuration.startTimer({
+          pool_id: this.poolConfig.poolId,
+          workload_id: this.poolConfig.workload.id,
+        })
         try {
           const container = await this.manager.createContainer(
             this.poolConfig.workload,
@@ -108,27 +126,61 @@ export class ContainerPool {
           this._lastError = null
           // Track container for later lookup
           this.allContainers.set(container.containerId, container)
+          endTimer()
+          containerOperationsTotal.inc({
+            pool_id: this.poolConfig.poolId,
+            operation: 'create',
+            status: 'success',
+          })
+          this.emitPoolMetrics()
           return container
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           console.error(`[Pool] Failed to create container: ${message}`)
           this._lastError = { message, timestamp: new Date() }
+          endTimer()
+          containerOperationsTotal.inc({
+            pool_id: this.poolConfig.poolId,
+            operation: 'create',
+            status: 'failure',
+          })
           throw err
         }
       },
 
       destroy: async (container) => {
         console.log(`[Pool] Destroying container ${container.containerId}`)
-        await this.manager.destroyContainer(container.containerId)
-        // Remove from tracking
-        this.allContainers.delete(container.containerId)
-        console.log(`[Pool] Destroyed container ${container.containerId}`)
+        const endTimer = containerDestroyDuration.startTimer({
+          pool_id: this.poolConfig.poolId,
+        })
+        try {
+          await this.manager.destroyContainer(container.containerId)
+          // Remove from tracking
+          this.allContainers.delete(container.containerId)
+          console.log(`[Pool] Destroyed container ${container.containerId}`)
+          endTimer()
+          containerOperationsTotal.inc({
+            pool_id: this.poolConfig.poolId,
+            operation: 'destroy',
+            status: 'success',
+          })
+          this.emitPoolMetrics()
+        } catch (err) {
+          endTimer()
+          containerOperationsTotal.inc({
+            pool_id: this.poolConfig.poolId,
+            operation: 'destroy',
+            status: 'failure',
+          })
+          throw err
+        }
       },
 
       validate: async (container) => {
         const healthy = await this.manager.isHealthy(container.containerId)
         if (!healthy) {
           console.log(`[Pool] Container ${container.containerId} failed health check`)
+          containerHealthCheckFailuresTotal.inc({ pool_id: this.poolConfig.poolId })
         }
         return healthy
       },
@@ -165,79 +217,96 @@ export class ContainerPool {
    * Returns isAffinityMatch=true if returning tenant's previous container (state intact).
    */
   async acquireForTenant(tenantId: TenantId): Promise<AcquireResult> {
-    // Check if tenant already has a claimed container (DB lookup)
-    const existingClaim = this.db
-      .select()
-      .from(schema.claims)
-      .where(eq(schema.claims.tenantId, tenantId))
-      .get()
-    if (existingClaim && existingClaim.poolId === this.poolConfig.poolId) {
-      const existing = this.allContainers.get(existingClaim.containerId)
-      if (existing) {
-        this.manager.recordActivity(existing.containerId)
-        return { container: existing, isAffinityMatch: true }
-      }
-    }
+    const endTimer = containerAcquireDuration.startTimer({ pool_id: this.poolConfig.poolId })
 
-    // Check for affinity container (tenant's previous container reserved for them)
-    const affinityReservation = this.db
-      .select()
-      .from(schema.affinityReservations)
-      .where(eq(schema.affinityReservations.tenantId, tenantId))
-      .get()
-    if (affinityReservation && affinityReservation.poolId === this.poolConfig.poolId) {
-      const affinityContainer = this.allContainers.get(affinityReservation.containerId)
-      if (affinityContainer) {
-        // Clear the timeout and remove from affinity
-        const timeout = this.affinityTimeouts.get(tenantId)
-        if (timeout) {
-          clearTimeout(timeout)
-          this.affinityTimeouts.delete(tenantId)
+    try {
+      // Check if tenant already has a claimed container (DB lookup)
+      const existingClaim = this.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.tenantId, tenantId))
+        .get()
+      if (existingClaim && existingClaim.poolId === this.poolConfig.poolId) {
+        const existing = this.allContainers.get(existingClaim.containerId)
+        if (existing) {
+          this.manager.recordActivity(existing.containerId)
+          affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
+          endTimer({ status: 'success' })
+          return { container: existing, isAffinityMatch: true }
         }
-        this.db
-          .delete(schema.affinityReservations)
-          .where(eq(schema.affinityReservations.tenantId, tenantId))
-          .run()
+      }
 
-        // Validate container is still healthy
-        const healthy = await this.manager.isHealthy(affinityContainer.containerId)
-        if (healthy) {
-          // Claim for tenant
-          await this.manager.claimForTenant(
-            affinityContainer.containerId,
-            tenantId,
-            affinityContainer,
-          )
+      // Check for affinity container (tenant's previous container reserved for them)
+      const affinityReservationRow = this.db
+        .select()
+        .from(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        .get()
+      if (affinityReservationRow && affinityReservationRow.poolId === this.poolConfig.poolId) {
+        const affinityContainer = this.allContainers.get(affinityReservationRow.containerId)
+        if (affinityContainer) {
+          // Clear the timeout and remove from affinity
+          const timeout = this.affinityTimeouts.get(tenantId)
+          if (timeout) {
+            clearTimeout(timeout)
+            this.affinityTimeouts.delete(tenantId)
+          }
+          this.db
+            .delete(schema.affinityReservations)
+            .where(eq(schema.affinityReservations.tenantId, tenantId))
+            .run()
+          this.updateAffinityMetrics()
+
+          // Validate container is still healthy
+          const healthy = await this.manager.isHealthy(affinityContainer.containerId)
+          if (healthy) {
+            // Claim for tenant
+            await this.manager.claimForTenant(
+              affinityContainer.containerId,
+              tenantId,
+              affinityContainer,
+            )
+            console.log(
+              `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
+            )
+            affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
+            endTimer({ status: 'success' })
+            this.emitPoolMetrics()
+            return { container: affinityContainer, isAffinityMatch: true }
+          }
+
+          // Container unhealthy, destroy it and fall through to pool
           console.log(
-            `[Pool] Returned affinity container ${affinityContainer.containerId} to tenant ${tenantId}`,
+            `[Pool] Affinity container ${affinityContainer.containerId} unhealthy, destroying`,
           )
-          return { container: affinityContainer, isAffinityMatch: true }
+          await this.manager.destroyContainer(affinityContainer.containerId)
+          this.allContainers.delete(affinityContainer.containerId)
+        } else {
+          // Container not in allContainers (maybe crashed), clean up DB
+          this.db
+            .delete(schema.affinityReservations)
+            .where(eq(schema.affinityReservations.tenantId, tenantId))
+            .run()
+          this.updateAffinityMetrics()
         }
-
-        // Container unhealthy, destroy it and fall through to pool
-        console.log(
-          `[Pool] Affinity container ${affinityContainer.containerId} unhealthy, destroying`,
-        )
-        await this.manager.destroyContainer(affinityContainer.containerId)
-        this.allContainers.delete(affinityContainer.containerId)
-      } else {
-        // Container not in allContainers (maybe crashed), clean up DB
-        this.db
-          .delete(schema.affinityReservations)
-          .where(eq(schema.affinityReservations.tenantId, tenantId))
-          .run()
       }
+
+      // Acquire from pool (no affinity match)
+      affinityMissesTotal.inc({ pool_id: this.poolConfig.poolId })
+      const container = await this.pool.acquire()
+
+      // Claim for tenant
+      await this.manager.claimForTenant(container.containerId, tenantId, container)
+
+      console.log(`[Pool] Claimed container ${container.containerId} for tenant ${tenantId}`)
+
+      endTimer({ status: 'success' })
+      this.emitPoolMetrics()
+      return { container, isAffinityMatch: false }
+    } catch (err) {
+      endTimer({ status: 'failure' })
+      throw err
     }
-
-    // Acquire from pool
-    const container = await this.pool.acquire()
-
-    // Claim for tenant
-    await this.manager.claimForTenant(container.containerId, tenantId, container)
-
-    console.log(`[Pool] Claimed container ${container.containerId} for tenant ${tenantId}`)
-
-    return { container, isAffinityMatch: false }
   }
 
   /**
@@ -248,89 +317,103 @@ export class ContainerPool {
    * wiped and returned to pool for other tenants.
    */
   async releaseForTenant(tenantId: TenantId): Promise<void> {
-    // Find container via claim DB
-    const claim = this.db
-      .select()
-      .from(schema.claims)
-      .where(eq(schema.claims.tenantId, tenantId))
-      .get()
-    if (!claim || claim.poolId !== this.poolConfig.poolId) {
-      console.log(`[Pool] No container found for tenant ${tenantId}`)
-      return
-    }
+    const endTimer = containerReleaseDuration.startTimer({ pool_id: this.poolConfig.poolId })
 
-    const container = this.allContainers.get(claim.containerId)
-    if (!container) {
-      console.log(
-        `[Pool] Container ${claim.containerId} not in allContainers for tenant ${tenantId}`,
-      )
-      this.db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
-      return
-    }
-
-    // Release from tenant claim (preserves lastTenantId for affinity)
-    await this.manager.releaseContainer(container.containerId, container)
-
-    // Clear any existing affinity for this tenant
-    const existingTimeout = this.affinityTimeouts.get(tenantId)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
-    const existingAffinity = this.db
-      .select()
-      .from(schema.affinityReservations)
-      .where(eq(schema.affinityReservations.tenantId, tenantId))
-      .get()
-    if (existingAffinity) {
-      const existingAffinityContainer = this.allContainers.get(existingAffinity.containerId)
-      if (existingAffinityContainer) {
-        await this.flushAffinityToPool(existingAffinityContainer)
+    try {
+      // Find container via claim DB
+      const claim = this.db
+        .select()
+        .from(schema.claims)
+        .where(eq(schema.claims.tenantId, tenantId))
+        .get()
+      if (!claim || claim.poolId !== this.poolConfig.poolId) {
+        console.log(`[Pool] No container found for tenant ${tenantId}`)
+        endTimer({ status: 'success' })
+        return
       }
-      this.db
-        .delete(schema.affinityReservations)
-        .where(eq(schema.affinityReservations.tenantId, tenantId))
-        .run()
-    }
 
-    // Persist affinity reservation
-    const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
-    this.db
-      .insert(schema.affinityReservations)
-      .values({
-        tenantId,
-        containerId: container.containerId,
-        poolId: this.poolConfig.poolId,
-        expiresAt,
-      })
-      .onConflictDoUpdate({
-        target: schema.affinityReservations.tenantId,
-        set: {
+      const container = this.allContainers.get(claim.containerId)
+      if (!container) {
+        console.log(
+          `[Pool] Container ${claim.containerId} not in allContainers for tenant ${tenantId}`,
+        )
+        this.db.delete(schema.claims).where(eq(schema.claims.containerId, claim.containerId)).run()
+        endTimer({ status: 'success' })
+        return
+      }
+
+      // Release from tenant claim (preserves lastTenantId for affinity)
+      await this.manager.releaseContainer(container.containerId, container)
+
+      // Clear any existing affinity for this tenant
+      const existingTimeout = this.affinityTimeouts.get(tenantId)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+      }
+      const existingAffinity = this.db
+        .select()
+        .from(schema.affinityReservations)
+        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        .get()
+      if (existingAffinity) {
+        const existingAffinityContainer = this.allContainers.get(existingAffinity.containerId)
+        if (existingAffinityContainer) {
+          await this.flushAffinityToPool(existingAffinityContainer)
+        }
+        this.db
+          .delete(schema.affinityReservations)
+          .where(eq(schema.affinityReservations.tenantId, tenantId))
+          .run()
+      }
+
+      // Persist affinity reservation
+      const expiresAt = new Date(Date.now() + this.poolConfig.affinityTimeoutMs)
+      this.db
+        .insert(schema.affinityReservations)
+        .values({
+          tenantId,
           containerId: container.containerId,
           poolId: this.poolConfig.poolId,
           expiresAt,
-        },
-      })
-      .run()
-
-    // Set timeout to return to pool if tenant doesn't come back
-    const timeout = setTimeout(async () => {
-      this.affinityTimeouts.delete(tenantId)
-      this.db
-        .delete(schema.affinityReservations)
-        .where(eq(schema.affinityReservations.tenantId, tenantId))
+        })
+        .onConflictDoUpdate({
+          target: schema.affinityReservations.tenantId,
+          set: {
+            containerId: container.containerId,
+            poolId: this.poolConfig.poolId,
+            expiresAt,
+          },
+        })
         .run()
-      // Look up the container from allContainers by the containerId we captured
-      const affinityContainer = this.allContainers.get(container.containerId)
-      if (affinityContainer) {
-        await this.flushAffinityToPool(affinityContainer)
-      }
-    }, this.poolConfig.affinityTimeoutMs)
+      this.updateAffinityMetrics()
 
-    this.affinityTimeouts.set(tenantId, timeout)
+      // Set timeout to return to pool if tenant doesn't come back
+      const timeout = setTimeout(async () => {
+        this.affinityTimeouts.delete(tenantId)
+        this.db
+          .delete(schema.affinityReservations)
+          .where(eq(schema.affinityReservations.tenantId, tenantId))
+          .run()
+        this.updateAffinityMetrics()
+        affinityEvictionsTotal.inc({ pool_id: this.poolConfig.poolId })
+        // Look up the container from allContainers by the containerId we captured
+        const affinityContainer = this.allContainers.get(container.containerId)
+        if (affinityContainer) {
+          await this.flushAffinityToPool(affinityContainer)
+        }
+      }, this.poolConfig.affinityTimeoutMs)
 
-    console.log(
-      `[Pool] Released container ${container.containerId} from tenant ${tenantId} (reserved for ${this.poolConfig.affinityTimeoutMs}ms)`,
-    )
+      this.affinityTimeouts.set(tenantId, timeout)
+
+      console.log(
+        `[Pool] Released container ${container.containerId} from tenant ${tenantId} (reserved for ${this.poolConfig.affinityTimeoutMs}ms)`,
+      )
+      endTimer({ status: 'success' })
+      this.emitPoolMetrics()
+    } catch (err) {
+      endTimer({ status: 'failure' })
+      throw err
+    }
   }
 
   /**
@@ -339,11 +422,24 @@ export class ContainerPool {
   private async flushAffinityToPool(container: PoolContainer): Promise<void> {
     try {
       // Wipe state for next tenant
+      const endWipeTimer = containerWipeDuration.startTimer({ pool_id: this.poolConfig.poolId })
       await this.manager.wipeForNewTenant(container.containerId)
+      endWipeTimer()
+      containerOperationsTotal.inc({
+        pool_id: this.poolConfig.poolId,
+        operation: 'wipe',
+        status: 'success',
+      })
       // Return to pool
       await this.pool.release(container)
       console.log(`[Pool] Flushed affinity container ${container.containerId} back to pool`)
+      this.emitPoolMetrics()
     } catch (err) {
+      containerOperationsTotal.inc({
+        pool_id: this.poolConfig.poolId,
+        operation: 'wipe',
+        status: 'failure',
+      })
       console.error(`[Pool] Failed to flush affinity container ${container.containerId}:`, err)
       // Try to destroy it since we couldn't return it cleanly
       try {
@@ -778,5 +874,34 @@ export class ContainerPool {
   async restoreIdle(container: PoolContainer): Promise<void> {
     this.allContainers.set(container.containerId, container)
     console.log(`[Pool] Restored idle container ${container.containerId}`)
+  }
+
+  /**
+   * Emit current pool metrics to Prometheus.
+   * Called after any pool state change.
+   */
+  private emitPoolMetrics(): void {
+    updatePoolMetrics({
+      poolId: this.poolConfig.poolId,
+      workloadId: this.poolConfig.workload.id,
+      size: this.pool.size,
+      available: this.pool.available,
+      borrowed: this.pool.borrowed,
+      pending: this.pool.pending,
+      min: this.pool.min,
+      max: this.pool.max,
+    })
+  }
+
+  /**
+   * Update affinity reservation gauge.
+   */
+  private updateAffinityMetrics(): void {
+    const result = this.db
+      .select({ cnt: count() })
+      .from(schema.affinityReservations)
+      .where(eq(schema.affinityReservations.poolId, this.poolConfig.poolId))
+      .get()
+    affinityReservations.set({ pool_id: this.poolConfig.poolId }, result?.cnt ?? 0)
   }
 }

@@ -1,0 +1,117 @@
+# Secure production deployment with docker-socket-proxy
+#
+# This compose file provides a secure setup where:
+# 1. Boilerhouse has no published ports (network isolation)
+# 2. Docker socket access is proxied and filtered
+# 3. The container runs with read-only filesystem
+#
+# Usage:
+#   cd deploy
+#   docker compose up -d
+#
+# To connect your application, add it to the 'boilerhouse' network
+# and access the API at http://boilerhouse:3000
+
+services:
+  # Docker socket proxy - filters Docker API calls
+  # Only allows container and image operations, blocks dangerous endpoints
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Allowed endpoints (1 = enabled, 0 = disabled)
+      CONTAINERS: 1    # Create, start, stop, remove, inspect, list
+      IMAGES: 1        # Pull images for workloads
+      POST: 1          # Write operations (create, start, stop)
+      # Blocked by default: EXEC, NETWORKS, VOLUMES, SWARM, NODES, SERVICES
+    networks:
+      - docker-socket
+    restart: unless-stopped
+
+  # Boilerhouse API server
+  boilerhouse:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      # Connect to Docker via the proxy instead of direct socket
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # Directory configuration
+      BOILERHOUSE_STATE_DIR: /var/lib/boilerhouse/states
+      BOILERHOUSE_SECRETS_DIR: /var/lib/boilerhouse/secrets
+      BOILERHOUSE_SOCKET_DIR: /var/run/boilerhouse
+      BOILERHOUSE_DB_PATH: /data/boilerhouse.db
+      BOILERHOUSE_WORKLOADS_DIR: /etc/boilerhouse/workloads
+      # Pool configuration (can be overridden via .env)
+      BOILERHOUSE_POOL_SIZE: ${BOILERHOUSE_POOL_SIZE:-5}
+      BOILERHOUSE_MAX_CONTAINERS: ${BOILERHOUSE_MAX_CONTAINERS:-50}
+      NODE_ENV: production
+    volumes:
+      # Persistent database storage
+      - boilerhouse-data:/data
+      # Host directories for container state (must exist on host)
+      - /var/lib/boilerhouse/states:/var/lib/boilerhouse/states
+      - /var/lib/boilerhouse/secrets:/var/lib/boilerhouse/secrets
+      - /var/run/boilerhouse:/var/run/boilerhouse
+      # Workload definitions (read-only)
+      - ./workloads:/etc/boilerhouse/workloads:ro
+    networks:
+      - docker-socket   # Access to docker-proxy
+      - boilerhouse     # API access for client apps
+    depends_on:
+      - docker-proxy
+    restart: unless-stopped
+    # Security hardening
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/bun/.cache
+    # NO ports: section - not reachable from host network
+    # Your app must join the 'boilerhouse' network to access the API
+
+  # Optional: MinIO for local S3-compatible state sync storage
+  # Uncomment if you want to test state sync locally
+  # minio:
+  #   image: minio/minio:latest
+  #   ports:
+  #     - "9000:9000"   # S3 API
+  #     - "9001:9001"   # Console
+  #   environment:
+  #     MINIO_ROOT_USER: minioadmin
+  #     MINIO_ROOT_PASSWORD: minioadmin
+  #   command: server /data --console-address ":9001"
+  #   volumes:
+  #     - minio-data:/data
+  #   networks:
+  #     - boilerhouse
+
+  # Example: your application
+  # Uncomment and modify for your app
+  # your-app:
+  #   image: your-app:latest
+  #   environment:
+  #     BOILERHOUSE_URL: http://boilerhouse:3000
+  #   networks:
+  #     - boilerhouse
+  #     - public
+  #   ports:
+  #     - "443:443"
+
+networks:
+  # Internal network for docker-proxy access
+  # Only Boilerhouse can reach the proxy
+  docker-socket:
+    internal: true
+
+  # Internal network for Boilerhouse API access
+  # Your app joins this network to communicate with Boilerhouse
+  boilerhouse:
+    internal: true
+
+  # Uncomment for your app's public network
+  # public:
+
+volumes:
+  boilerhouse-data:
+  # minio-data:

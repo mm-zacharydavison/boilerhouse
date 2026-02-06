@@ -207,6 +207,10 @@ export function updatePoolMetrics(pool: ContainerPool): void {
 
 ### Histogram Buckets
 
+Histogram buckets are defined in Prometheus metrics (not Grafana) because Prometheus histograms work by counting observations into pre-defined buckets at scrape time. Each observation increments the count for all buckets where the value is ≤ the bucket boundary. Grafana then uses PromQL's `histogram_quantile()` to calculate percentiles from these pre-bucketed counts.
+
+Bucket boundaries must be chosen based on expected value distributions:
+
 Use appropriate bucket sizes for different operations:
 
 ```typescript
@@ -503,3 +507,67 @@ Following Prometheus best practices:
 - **Push gateway**: For short-lived containers or batch jobs, consider Prometheus Pushgateway
 - **OpenTelemetry**: Consider migrating to OpenTelemetry for unified metrics/traces/logs
 - **Exemplars**: Add trace ID exemplars to histograms for correlation with distributed tracing
+
+## Structured Logging
+
+Complement metrics with structured logging for debugging and audit trails.
+
+### Library: @boilerhouse/logger or Elysia Logger Plugin
+
+Use `@elysiajs/logger` or a custom logger with JSON output:
+
+```typescript
+// apps/api/lib/logger.ts
+import { Elysia } from 'elysia'
+
+export const logger = new Elysia()
+  .onRequest(({ request }) => {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'request_start',
+      method: request.method,
+      path: new URL(request.url).pathname,
+      timestamp: new Date().toISOString(),
+    }))
+  })
+  .onAfterResponse(({ request, response, store }) => {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'request_end',
+      method: request.method,
+      path: new URL(request.url).pathname,
+      status: response.status,
+      duration_ms: performance.now() - store.requestStart,
+      timestamp: new Date().toISOString(),
+    }))
+  })
+```
+
+### Log Events
+
+| Event                      | Level | Fields                                           |
+|----------------------------|-------|--------------------------------------------------|
+| `container_acquired`       | info  | `tenant_id`, `container_id`, `pool_id`           |
+| `container_released`       | info  | `tenant_id`, `container_id`, `pool_id`           |
+| `container_created`        | info  | `container_id`, `pool_id`, `workload_id`         |
+| `container_destroyed`      | info  | `container_id`, `pool_id`, `reason`              |
+| `sync_started`             | info  | `tenant_id`, `direction`, `mode`                 |
+| `sync_completed`           | info  | `tenant_id`, `direction`, `bytes`, `files`, `duration_ms` |
+| `sync_failed`              | error | `tenant_id`, `direction`, `error`, `stderr`      |
+| `pool_scaled`              | info  | `pool_id`, `old_size`, `new_size`, `reason`      |
+| `health_check_failed`      | warn  | `container_id`, `pool_id`, `error`               |
+
+### Configuration
+
+| Variable                   | Default | Description                        |
+|----------------------------|---------|-----------------------------------|
+| `BOILERHOUSE_LOG_LEVEL`    | `info`  | Minimum log level (debug/info/warn/error) |
+| `BOILERHOUSE_LOG_FORMAT`   | `json`  | Output format (json/pretty)        |
+
+### Tasks
+
+- [ ] Add structured logger module to `apps/api/lib/logger.ts`
+- [ ] Integrate logger middleware with Elysia app
+- [ ] Add log events to ContainerPool lifecycle methods
+- [ ] Add log events to SyncCoordinator operations
+- [ ] Document log event schemas

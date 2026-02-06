@@ -10,10 +10,23 @@
 import type {
   PoolContainer,
   TenantId,
+  WorkloadId,
   WorkloadSyncConfig,
   WorkloadSyncMapping,
   WorkloadSyncPolicy,
 } from '@boilerhouse/core'
+import {
+  classifySyncError,
+  syncBisyncResyncTotal,
+  syncBytesTransferredTotal,
+  syncConcurrentOperations,
+  syncDuration,
+  syncErrorsTotal,
+  syncFilesTransferredTotal,
+  syncOperationsTotal,
+  syncPeriodicJobsActive,
+  syncQueueLength,
+} from '../metrics'
 import type { RcloneSyncExecutor, SyncResult } from './rclone'
 import type { SyncStatusTracker } from './status'
 
@@ -272,6 +285,7 @@ export class SyncCoordinator {
     const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
     const specInterval = policy.interval ?? 0
     const interval = Math.max(specInterval, this.config.minSyncInterval)
+    const workloadId = container.poolId as WorkloadId
 
     const job: PeriodicSyncJob = {
       tenantId,
@@ -286,6 +300,7 @@ export class SyncCoordinator {
 
     // Store job (one per tenant)
     this.periodicJobs.set(tenantId, job)
+    this.updatePeriodicJobMetrics(workloadId)
 
     this.log(`[Sync] Started periodic sync for tenant ${tenantId} (${interval}ms)`)
   }
@@ -327,10 +342,12 @@ export class SyncCoordinator {
   private stopPeriodicSync(tenantId: TenantId): void {
     const job = this.periodicJobs.get(tenantId)
     if (job) {
+      const workloadId = job.container.poolId as WorkloadId
       if (job.timerId) {
         clearTimeout(job.timerId)
       }
       this.periodicJobs.delete(tenantId)
+      this.updatePeriodicJobMetrics(workloadId)
       this.log(`[Sync] Stopped periodic sync for tenant ${tenantId}`)
     }
   }
@@ -347,14 +364,21 @@ export class SyncCoordinator {
     container: PoolContainer,
     initialSync = false,
   ): Promise<SyncResult> {
+    const workloadId = container.poolId as WorkloadId // poolId corresponds to workloadId
+    const direction = mapping.direction ?? 'bidirectional'
+    const mode = mapping.mode ?? 'sync'
+
     // Wait for a slot if at max concurrency
     if (this.runningCount >= this.config.maxConcurrent) {
       await this.waitForSlot()
     }
 
     this.runningCount++
+    this.updateConcurrencyMetrics(workloadId)
     const syncId = `workload-sync-${container.poolId}`
     this.statusTracker.markSyncStarted(tenantId, syncId)
+
+    const endTimer = syncDuration.startTimer({ workload_id: workloadId, direction, mode })
 
     try {
       // Convert WorkloadSyncMapping to the format expected by executor
@@ -362,8 +386,8 @@ export class SyncCoordinator {
         containerPath: mapping.path,
         pattern: mapping.pattern,
         sinkPath: mapping.sinkPath ?? mapping.path.split('/').pop() ?? '',
-        direction: mapping.direction ?? 'bidirectional',
-        mode: mapping.mode ?? 'sync',
+        direction,
+        mode,
       }
 
       const result = await this.executor.sync(
@@ -376,6 +400,22 @@ export class SyncCoordinator {
 
       if (result.success) {
         this.statusTracker.markSyncCompleted(tenantId, syncId)
+        syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'success' })
+
+        // Track bytes/files transferred
+        if (result.bytesTransferred) {
+          syncBytesTransferredTotal.inc(
+            { workload_id: workloadId, direction },
+            result.bytesTransferred,
+          )
+        }
+        if (result.filesTransferred) {
+          syncFilesTransferredTotal.inc(
+            { workload_id: workloadId, direction },
+            result.filesTransferred,
+          )
+        }
+
         this.log(
           `[Sync] Success: tenant=${tenantId}, path=${mapping.path}, ` +
             `files=${result.filesTransferred ?? 0}, bytes=${result.bytesTransferred ?? 0}`,
@@ -383,12 +423,27 @@ export class SyncCoordinator {
       } else {
         const errorMsg = result.errors?.join('; ') ?? 'Unknown error'
         this.statusTracker.markSyncFailed(tenantId, syncId, errorMsg, mapping.path)
+        syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'failure' })
+        syncErrorsTotal.inc({ workload_id: workloadId, error_type: classifySyncError(errorMsg) })
+
+        // Track bisync resync events
+        if (errorMsg.includes('--resync')) {
+          syncBisyncResyncTotal.inc({ workload_id: workloadId })
+        }
+
         this.log(`[Sync] Failed: tenant=${tenantId}, path=${mapping.path}, error=${errorMsg}`)
       }
 
+      endTimer()
       return result
+    } catch (err) {
+      syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'failure' })
+      syncErrorsTotal.inc({ workload_id: workloadId, error_type: classifySyncError(err) })
+      endTimer()
+      throw err
     } finally {
       this.runningCount--
+      this.updateConcurrencyMetrics(workloadId)
       this.processQueue()
     }
   }
@@ -479,5 +534,27 @@ export class SyncCoordinator {
     this.pendingQueue = []
 
     this.log('[Sync] Coordinator shutdown complete')
+  }
+
+  /**
+   * Update concurrency-related metrics.
+   */
+  private updateConcurrencyMetrics(workloadId: WorkloadId): void {
+    syncConcurrentOperations.set({ workload_id: workloadId }, this.runningCount)
+    syncQueueLength.set({ workload_id: workloadId }, this.pendingQueue.length)
+  }
+
+  /**
+   * Update periodic job metrics for a workload.
+   */
+  private updatePeriodicJobMetrics(workloadId: WorkloadId): void {
+    // Count jobs for this workload
+    let count = 0
+    for (const job of this.periodicJobs.values()) {
+      if (job.container.poolId === workloadId) {
+        count++
+      }
+    }
+    syncPeriodicJobsActive.set({ workload_id: workloadId }, count)
   }
 }

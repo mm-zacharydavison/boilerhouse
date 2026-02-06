@@ -65,12 +65,7 @@ The proxy (tecnativa/docker-socket-proxy) is ~5MB, zero-config, and we include i
 - Blocks exec, network manipulation, volume creation, swarm operations
 - Even if Boilerhouse is fully compromised, attacker can only create/destroy containers
 
-### Layer 3: API key authentication
-- `BOILERHOUSE_API_KEY` env var — when set, all endpoints except `/api/v1/health` require `Authorization: Bearer <key>`
-- Shared between Boilerhouse and the companion app via env var
-- Health endpoint stays public for Docker health checks and load balancers
-
-### Layer 4: Container hardening
+### Layer 3: Container hardening
 - `read_only: true` — filesystem is read-only (tmpfs for /tmp and rclone cache)
 - Non-root user (`bun` user from oven/bun image)
 - Minimal Alpine image with no shell utilities beyond what's needed
@@ -106,7 +101,6 @@ services:
     build: ..
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
-      BOILERHOUSE_API_KEY: ${BOILERHOUSE_API_KEY:?Set BOILERHOUSE_API_KEY}
       BOILERHOUSE_STATE_DIR: /var/lib/boilerhouse/states
       BOILERHOUSE_SECRETS_DIR: /var/lib/boilerhouse/secrets
       BOILERHOUSE_SOCKET_DIR: /var/run/boilerhouse
@@ -136,7 +130,6 @@ services:
   #   image: your-app:latest
   #   environment:
   #     BOILERHOUSE_URL: http://boilerhouse:3000
-  #     BOILERHOUSE_API_KEY: ${BOILERHOUSE_API_KEY}
   #   networks:
   #     - boilerhouse
   #     - public
@@ -159,39 +152,18 @@ Documented template with all env vars, defaults, and explanations.
 
 ### Files to modify
 
-#### `apps/api/lib/config.ts`
-Add `apiKey` field:
-```typescript
-apiKey: getEnvString('BOILERHOUSE_API_KEY', ''),
-```
-
 #### `apps/api/src/index.ts`
 - Parse `DOCKER_HOST` env var into `DockerRuntimeConfig`:
   - `tcp://host:port` → `{ host, port }`
   - `unix:///path` → `{ socketPath }`
   - unset → `undefined` (default socket `/var/run/docker.sock`)
 - Pass to `new DockerRuntime(parsedConfig)`
-- Pass `config.apiKey` to `createServer()`
 - Log Docker connection target
-
-#### `apps/api/src/server.ts`
-- Add `apiKey?: string` to `ServerDependencies`
-- When `apiKey` is set, add `.onBeforeHandle()` after health controller:
-  - Skip auth for paths starting with `/api/v1/health`
-  - Check `Authorization: Bearer <key>` header
-  - Return 401 `{ error: 'Unauthorized' }` on mismatch
-- When `apiKey` is empty/unset, no auth enforced (backwards compatible for dev)
 
 ## Verification
 
 - `bun run typecheck` — passes
-- `bun test` — passes (no API key in tests = no auth = backwards compatible)
+- `bun test` — passes
 - `docker build .` — succeeds
-- Manual test with API key:
-  ```bash
-  BOILERHOUSE_API_KEY=test bun run dev:api
-  curl localhost:3000/api/v1/health           # → 200
-  curl localhost:3000/api/v1/pools            # → 401
-  curl -H "Authorization: Bearer test" localhost:3000/api/v1/pools  # → 200
-  ```
 - Full deployment test: `cd deploy && docker compose up`
+- Verify network isolation: Boilerhouse API should only be reachable from containers on the `boilerhouse` network
