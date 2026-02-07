@@ -26,6 +26,7 @@ import type {
 import { type DrizzleDb, schema } from '@boilerhouse/db'
 import { and, count, eq } from 'drizzle-orm'
 import { config } from '../config'
+import { PoolCapacityError } from '../errors'
 import {
   affinityHitsTotal,
   containerAcquireDuration,
@@ -309,9 +310,7 @@ export class ContainerPool {
       // 4. No idle containers — create on demand if under maxSize
       const totalCount = this.getTotalCount()
       if (totalCount >= this.poolConfig.maxSize) {
-        throw new Error(
-          `Pool ${this.poolConfig.poolId} is at maximum capacity (${this.poolConfig.maxSize})`,
-        )
+        throw new PoolCapacityError(this.poolConfig.poolId, this.poolConfig.maxSize)
       }
 
       const container = await this.createAndInsert('claimed', tenantId)

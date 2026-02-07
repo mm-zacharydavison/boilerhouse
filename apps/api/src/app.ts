@@ -97,7 +97,7 @@ export class App {
     }
 
     this.poolRegistry.restoreFromDb()
-    this.idleReaper.restoreFromDb(this.poolRegistry.getPools(), this.manager)
+    await this.idleReaper.restoreFromDb(this.poolRegistry.getPools(), this.manager)
 
     return { recoveryStats }
   }

@@ -2,13 +2,17 @@
  * Idle Reaper
  *
  * Monitors claimed containers for filesystem inactivity by polling mtime.
- * A single poll loop walks the state directory tree for each watched container,
- * checking if any file or directory has been modified since the last poll.
- * When no modifications are detected for the configured TTL, the container
- * is automatically released back to the pool.
+ * A single poll loop walks the state directory tree for each watched container
+ * concurrently, checking if any file or directory has been modified since the
+ * last poll. When no modifications are detected for the configured TTL, the
+ * container is automatically released back to the pool.
+ *
+ * All filesystem walks are async (fs/promises) and run in parallel across
+ * containers via Promise.allSettled. The poll loop uses self-scheduling
+ * setTimeout to prevent slow walks from stacking.
  */
 
-import { readdirSync, statSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ContainerId, PoolId, TenantId } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
@@ -36,6 +40,9 @@ interface WatchedContainer {
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
 
+/** Maximum number of filesystem entries to walk per container before bailing */
+const MAX_WALK_ENTRIES = 10_000
+
 export interface IdleReaperDeps {
   db: DrizzleDb
   onExpiry: (containerId: ContainerId, tenantId: TenantId, poolId: PoolId) => Promise<void>
@@ -48,7 +55,7 @@ export class IdleReaper {
   private db: DrizzleDb
   private onExpiry: IdleReaperDeps['onExpiry']
   private pollIntervalMs: number
-  private pollTimer: ReturnType<typeof setInterval> | null = null
+  private pollTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(deps: IdleReaperDeps) {
     this.db = deps.db
@@ -140,7 +147,10 @@ export class IdleReaper {
    * Checks mtime of state directories and either releases immediately
    * (if idle through the restart) or starts watching with remaining TTL.
    */
-  restoreFromDb(pools: ReadonlyMap<PoolId, ContainerPool>, manager: ContainerManager): void {
+  async restoreFromDb(
+    pools: ReadonlyMap<PoolId, ContainerPool>,
+    manager: ContainerManager,
+  ): Promise<void> {
     for (const [poolId, pool] of pools) {
       const ttlMs = pool.getConfig().fileIdleTtl
       if (!ttlMs) continue
@@ -163,7 +173,7 @@ export class IdleReaper {
         const now = Date.now()
 
         try {
-          const maxMtime = this.getMaxMtime(stateDir)
+          const { maxMtime } = await this.walkMtimes(stateDir)
           const elapsed = now - maxMtime
 
           if (elapsed >= ttlMs) {
@@ -225,11 +235,23 @@ export class IdleReaper {
   }
 
   /**
-   * Start the shared poll loop if not already running.
+   * Start the self-scheduling poll loop if not already running.
+   * Uses setTimeout instead of setInterval to prevent slow polls from stacking.
    */
   private ensurePollLoop(): void {
     if (this.pollTimer) return
-    this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs)
+    this.schedulePoll()
+  }
+
+  private schedulePoll(): void {
+    this.pollTimer = setTimeout(async () => {
+      await this.poll()
+      if (this.watches.size > 0) {
+        this.schedulePoll()
+      } else {
+        this.pollTimer = null
+      }
+    }, this.pollIntervalMs)
   }
 
   /**
@@ -237,82 +259,84 @@ export class IdleReaper {
    */
   private stopPollLoop(): void {
     if (!this.pollTimer) return
-    clearInterval(this.pollTimer)
+    clearTimeout(this.pollTimer)
     this.pollTimer = null
   }
 
   /**
-   * Single poll iteration: check every watched container's state directory for mtime changes.
+   * Single poll iteration: check all watched containers concurrently.
    */
-  private poll(): void {
+  private async poll(): Promise<void> {
+    const entries = [...this.watches.entries()]
+    await Promise.allSettled(entries.map(([id, entry]) => this.pollOne(id, entry)))
+  }
+
+  /**
+   * Poll a single container's state directory for mtime changes.
+   */
+  private async pollOne(containerId: ContainerId, entry: WatchedContainer): Promise<void> {
     const now = Date.now()
-    // Snapshot keys to allow mutation during iteration
-    const containerIds = [...this.watches.keys()]
 
-    for (const containerId of containerIds) {
-      const entry = this.watches.get(containerId)
-      if (!entry) continue
+    try {
+      const { maxMtime, fileCount } = await this.walkMtimes(entry.stateDir)
 
-      try {
-        const { maxMtime, fileCount } = this.walkMtimes(entry.stateDir)
+      idleReaperFileWatchCount.set({ pool_id: entry.poolId, container_id: containerId }, fileCount)
 
-        idleReaperFileWatchCount.set(
-          { pool_id: entry.poolId, container_id: containerId },
-          fileCount,
-        )
+      if (maxMtime > entry.lastModified) {
+        // Activity detected — reset TTL
+        entry.lastModified = maxMtime
+        idleReaperResets.inc({ pool_id: entry.poolId })
 
-        if (maxMtime > entry.lastModified) {
-          // Activity detected — reset TTL
-          entry.lastModified = maxMtime
-          idleReaperResets.inc({ pool_id: entry.poolId })
-
-          // Debounced DB update (at most once per poll cycle)
-          if (!entry.dbUpdatePending) {
-            entry.dbUpdatePending = true
-            const newExpiry = new Date(now + entry.ttlMs)
-            // Use setTimeout so it doesn't block the poll loop
-            setTimeout(() => {
-              entry.dbUpdatePending = false
-              this.db
-                .update(schema.containers)
-                .set({ lastActivity: new Date(), idleExpiresAt: newExpiry })
-                .where(eq(schema.containers.containerId, containerId))
-                .run()
-            }, 0)
-          }
-        } else {
-          // No activity — check if TTL has elapsed
-          const elapsed = now - entry.lastModified
-          if (elapsed >= entry.ttlMs) {
-            this.handleExpiry(containerId)
-          }
+        // Debounced DB update (at most once per poll cycle)
+        if (!entry.dbUpdatePending) {
+          entry.dbUpdatePending = true
+          const newExpiry = new Date(now + entry.ttlMs)
+          // Use setTimeout so it doesn't block the poll loop
+          setTimeout(() => {
+            entry.dbUpdatePending = false
+            this.db
+              .update(schema.containers)
+              .set({ lastActivity: new Date(), idleExpiresAt: newExpiry })
+              .where(eq(schema.containers.containerId, containerId))
+              .run()
+          }, 0)
         }
-      } catch {
-        // State dir gone — treat as expired
-        console.warn(`[IdleReaper] Cannot stat ${entry.stateDir} for ${containerId}, expiring`)
-        this.handleExpiry(containerId)
+      } else {
+        // No activity — check if TTL has elapsed
+        const elapsed = now - entry.lastModified
+        if (elapsed >= entry.ttlMs) {
+          this.handleExpiry(containerId)
+        }
       }
+    } catch {
+      // State dir gone — treat as expired
+      console.warn(`[IdleReaper] Cannot stat ${entry.stateDir} for ${containerId}, expiring`)
+      this.handleExpiry(containerId)
     }
   }
 
   /**
-   * Walk a directory tree and return the maximum mtime and total entry count.
+   * Async walk of a directory tree. Returns the maximum mtime and total entry count.
+   * Bails after MAX_WALK_ENTRIES to avoid unbounded traversal.
    */
-  private walkMtimes(dir: string): { maxMtime: number; fileCount: number } {
+  private async walkMtimes(dir: string): Promise<{ maxMtime: number; fileCount: number }> {
     let maxMtime = 0
     let fileCount = 0
 
-    const walk = (current: string) => {
-      const st = statSync(current)
+    const walk = async (current: string) => {
+      if (fileCount >= MAX_WALK_ENTRIES) return
+
+      const st = await stat(current)
       fileCount++
       if (st.mtimeMs > maxMtime) {
         maxMtime = st.mtimeMs
       }
       if (st.isDirectory()) {
         try {
-          const entries = readdirSync(current)
+          const entries = await readdir(current)
           for (const entry of entries) {
-            walk(join(current, entry))
+            if (fileCount >= MAX_WALK_ENTRIES) return
+            await walk(join(current, entry))
           }
         } catch {
           // Permission denied or dir disappeared mid-walk
@@ -320,15 +344,8 @@ export class IdleReaper {
       }
     }
 
-    walk(dir)
+    await walk(dir)
     return { maxMtime, fileCount }
-  }
-
-  /**
-   * Get the maximum mtime across all files in a directory tree.
-   */
-  private getMaxMtime(dir: string): number {
-    return this.walkMtimes(dir).maxMtime
   }
 
   private handleExpiry(containerId: ContainerId): void {

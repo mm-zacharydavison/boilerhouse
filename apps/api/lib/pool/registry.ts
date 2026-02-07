@@ -22,6 +22,7 @@ import { eq } from 'drizzle-orm'
 import { type ActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
+import { PoolNotFoundError, WorkloadNotFoundError } from '../errors'
 import type { WorkloadRegistry } from '../workload'
 
 /**
@@ -241,7 +242,7 @@ export class PoolRegistry {
 
     const workload = this.workloadRegistry.get(workloadId)
     if (!workload) {
-      throw new Error(`Workload ${workloadId} not found`)
+      throw new WorkloadNotFoundError(workloadId)
     }
 
     // Use workload pool config as defaults, then override with explicit config
@@ -520,7 +521,7 @@ export class PoolRegistry {
   async destroyPool(poolId: PoolId): Promise<void> {
     const pool = this.pools.get(poolId)
     if (!pool) {
-      throw new Error(`Pool ${poolId} not found`)
+      throw new PoolNotFoundError(poolId)
     }
 
     await pool.drain()

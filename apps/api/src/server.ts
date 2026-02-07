@@ -8,6 +8,7 @@ import { cors } from '@elysiajs/cors'
 import { Elysia } from 'elysia'
 import type { ActivityLog } from '../lib/activity'
 import type { ContainerManager, IdleReaper } from '../lib/container'
+import { isDomainError } from '../lib/errors'
 import { httpMetricsMiddleware } from '../lib/metrics'
 import type { PoolRegistry } from '../lib/pool/registry'
 import type { SyncCoordinator } from '../lib/sync'
@@ -53,6 +54,18 @@ export function createServer(deps: ServerDependencies) {
   return new Elysia()
     .use(cors())
     .use(httpMetricsMiddleware)
+    .onError(({ error, set }) => {
+      if (isDomainError(error)) {
+        set.status = error.status
+        return { error: error.message }
+      }
+      if (error instanceof Error) {
+        set.status = 500
+        return { error: error.message }
+      }
+      set.status = 500
+      return { error: 'Internal server error' }
+    })
     .use(metricsController())
     .use(healthController({ poolRegistry, syncStatusTracker, activityLog }))
     .use(workloadsController({ workloadRegistry }))

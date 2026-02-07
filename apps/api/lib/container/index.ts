@@ -22,5 +22,8 @@ export { ContainerPool, type ContainerPoolConfig, type PoolStats } from './pool'
 // Idle reaper (filesystem-based TTL expiry)
 export { IdleReaper, type IdleReaperDeps } from './idle-reaper'
 
+// Shared claim flow
+export { claimContainer, type ClaimContainerDeps, type ClaimResult } from './claim'
+
 // Shared release flow
 export { releaseContainer, type ReleaseContainerDeps } from './release'

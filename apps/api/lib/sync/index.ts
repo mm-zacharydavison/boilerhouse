@@ -28,3 +28,6 @@ export {
   SyncCoordinator,
   type SyncCoordinatorConfig,
 } from './coordinator'
+
+// Shared sync result logging
+export { logSyncResults } from './logging'

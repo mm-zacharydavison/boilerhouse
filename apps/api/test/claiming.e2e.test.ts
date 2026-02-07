@@ -100,9 +100,9 @@ describe('Container Claiming', () => {
       expect(claim.status).toBe(200)
     }
 
-    // Try to claim one more - should fail
+    // Try to claim one more - should fail with 429 (pool at capacity)
     const overflow = await harness.claimContainer('tenant-overflow')
-    expect(overflow.status).toBe(500)
+    expect(overflow.status).toBe(429)
     expect(overflow.data).toHaveProperty('error')
 
     // Verify pool is at capacity

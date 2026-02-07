@@ -6,16 +6,22 @@
 
 import type { PoolId, TenantId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
+import { type ActivityLog, logSyncStarted } from '../../lib/activity'
 import {
-  type ActivityLog,
-  logContainerClaimed,
-  logSyncCompleted,
-  logSyncFailed,
-  logSyncStarted,
-} from '../../lib/activity'
-import { type ContainerManager, type IdleReaper, releaseContainer } from '../../lib/container'
+  type ContainerManager,
+  type IdleReaper,
+  claimContainer,
+  releaseContainer,
+} from '../../lib/container'
+import {
+  ContainerNotFoundError,
+  PoolNotFoundError,
+  SyncNotConfiguredError,
+  TenantNotFoundError,
+} from '../../lib/errors'
 import type { PoolRegistry } from '../../lib/pool/registry'
 import type { SyncCoordinator } from '../../lib/sync'
+import { logSyncResults } from '../../lib/sync/logging'
 import type { SyncStatusTracker } from '../../lib/sync/status'
 
 export interface TenantsControllerDeps {
@@ -75,11 +81,10 @@ export function tenantsController(deps: TenantsControllerDeps) {
 
     .get(
       '/:id',
-      ({ params, set }) => {
+      ({ params }) => {
         const pool = poolRegistry.getPoolForTenant(params.id)
         if (!pool) {
-          set.status = 404
-          return { error: `Tenant ${params.id} not found` }
+          throw new TenantNotFoundError(params.id)
         }
 
         const container = pool.getContainerForTenant(params.id)
@@ -133,67 +138,24 @@ export function tenantsController(deps: TenantsControllerDeps) {
 
     .post(
       '/:id/claim',
-      async ({ params, body, set }) => {
+      async ({ params, body }) => {
         const pool = poolRegistry.getPool(body.poolId)
         if (!pool) {
-          set.status = 404
-          return { error: `Pool ${body.poolId} not found` }
+          throw new PoolNotFoundError(body.poolId)
         }
 
-        try {
-          // Wipe-on-entry happens inside acquireForTenant when a different tenant
-          // claims a container. Same tenant reclaiming skips the wipe.
-          const container = await pool.acquireForTenant(params.id)
-          logContainerClaimed(container.containerId, params.id, body.poolId, activityLog)
+        const { container } = await claimContainer(
+          params.id as TenantId,
+          body.poolId as PoolId,
+          pool,
+          { containerManager, syncCoordinator, activityLog, idleReaper },
+        )
 
-          // Determine if this tenant is returning to their previous container.
-          // If so, state is intact → incremental bisync. Otherwise → full download.
-          const isReturningTenant = container.lastTenantId === params.id
-
-          // Trigger onClaim sync
-          const workload = pool.getWorkload()
-          if (workload.sync) {
-            logSyncStarted(params.id, isReturningTenant ? 'bisync' : 'download', activityLog)
-            const results = await syncCoordinator.onClaim(
-              params.id,
-              container,
-              workload.sync,
-              !isReturningTenant,
-            )
-            const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
-            if (results.every((r) => r.success)) {
-              logSyncCompleted(params.id, totalBytes, activityLog)
-            } else {
-              const errors = results.filter((r) => !r.success).flatMap((r) => r.errors ?? [])
-              logSyncFailed(params.id, errors.join('; '), activityLog)
-            }
-          }
-
-          // Restart container to get fresh process with synced data
-          // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
-          await containerManager.restartContainer(container.containerId, 2)
-
-          // Start filesystem idle TTL watch if configured
-          const fileIdleTtl = pool.getConfig().fileIdleTtl
-          if (fileIdleTtl) {
-            idleReaper.watch(
-              container.containerId,
-              params.id as TenantId,
-              body.poolId as PoolId,
-              container.stateDir,
-              fileIdleTtl,
-            )
-          }
-
-          return {
-            containerId: container.containerId,
-            endpoints: {
-              socket: container.socketPath,
-            },
-          }
-        } catch (err) {
-          set.status = 500
-          return { error: (err as Error).message }
+        return {
+          containerId: container.containerId,
+          endpoints: {
+            socket: container.socketPath,
+          },
         }
       },
       {
@@ -209,17 +171,15 @@ export function tenantsController(deps: TenantsControllerDeps) {
 
     .post(
       '/:id/release',
-      async ({ params, body, set }) => {
+      async ({ params, body }) => {
         const pool = poolRegistry.getPoolForTenant(params.id)
         if (!pool) {
-          set.status = 404
-          return { error: `Tenant ${params.id} not found` }
+          throw new TenantNotFoundError(params.id)
         }
 
         const container = pool.getContainerForTenant(params.id)
         if (!container) {
-          set.status = 404
-          return { error: `No container for tenant ${params.id}` }
+          throw new ContainerNotFoundError(`No container for tenant ${params.id}`)
         }
 
         // Stop filesystem idle watch before release
@@ -248,23 +208,20 @@ export function tenantsController(deps: TenantsControllerDeps) {
 
     .post(
       '/:id/sync',
-      async ({ params, body, set }) => {
+      async ({ params, body }) => {
         const pool = poolRegistry.getPoolForTenant(params.id)
         if (!pool) {
-          set.status = 404
-          return { error: `Tenant ${params.id} not found` }
+          throw new TenantNotFoundError(params.id)
         }
 
         const container = pool.getContainerForTenant(params.id)
         if (!container) {
-          set.status = 404
-          return { error: `No container for tenant ${params.id}` }
+          throw new ContainerNotFoundError(`No container for tenant ${params.id}`)
         }
 
         const workload = pool.getWorkload()
         if (!workload.sync) {
-          set.status = 400
-          return { error: 'No sync configuration for this workload' }
+          throw new SyncNotConfiguredError()
         }
 
         logSyncStarted(params.id, body.direction ?? 'both', activityLog)
@@ -275,15 +232,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
           body.direction ?? 'both',
         )
 
-        const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
-        const hasErrors = results.some((r) => !r.success)
-
-        if (hasErrors) {
-          const errors = results.filter((r) => !r.success).flatMap((r) => r.errors ?? [])
-          logSyncFailed(params.id, errors.join('; '), activityLog)
-        } else {
-          logSyncCompleted(params.id, totalBytes, activityLog)
-        }
+        const { hasErrors } = logSyncResults(params.id, results, activityLog)
 
         return {
           success: !hasErrors,

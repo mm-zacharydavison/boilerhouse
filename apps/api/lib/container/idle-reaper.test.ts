@@ -325,7 +325,7 @@ describe('IdleReaper', () => {
     reaper.shutdown()
   })
 
-  test('restoreFromDb starts watches for claimed containers', () => {
+  test('restoreFromDb starts watches for claimed containers', async () => {
     const { db, manager, stateBaseDir } = setupTest()
     const containerId = 'restore-container' as ContainerId
     const tenantId = 'restore-tenant' as TenantId
@@ -375,7 +375,7 @@ describe('IdleReaper', () => {
 
     const pools = new Map<PoolId, ContainerPool>([[poolId, pool]])
 
-    reaper.restoreFromDb(pools, manager)
+    await reaper.restoreFromDb(pools, manager)
 
     // Should have started a watch for the claimed container
     expect(reaper.isWatching(containerId)).toBe(true)
@@ -436,7 +436,7 @@ describe('IdleReaper', () => {
     // Small delay to ensure mtime is stale relative to 1ms TTL
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    reaper.restoreFromDb(pools, manager)
+    await reaper.restoreFromDb(pools, manager)
 
     // Give async onExpiry a moment to be called
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -450,7 +450,7 @@ describe('IdleReaper', () => {
     pool.stop()
   })
 
-  test('restoreFromDb skips pools without fileIdleTtl', () => {
+  test('restoreFromDb skips pools without fileIdleTtl', async () => {
     const { db, manager, stateBaseDir } = setupTest()
     const containerId = 'no-ttl-container' as ContainerId
     const poolId = 'no-ttl-pool' as PoolId
@@ -494,7 +494,7 @@ describe('IdleReaper', () => {
 
     const pools = new Map<PoolId, ContainerPool>([[poolId, pool]])
 
-    reaper.restoreFromDb(pools, manager)
+    await reaper.restoreFromDb(pools, manager)
 
     // Should NOT have started any watches
     expect(reaper.activeWatchCount).toBe(0)

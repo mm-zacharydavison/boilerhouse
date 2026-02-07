@@ -6,14 +6,9 @@
  */
 
 import type { TenantId } from '@boilerhouse/core'
-import {
-  type ActivityLog,
-  logContainerReleased,
-  logSyncCompleted,
-  logSyncFailed,
-  logSyncStarted,
-} from '../activity'
+import { type ActivityLog, logContainerReleased, logSyncStarted } from '../activity'
 import type { SyncCoordinator } from '../sync'
+import { logSyncResults } from '../sync/logging'
 import type { ContainerPool } from './pool'
 
 export interface ReleaseContainerDeps {
@@ -44,13 +39,7 @@ export async function releaseContainer(
   if (opts?.skipSync !== true && workload.sync) {
     logSyncStarted(tenantId, 'upload', activityLog)
     const results = await syncCoordinator.onRelease(tenantId, container, workload.sync)
-    const totalBytes = results.reduce((sum, r) => sum + (r.bytesTransferred ?? 0), 0)
-    if (results.every((r) => r.success)) {
-      logSyncCompleted(tenantId, totalBytes, activityLog)
-    } else {
-      const errors = results.filter((r) => !r.success).flatMap((r) => r.errors ?? [])
-      logSyncFailed(tenantId, errors.join('; '), activityLog)
-    }
+    logSyncResults(tenantId, results, activityLog)
   }
 
   logContainerReleased(container.containerId, tenantId, pool.getPoolId(), activityLog)
