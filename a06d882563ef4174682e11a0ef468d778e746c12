@@ -1,0 +1,37 @@
+packages/docker/src/docker-runtime.ts
+  8c1826b89cd75f93 51,153,176,255
+packages/core/src/types.ts
+  8c1826b89cd75f93 395-448
+apps/api/lib/container/runtime.ts
+  8c1826b89cd75f93 7
+packages/core/src/runtime.ts
+  8c1826b89cd75f93 283,337,364,378
+apps/api/lib/container/index.ts
+  8c1826b89cd75f93 3
+apps/dashboard/src/api/types.ts
+  8c1826b89cd75f93 8,10,12,16-17,59,65
+apps/api/lib/pool/registry.ts
+  8c1826b89cd75f93 13,17,23,270,273-278,280-281,283-288,292-295,333-334,337-347,351-352,355-357,359-362,366-367,370-372,374-381
+apps/api/lib/pool/index.ts
+  8c1826b89cd75f93 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "a06d882563ef4174682e11a0ef468d778e746c12",
+  "prompts": {
+    "8c1826b89cd75f93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2c499ac-fc34-47bb-a3c0-bde35b2ecaed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 149,
+      "total_deletions": 239,
+      "accepted_lines": 132,
+      "overriden_lines": 2
+    }
+  }
+}
