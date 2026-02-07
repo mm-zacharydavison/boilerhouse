@@ -22,7 +22,7 @@ import {
   useScalePool,
 } from '@/hooks/useApi'
 import { formatRelativeTime } from '@/lib/utils'
-import type { PoolId } from '@boilerhouse/core'
+import { ContainerId, type PoolId } from '@boilerhouse/core'
 import { useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, Loader2, Minus, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
@@ -67,7 +67,7 @@ export function PoolDetailPage() {
 
   const handleDeleteContainer = (containerId: string) => {
     if (confirm('Are you sure you want to delete this container?')) {
-      destroyContainer.mutate(containerId)
+      destroyContainer.mutate(ContainerId(containerId))
     }
   }
 

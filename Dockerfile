@@ -6,7 +6,7 @@ FROM oven/bun:1-alpine AS deps
 WORKDIR /app
 
 # Copy workspace package files for dependency resolution
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY packages/core/package.json ./packages/core/

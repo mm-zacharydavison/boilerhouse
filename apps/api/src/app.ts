@@ -5,7 +5,7 @@
  * Used by both the production entrypoint (index.ts) and the test harness.
  */
 
-import type { ContainerRuntime } from '@boilerhouse/core'
+import type { ContainerRuntime, PoolId } from '@boilerhouse/core'
 import type { DrizzleDb } from '@boilerhouse/db'
 import { ActivityLog } from '../lib/activity'
 import {
@@ -112,6 +112,15 @@ export class App {
     }
 
     this.poolRegistry.restoreFromDb()
+
+    for (const workload of this.workloadRegistry.list()) {
+      const poolId = workload.id as string as PoolId
+      if (!this.poolRegistry.hasPool(poolId)) {
+        this.log.info({ poolId, workloadId: workload.id }, 'Auto-creating pool for workload')
+        this.poolRegistry.createPool(poolId, workload.id)
+      }
+    }
+
     await this.idleReaper.restoreFromDb(this.poolRegistry.getPools(), this.manager)
 
     return { recoveryStats }

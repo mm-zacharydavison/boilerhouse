@@ -2,6 +2,7 @@ import { Layout } from '@/components/layout'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@/components/ui'
 import { useReleaseContainer, useSyncHistory, useTenant, useTriggerSync } from '@/hooks'
 import { formatRelativeTime } from '@/lib/utils'
+import { TenantId } from '@boilerhouse/core'
 import { ArrowLeft, Cloud, HardDrive, Loader2, Play, RefreshCw, Square } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
@@ -45,9 +46,10 @@ function SyncStatusBadge({ state }: { state: string }) {
 }
 
 export function TenantDetailPage() {
-  const { tenantId } = useParams<{ tenantId: string }>()
+  const { tenantId: rawTenantId } = useParams<{ tenantId: string }>()
+  const tenantId = rawTenantId ? TenantId(rawTenantId) : undefined
   const navigate = useNavigate()
-  const { data: tenant, isLoading, error } = useTenant(tenantId ?? '')
+  const { data: tenant, isLoading, error } = useTenant(tenantId ?? TenantId(''))
   const { data: syncHistory } = useSyncHistory(tenantId, 10)
   const releaseContainer = useReleaseContainer()
   const triggerSync = useTriggerSync()
