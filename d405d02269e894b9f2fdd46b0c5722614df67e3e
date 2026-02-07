@@ -1,0 +1,49 @@
+apps/api/lib/container/idle-reaper.test.ts
+  8c1826b89cd75f93 328,378,439,453,497
+apps/api/src/app.ts
+  8c1826b89cd75f93 100
+apps/api/lib/sync/logging.ts
+  8c1826b89cd75f93 1-34
+apps/api/lib/container/index.ts
+  8c1826b89cd75f93 25-27
+apps/api/src/server.ts
+  8c1826b89cd75f93 11,57-68
+apps/api/lib/sync/index.ts
+  8c1826b89cd75f93 31-33
+apps/api/src/routes/tenants.ts
+  8c1826b89cd75f93 9,11-13,15,17-21,24,87,144,147-151,177,182,214,219,224,235
+apps/api/lib/container/idle-reaper.ts
+  8c1826b89cd75f93 6-12,15,43-45,58,150,152-153,176,238-239,243-254,262,267-271,275,277,279,281-282,284,289,319-320,322,326-329,336,338-339,347
+apps/api/lib/container/pool.ts
+  8c1826b89cd75f93 29,313
+apps/api/lib/errors.ts
+  8c1826b89cd75f93 1-65,67-69,71
+apps/api/lib/container/release.ts
+  8c1826b89cd75f93 9,11,42
+apps/api/lib/pool/registry.ts
+  8c1826b89cd75f93 245,524
+apps/api/lib/container/claim.ts
+  8c1826b89cd75f93 1-71
+apps/api/test/claiming.e2e.test.ts
+  8c1826b89cd75f93 103,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "d405d02269e894b9f2fdd46b0c5722614df67e3e",
+  "prompts": {
+    "8c1826b89cd75f93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2c499ac-fc34-47bb-a3c0-bde35b2ecaed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 330,
+      "total_deletions": 186,
+      "accepted_lines": 290,
+      "overriden_lines": 2
+    }
+  }
+}
