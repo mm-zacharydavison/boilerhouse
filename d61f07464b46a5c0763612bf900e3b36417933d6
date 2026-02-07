@@ -1,0 +1,23 @@
+Dockerfile
+  21f3211099730fd9 17-20,32,36,65-66,85-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "d61f07464b46a5c0763612bf900e3b36417933d6",
+  "prompts": {
+    "21f3211099730fd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2cafb7c0-0c3b-42f3-8217-baa57fb48188",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 5,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
