@@ -1,0 +1,45 @@
+apps/api/lib/container/idle-reaper.test.ts
+  8c1826b89cd75f93 13,18,113,137,160,193,227,260,283,310,348,414,427,478,491,545,558
+apps/api/lib/pool/registry.ts
+  8c1826b89cd75f93 26,169,176,182,198-200,219,272
+apps/api/lib/logger.ts
+  8c1826b89cd75f93 1-18
+apps/api/src/index.ts
+  8c1826b89cd75f93 4,44-54,68,75,78-80,86-88,90-91,97,105,113,116,119,123,128
+apps/api/src/app.ts
+  8c1826b89cd75f93 17,35-36,48,56-57,65-66,71,78,97,110
+apps/api/lib/container/idle-reaper.ts
+  8c1826b89cd75f93 20,52-53,59,66,186-188,191-193,319,363-365,375
+apps/api/lib/recovery/index.ts
+  8c1826b89cd75f93 16,28-29,40,46,59,63,68,74,80-82
+apps/api/lib/sync/coordinator.unit.test.ts
+  8c1826b89cd75f93 7,52-53
+apps/api/lib/container/pool.ts
+  8c1826b89cd75f93 30,93,102,106,209-210,226,250,298,350,376,403,424,539,545,551,557-558,569,589,595,665,672,681,711-712,724,738,750,791,861,866,872
+apps/api/lib/sync/coordinator.ts
+  8c1826b89cd75f93 18,115,129,135,184,234,277,309,355,424,438,481,540
+apps/api/lib/container/container.unit.test.ts
+  8c1826b89cd75f93 11,17,82,109,136,163,192,222,251,281,311,344
+apps/api/src/server.ts
+  8c1826b89cd75f93 8,13,40,55,60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "5a7e7f32dc469a0ff40f1e55f3ae64a3fab92201",
+  "prompts": {
+    "8c1826b89cd75f93": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2c499ac-fc34-47bb-a3c0-bde35b2ecaed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 234,
+      "total_deletions": 134,
+      "accepted_lines": 184,
+      "overriden_lines": 15
+    }
+  }
+}
