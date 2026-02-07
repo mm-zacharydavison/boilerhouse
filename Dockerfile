@@ -14,8 +14,10 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/docker/package.json ./packages/docker/
 COPY packages/cli/package.json ./packages/cli/
 
-# Install dependencies
-RUN bun install --frozen-lockfile
+# Install build tools for native deps, then install dependencies
+RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
+    bun install --frozen-lockfile && \
+    apk del .build-deps
 
 # ============================================================
 # Stage 2: Build
@@ -27,9 +29,11 @@ WORKDIR /app
 # Copy installed dependencies
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/docker/node_modules ./packages/docker/node_modules
+COPY --from=deps /app/packages/cli/node_modules ./packages/cli/node_modules
 
 # Copy source code
 COPY . .
@@ -58,9 +62,8 @@ COPY --from=build /app/packages/docker/node_modules ./packages/docker/node_modul
 
 # Copy built output
 COPY --from=build /app/apps/api/dist ./apps/api/dist
-COPY --from=build /app/packages/core/dist ./packages/core/dist
-COPY --from=build /app/packages/db/dist ./packages/db/dist
-COPY --from=build /app/packages/docker/dist ./packages/docker/dist
+COPY --from=build /app/apps/dashboard/dist ./apps/dashboard/dist
+COPY --from=build /app/packages/db/drizzle ./apps/api/dist/drizzle
 
 # Copy package.json files (needed for module resolution)
 COPY --from=build /app/package.json ./
@@ -78,6 +81,9 @@ EXPOSE 3000
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/api/v1/health || exit 1
+
+# Create /data directory with correct permissions
+RUN mkdir -p /data && chown bun:bun /data
 
 # Run as non-root user (bun user from oven/bun image)
 USER bun
