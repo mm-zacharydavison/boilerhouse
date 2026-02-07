@@ -27,6 +27,7 @@ import { type DrizzleDb, schema } from '@boilerhouse/db'
 import { and, count, eq } from 'drizzle-orm'
 import { config } from '../config'
 import { PoolCapacityError } from '../errors'
+import type { Logger } from '../logger'
 import {
   affinityHitsTotal,
   containerAcquireDuration,
@@ -89,6 +90,7 @@ export class ContainerPool {
   private manager: ContainerManager
   private poolConfig: ContainerPoolConfig
   private db: DrizzleDb
+  private log: Logger
   /** Background fill loop timer */
   private fillLoopInterval: ReturnType<typeof setInterval> | null = null
   private _lastError: PoolError | null = null
@@ -97,9 +99,11 @@ export class ContainerPool {
     manager: ContainerManager,
     poolConfig: Pick<ContainerPoolConfig, 'workload' | 'poolId'> & Partial<ContainerPoolConfig>,
     db: DrizzleDb,
+    logger: Logger,
   ) {
     this.manager = manager
     this.db = db
+    this.log = logger.child({ component: 'Pool', poolId: poolConfig.poolId })
     this.poolConfig = {
       workload: poolConfig.workload,
       poolId: poolConfig.poolId,
@@ -202,8 +206,8 @@ export class ContainerPool {
               'claimed',
               tenantId,
             )
-            console.log(
-              `[Pool] Returned previous container ${affinityRow.containerId} to tenant ${tenantId} (no wipe)`,
+            this.log.info(
+              `Returned previous container ${affinityRow.containerId} to tenant ${tenantId} (no wipe)`,
             )
             affinityHitsTotal.inc({ pool_id: this.poolConfig.poolId })
             endTimer({ status: 'success' })
@@ -219,7 +223,7 @@ export class ContainerPool {
           // Someone else claimed it — fall through to general idle search
         } else {
           // Container unhealthy, destroy it and fall through
-          console.log(`[Pool] Previous container ${affinityRow.containerId} unhealthy, destroying`)
+          this.log.info(`Previous container ${affinityRow.containerId} unhealthy, destroying`)
           await this.destroyAndRemove(affinityRow.containerId)
         }
       }
@@ -243,9 +247,7 @@ export class ContainerPool {
         // Validate health
         const healthy = await this.manager.isHealthy(candidate.containerId)
         if (!healthy) {
-          console.log(
-            `[Pool] Idle container ${candidate.containerId} failed health check, destroying`,
-          )
+          this.log.info(`Idle container ${candidate.containerId} failed health check, destroying`)
           containerHealthCheckFailuresTotal.inc({ pool_id: this.poolConfig.poolId })
           await this.destroyAndRemove(candidate.containerId)
           continue
@@ -293,9 +295,7 @@ export class ContainerPool {
           tenantId,
         )
 
-        console.log(
-          `[Pool] Claimed container ${candidate.containerId} for tenant ${tenantId} (wiped)`,
-        )
+        this.log.info(`Claimed container ${candidate.containerId} for tenant ${tenantId} (wiped)`)
         endTimer({ status: 'success' })
         this.emitPoolMetrics()
         return this.toPoolContainer({
@@ -347,7 +347,7 @@ export class ContainerPool {
         .get()
 
       if (!row) {
-        console.log(`[Pool] No container found for tenant ${tenantId}`)
+        this.log.info(`No container found for tenant ${tenantId}`)
         endTimer({ status: 'success' })
         return
       }
@@ -373,7 +373,7 @@ export class ContainerPool {
         '',
       )
 
-      console.log(`[Pool] Released container ${row.containerId} from tenant ${tenantId} to idle`)
+      this.log.info(`Released container ${row.containerId} from tenant ${tenantId} to idle`)
       endTimer({ status: 'success' })
       this.emitPoolMetrics()
     } catch (err) {
@@ -400,7 +400,7 @@ export class ContainerPool {
 
     if (!row) return
     await this.destroyAndRemove(row.containerId)
-    console.log(`[Pool] Destroyed container ${row.containerId} for tenant ${tenantId}`)
+    this.log.info(`Destroyed container ${row.containerId} for tenant ${tenantId}`)
   }
 
   /**
@@ -421,7 +421,7 @@ export class ContainerPool {
     if (!row) return false
 
     await this.destroyAndRemove(containerId as ContainerId)
-    console.log(`[Pool] Destroyed container ${containerId}`)
+    this.log.info(`Destroyed container ${containerId}`)
     return true
   }
 
@@ -536,26 +536,26 @@ export class ContainerPool {
     if (targetSize > currentSize) {
       // Scale up: create new idle containers
       const toCreate = targetSize - currentSize
-      console.log(`[Pool] Scaling up: creating ${toCreate} containers`)
+      this.log.info(`Scaling up: creating ${toCreate} containers`)
 
       for (let i = 0; i < toCreate; i++) {
         try {
           await this.createAndInsert('idle')
         } catch (err) {
-          console.error('[Pool] Failed to create container during scale up:', err)
+          this.log.error({ err }, 'Failed to create container during scale up')
           break
         }
       }
 
       const newSize = this.getStats().size
-      console.log(`[Pool] Scale up complete: ${currentSize} -> ${newSize}`)
+      this.log.info(`Scale up complete: ${currentSize} -> ${newSize}`)
       return { newSize, message: `Scaled up from ${currentSize} to ${newSize}` }
     }
 
     // Scale down: destroy idle containers
     if (targetSize < stats.borrowed) {
-      console.log(
-        `[Pool] Cannot scale to ${targetSize}, ${stats.borrowed} containers are claimed. Min possible: ${stats.borrowed}`,
+      this.log.info(
+        `Cannot scale to ${targetSize}, ${stats.borrowed} containers are claimed. Min possible: ${stats.borrowed}`,
       )
       return {
         newSize: currentSize,
@@ -566,7 +566,7 @@ export class ContainerPool {
     const toDestroy = currentSize - targetSize
     let destroyed = 0
 
-    console.log(`[Pool] Scaling down: destroying ${toDestroy} idle containers`)
+    this.log.info(`Scaling down: destroying ${toDestroy} idle containers`)
 
     while (destroyed < toDestroy) {
       const idleRow = this.db
@@ -586,13 +586,13 @@ export class ContainerPool {
         await this.destroyAndRemove(idleRow.containerId)
         destroyed++
       } catch (err) {
-        console.error('[Pool] Failed to destroy container during scale down:', err)
+        this.log.error({ err }, 'Failed to destroy container during scale down')
         break
       }
     }
 
     const newSize = this.getStats().size
-    console.log(`[Pool] Scale down complete: ${currentSize} -> ${newSize}`)
+    this.log.info(`Scale down complete: ${currentSize} -> ${newSize}`)
     return { newSize, message: `Scaled down from ${currentSize} to ${newSize}` }
   }
 
@@ -662,14 +662,14 @@ export class ContainerPool {
    * and DB rows intact for recovery on restart.
    */
   stop(): void {
-    console.log('[Pool] Stopping pool (preserving containers)...')
+    this.log.info('Stopping pool (preserving containers)...')
 
     if (this.fillLoopInterval) {
       clearInterval(this.fillLoopInterval)
       this.fillLoopInterval = null
     }
 
-    console.log('[Pool] Pool stopped')
+    this.log.info('Pool stopped')
   }
 
   /**
@@ -678,7 +678,7 @@ export class ContainerPool {
    * Destroys all containers and removes all DB rows for this pool.
    */
   async drain(): Promise<void> {
-    console.log('[Pool] Draining pool...')
+    this.log.info('Draining pool...')
 
     if (this.fillLoopInterval) {
       clearInterval(this.fillLoopInterval)
@@ -708,7 +708,10 @@ export class ContainerPool {
           operation: 'destroy',
           status: 'failure',
         })
-        console.error(`[Pool] Failed to destroy container ${row.containerId} during drain:`, err)
+        this.log.error(
+          { err, containerId: row.containerId },
+          'Failed to destroy container during drain',
+        )
       }
     }
 
@@ -718,7 +721,7 @@ export class ContainerPool {
       .where(eq(schema.containers.poolId, this.poolConfig.poolId))
       .run()
 
-    console.log('[Pool] Pool drained')
+    this.log.info('Pool drained')
   }
 
   // ---------------------------------------------------------------------------
@@ -732,7 +735,7 @@ export class ContainerPool {
     status: 'idle' | 'claimed',
     tenantId?: TenantId,
   ): Promise<PoolContainer> {
-    console.log('[Pool] Creating new container')
+    this.log.info('Creating new container')
     const endTimer = containerCreateDuration.startTimer({
       pool_id: this.poolConfig.poolId,
       workload_id: this.poolConfig.workload.id,
@@ -744,7 +747,7 @@ export class ContainerPool {
         this.poolConfig.poolId,
         this.poolConfig.networks,
       )
-      console.log(`[Pool] Created container ${container.containerId}`)
+      this.log.info(`Created container ${container.containerId}`)
       this._lastError = null
 
       const now = new Date()
@@ -785,7 +788,7 @@ export class ContainerPool {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      console.error(`[Pool] Failed to create container: ${message}`)
+      this.log.error({ err }, 'Failed to create container')
       this._lastError = { message, timestamp: new Date() }
       endTimer()
       containerOperationsTotal.inc({
@@ -855,18 +858,18 @@ export class ContainerPool {
 
       if (idleNeeded > 0 && capacityLeft > 0) {
         const toCreate = Math.min(idleNeeded, capacityLeft)
-        console.log(`[Pool ${this.poolConfig.poolId}] Fill loop: creating ${toCreate} containers`)
+        this.log.info(`Fill loop: creating ${toCreate} containers`)
         for (let i = 0; i < toCreate; i++) {
           try {
             await this.createAndInsert('idle')
           } catch (err) {
-            console.error('[Pool] Fill loop create error:', err)
+            this.log.error({ err }, 'Fill loop container creation failed')
             break
           }
         }
       }
     } catch (err) {
-      console.error('[Pool] Fill loop error:', err)
+      this.log.error({ err }, 'Fill loop error')
     }
   }
 

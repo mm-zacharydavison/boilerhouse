@@ -1,6 +1,7 @@
 import { closeDatabase, initDatabase } from '@boilerhouse/db'
 import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
 import { config } from '../lib/config'
+import { createLogger } from '../lib/logger'
 import { App } from './app'
 
 /**
@@ -40,13 +41,18 @@ function parseDockerHost(dockerHost: string | undefined): DockerRuntimeConfig | 
   )
 }
 
-console.log('Starting Boilerhouse API server...')
-console.log('Configuration:')
-console.log(`  - Min idle: ${config.pool.minPoolIdle}`)
-console.log(`  - Max containers: ${config.pool.maxContainersPerNode}`)
-console.log(`  - API: ${config.apiHost}:${config.apiPort}`)
-console.log(`  - Workloads dir: ${config.workloadsDir}`)
-console.log(`  - Database: ${config.dbPath}`)
+const log = createLogger()
+
+log.info(
+  {
+    minIdle: config.pool.minPoolIdle,
+    maxContainers: config.pool.maxContainersPerNode,
+    api: `${config.apiHost}:${config.apiPort}`,
+    workloadsDir: config.workloadsDir,
+    dbPath: config.dbPath,
+  },
+  'Starting Boilerhouse API server',
+)
 
 // Initialize SQLite database with WAL mode
 const db = initDatabase({ path: config.dbPath })
@@ -59,30 +65,36 @@ const runtime = new DockerRuntime(dockerConfig)
 const dockerTarget = dockerConfig?.host
   ? `tcp://${dockerConfig.host}:${dockerConfig.port ?? 2375}`
   : (dockerConfig?.socketPath ?? '/var/run/docker.sock')
-console.log(`  - Runtime: ${runtime.name} (${dockerTarget})`)
+log.info({ runtime: runtime.name, target: dockerTarget }, 'Container runtime configured')
 
 // Wire all services
 const app = new App({
   runtime,
   db,
   workloadsDir: config.workloadsDir,
+  logger: log,
 })
 
-console.log(
-  `  - Loaded ${app.workloadRegistry.size} workload(s): ${app.workloadRegistry.ids().join(', ') || '(none)'}`,
+log.info(
+  { count: app.workloadRegistry.size, workloads: app.workloadRegistry.ids() },
+  'Workloads loaded',
 )
 
 // Run recovery, restore pools and idle reaper watches
 const { recoveryStats } = await app.start()
 if (recoveryStats) {
-  console.log(
-    `  - Recovery: docker=${recoveryStats.dockerContainers}, staleContainers=${recoveryStats.staleContainers}`,
+  log.info(
+    {
+      dockerContainers: recoveryStats.dockerContainers,
+      staleContainers: recoveryStats.staleContainers,
+    },
+    'Recovery complete',
   )
 }
 
 const restoredPools = app.poolRegistry.getPools().size
 if (restoredPools > 0) {
-  console.log(`  - Restored ${restoredPools} pool(s) from database`)
+  log.info({ count: restoredPools }, 'Pools restored from database')
 }
 
 app.server.listen({
@@ -90,7 +102,7 @@ app.server.listen({
   port: config.apiPort,
 })
 
-console.log(`Boilerhouse API server listening on ${config.apiHost}:${config.apiPort}`)
+log.info({ host: config.apiHost, port: config.apiPort }, 'Boilerhouse API server listening')
 
 // Watch for workload file changes in development
 if (process.env.NODE_ENV !== 'production') {
@@ -98,22 +110,22 @@ if (process.env.NODE_ENV !== 'production') {
   app.workloadRegistry.onChange((event) => {
     switch (event.type) {
       case 'added':
-        console.log(`Workload added: ${event.workload.id}`)
+        log.info({ workloadId: event.workload.id }, 'Workload added')
         break
       case 'updated':
-        console.log(`Workload updated: ${event.workload.id}`)
+        log.info({ workloadId: event.workload.id }, 'Workload updated')
         break
       case 'removed':
-        console.log(`Workload removed: ${event.workloadId}`)
+        log.info({ workloadId: event.workloadId }, 'Workload removed')
         break
     }
   })
-  console.log('Watching for workload file changes...')
+  log.info('Watching for workload file changes')
 }
 
 // Graceful shutdown - preserves containers for recovery on restart
 async function shutdown() {
-  console.log('Shutting down...')
+  log.info('Shutting down...')
   await app.shutdown()
   closeDatabase(db)
   process.exit(0)

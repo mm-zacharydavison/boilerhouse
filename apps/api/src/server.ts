@@ -5,10 +5,12 @@
  */
 
 import { cors } from '@elysiajs/cors'
+import { opentelemetry } from '@elysiajs/opentelemetry'
 import { Elysia } from 'elysia'
 import type { ActivityLog } from '../lib/activity'
 import type { ContainerManager, IdleReaper } from '../lib/container'
 import { isDomainError } from '../lib/errors'
+import type { Logger } from '../lib/logger'
 import { httpMetricsMiddleware } from '../lib/metrics'
 import type { PoolRegistry } from '../lib/pool/registry'
 import type { SyncCoordinator } from '../lib/sync'
@@ -35,6 +37,7 @@ export interface ServerDependencies {
   syncStatusTracker: SyncStatusTracker
   activityLog: ActivityLog
   idleReaper: IdleReaper
+  logger?: Logger
 }
 
 /**
@@ -49,10 +52,12 @@ export function createServer(deps: ServerDependencies) {
     syncStatusTracker,
     activityLog,
     idleReaper,
+    logger,
   } = deps
 
   return new Elysia()
     .use(cors())
+    .use(opentelemetry())
     .use(httpMetricsMiddleware)
     .onError(({ error, set }) => {
       if (isDomainError(error)) {

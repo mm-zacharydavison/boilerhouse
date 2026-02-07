@@ -8,10 +8,13 @@
 import { describe, expect, type mock, test } from 'bun:test'
 import { DEFAULT_SECURITY_CONFIG } from '@boilerhouse/core'
 import { createTestDatabase } from '@boilerhouse/db'
+import pino from 'pino'
 import type { ContainerRuntime } from '.'
 import { createMockContainerRuntime, createPoolId, createWorkloadSpec } from '../../test/fixtures'
 import { ContainerManager } from './manager'
 import { ContainerPool } from './pool'
+
+const silentLogger = pino({ level: 'silent' })
 
 function setupTest() {
   const db = createTestDatabase()
@@ -76,6 +79,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       const container1 = await pool.acquireForTenant('tenant-pool-1')
@@ -102,6 +106,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       const container1 = await pool.acquireForTenant('tenant-a')
@@ -128,6 +133,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       expect(pool.hasTenant('tenant-check')).toBe(false)
@@ -154,6 +160,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       const container1 = await pool.acquireForTenant('tenant-affinity')
@@ -182,6 +189,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       // Tenant A claims and releases
@@ -211,6 +219,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       const stats = pool.getStats()
@@ -239,6 +248,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       await pool.acquireForTenant('tenant-x')
@@ -268,6 +278,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       await pool.acquireForTenant('tenant-stats-1')
@@ -297,6 +308,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       await pool.acquireForTenant('tenant-release')
@@ -329,6 +341,7 @@ describe('ContainerPool', () => {
           acquireTimeoutMs: 5000,
         },
         db,
+        silentLogger,
       )
 
       await pool.acquireForTenant('tenant-all-1')

@@ -13,6 +13,7 @@
 import type { ContainerRuntime } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
 import { eq } from 'drizzle-orm'
+import type { Logger } from '../logger'
 
 export interface RecoveryStats {
   /** Docker containers found with managed label */
@@ -24,6 +25,8 @@ export interface RecoveryStats {
 export interface RecoveryConfig {
   /** Label prefix for managed containers */
   labelPrefix: string
+  /** Logger instance */
+  logger: Logger
 }
 
 /**
@@ -34,12 +37,13 @@ export async function recoverState(
   db: DrizzleDb,
   config: RecoveryConfig,
 ): Promise<RecoveryStats> {
+  const log = config.logger.child({ component: 'Recovery' })
   const stats: RecoveryStats = {
     dockerContainers: 0,
     staleContainers: 0,
   }
 
-  console.log('[Recovery] Starting state recovery...')
+  log.info('Starting state recovery...')
 
   // 1. List Docker containers with managed label (Docker = source of truth)
   const dockerContainers = await runtime.listContainers({
@@ -52,29 +56,30 @@ export async function recoverState(
       dockerContainerIds.add(containerId)
     } else if (containerId && container.status !== 'running') {
       // Remove stopped containers from Docker
-      console.log(`[Recovery] Removing stopped container ${containerId}`)
+      log.info({ containerId }, 'Removing stopped container')
       try {
         await runtime.removeContainer(container.id)
       } catch (err) {
-        console.error(`[Recovery] Failed to remove stopped container ${containerId}:`, err)
+        log.error({ err, containerId }, 'Failed to remove stopped container')
       }
     }
   }
   stats.dockerContainers = dockerContainerIds.size
-  console.log(`[Recovery] Found ${dockerContainerIds.size} running managed containers in Docker`)
+  log.info({ count: dockerContainerIds.size }, 'Found running managed containers in Docker')
 
   // 2. Clean up container rows for containers NOT in Docker
   const allContainerRows = db.select().from(schema.containers).all()
   for (const row of allContainerRows) {
     if (!dockerContainerIds.has(row.containerId)) {
-      console.log(`[Recovery] Cleaning stale container row for ${row.containerId}`)
+      log.info({ containerId: row.containerId }, 'Cleaning stale container row')
       db.delete(schema.containers).where(eq(schema.containers.containerId, row.containerId)).run()
       stats.staleContainers++
     }
   }
 
-  console.log(
-    `[Recovery] Complete: docker=${stats.dockerContainers}, staleContainers=${stats.staleContainers}`,
+  log.info(
+    { dockerContainers: stats.dockerContainers, staleContainers: stats.staleContainers },
+    'Recovery complete',
   )
 
   return stats

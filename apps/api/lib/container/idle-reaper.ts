@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import type { ContainerId, PoolId, TenantId } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
 import { and, eq } from 'drizzle-orm'
+import type { Logger } from '../logger'
 import {
   idleReaperExpirations,
   idleReaperFileWatchCount,
@@ -48,17 +49,21 @@ export interface IdleReaperDeps {
   onExpiry: (containerId: ContainerId, tenantId: TenantId, poolId: PoolId) => Promise<void>
   /** How often to poll state directories for mtime changes (default: 5000ms) */
   pollIntervalMs?: number
+  /** Logger instance */
+  logger: Logger
 }
 
 export class IdleReaper {
   private watches = new Map<ContainerId, WatchedContainer>()
   private db: DrizzleDb
+  private log: Logger
   private onExpiry: IdleReaperDeps['onExpiry']
   private pollIntervalMs: number
   private pollTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(deps: IdleReaperDeps) {
     this.db = deps.db
+    this.log = deps.logger.child({ component: 'IdleReaper' })
     this.onExpiry = deps.onExpiry
     this.pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   }
@@ -178,13 +183,14 @@ export class IdleReaper {
 
           if (elapsed >= ttlMs) {
             // Container was idle through the restart — release immediately
-            console.log(
-              `[IdleReaper] Container ${row.containerId} was idle through restart, releasing`,
+            this.log.info(
+              { containerId: row.containerId },
+              'Container was idle through restart, releasing',
             )
             this.onExpiry(row.containerId, tenantId, poolId).catch((err) => {
-              console.error(
-                `[IdleReaper] Failed to release idle container ${row.containerId} on recovery:`,
-                err,
+              this.log.error(
+                { err, containerId: row.containerId },
+                'Failed to release idle container on recovery',
               )
             })
           } else {
@@ -310,7 +316,7 @@ export class IdleReaper {
       }
     } catch {
       // State dir gone — treat as expired
-      console.warn(`[IdleReaper] Cannot stat ${entry.stateDir} for ${containerId}, expiring`)
+      this.log.warn({ containerId, stateDir: entry.stateDir }, 'Cannot stat state dir, expiring')
       this.handleExpiry(containerId)
     }
   }
@@ -354,8 +360,9 @@ export class IdleReaper {
 
     const { tenantId, poolId } = entry
 
-    console.log(
-      `[IdleReaper] Container ${containerId} (tenant ${tenantId}) expired after ${entry.ttlMs}ms inactivity`,
+    this.log.info(
+      { containerId, tenantId, ttlMs: entry.ttlMs },
+      'Container expired due to filesystem inactivity',
     )
 
     idleReaperExpirations.inc({ pool_id: poolId })
@@ -365,7 +372,7 @@ export class IdleReaper {
 
     // Trigger the release flow
     this.onExpiry(containerId, tenantId, poolId).catch((err) => {
-      console.error(`[IdleReaper] Failed to release expired container ${containerId}:`, err)
+      this.log.error({ err, containerId }, 'Failed to release expired container')
     })
   }
 }

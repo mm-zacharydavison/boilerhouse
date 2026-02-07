@@ -15,6 +15,7 @@ import type {
   WorkloadSyncMapping,
   WorkloadSyncPolicy,
 } from '@boilerhouse/core'
+import type { Logger } from '../logger'
 import {
   classifySyncError,
   syncBisyncResyncTotal,
@@ -111,6 +112,7 @@ export class SyncCoordinator {
   private executor: RcloneSyncExecutor
   private statusTracker: SyncStatusTracker
   private config: Required<SyncCoordinatorConfig>
+  private _log: Logger
 
   /** Active periodic sync jobs by tenant ID */
   private periodicJobs: Map<TenantId, PeriodicSyncJob> = new Map()
@@ -124,11 +126,13 @@ export class SyncCoordinator {
   constructor(
     executor: RcloneSyncExecutor,
     statusTracker: SyncStatusTracker,
+    logger: Logger,
     config?: SyncCoordinatorConfig,
   ) {
     this.executor = executor
     this.statusTracker = statusTracker
     this.config = { ...DEFAULT_CONFIG, ...config }
+    this._log = logger.child({ component: 'SyncCoordinator' })
   }
 
   /**
@@ -177,7 +181,7 @@ export class SyncCoordinator {
     }
 
     this.log(
-      `[Sync] onClaim completed for tenant ${tenantId}: ${results.length} syncs (initialSync=${initialSync})`,
+      `onClaim completed for tenant ${tenantId}: ${results.length} syncs (initialSync=${initialSync})`,
     )
     return results
   }
@@ -227,7 +231,7 @@ export class SyncCoordinator {
     // Clear status for this tenant
     this.statusTracker.clearTenant(tenantId)
 
-    this.log(`[Sync] onRelease completed for tenant ${tenantId}: ${results.length} syncs`)
+    this.log(`onRelease completed for tenant ${tenantId}: ${results.length} syncs`)
     return results
   }
 
@@ -270,7 +274,7 @@ export class SyncCoordinator {
       results.push(result)
     }
 
-    this.log(`[Sync] Manual trigger completed for tenant ${tenantId}: ${results.length} syncs`)
+    this.log(`Manual trigger completed for tenant ${tenantId}: ${results.length} syncs`)
     return results
   }
 
@@ -302,7 +306,7 @@ export class SyncCoordinator {
     this.periodicJobs.set(tenantId, job)
     this.updatePeriodicJobMetrics(workloadId)
 
-    this.log(`[Sync] Started periodic sync for tenant ${tenantId} (${interval}ms)`)
+    this.log(`Started periodic sync for tenant ${tenantId} (${interval}ms)`)
   }
 
   /**
@@ -348,7 +352,7 @@ export class SyncCoordinator {
       }
       this.periodicJobs.delete(tenantId)
       this.updatePeriodicJobMetrics(workloadId)
-      this.log(`[Sync] Stopped periodic sync for tenant ${tenantId}`)
+      this.log(`Stopped periodic sync for tenant ${tenantId}`)
     }
   }
 
@@ -417,7 +421,7 @@ export class SyncCoordinator {
         }
 
         this.log(
-          `[Sync] Success: tenant=${tenantId}, path=${mapping.path}, ` +
+          `Success: tenant=${tenantId}, path=${mapping.path}, ` +
             `files=${result.filesTransferred ?? 0}, bytes=${result.bytesTransferred ?? 0}`,
         )
       } else {
@@ -431,7 +435,7 @@ export class SyncCoordinator {
           syncBisyncResyncTotal.inc({ workload_id: workloadId })
         }
 
-        this.log(`[Sync] Failed: tenant=${tenantId}, path=${mapping.path}, error=${errorMsg}`)
+        this.log(`Failed: tenant=${tenantId}, path=${mapping.path}, error=${errorMsg}`)
       }
 
       endTimer()
@@ -474,7 +478,7 @@ export class SyncCoordinator {
    */
   private log(message: string): void {
     if (this.config.verbose) {
-      console.log(message)
+      this._log.info(message)
     }
   }
 
@@ -533,7 +537,7 @@ export class SyncCoordinator {
     // Clear pending queue
     this.pendingQueue = []
 
-    this.log('[Sync] Coordinator shutdown complete')
+    this.log('Coordinator shutdown complete')
   }
 
   /**

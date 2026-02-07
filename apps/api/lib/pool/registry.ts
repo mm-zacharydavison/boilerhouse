@@ -23,6 +23,7 @@ import { type ActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
 import { PoolNotFoundError, WorkloadNotFoundError } from '../errors'
+import type { Logger } from '../logger'
 import type { WorkloadRegistry } from '../workload'
 
 /**
@@ -165,17 +166,20 @@ export class PoolRegistry {
   private workloadRegistry: WorkloadRegistry
   private activityLog: ActivityLog
   private db: DrizzleDb
+  private log: Logger
 
   constructor(
     manager: ContainerManager,
     workloadRegistry: WorkloadRegistry,
     activityLog: ActivityLog,
     db: DrizzleDb,
+    logger: Logger,
   ) {
     this.manager = manager
     this.workloadRegistry = workloadRegistry
     this.activityLog = activityLog
     this.db = db
+    this.log = logger.child({ component: 'PoolRegistry' })
   }
 
   /**
@@ -191,8 +195,9 @@ export class PoolRegistry {
 
       const workload = this.workloadRegistry.get(record.workloadId)
       if (!workload) {
-        console.log(
-          `[PoolRegistry] Skipping pool ${record.poolId}: workload ${record.workloadId} not found`,
+        this.log.info(
+          { poolId: record.poolId, workloadId: record.workloadId },
+          'Skipping pool: workload not found',
         )
         continue
       }
@@ -211,6 +216,7 @@ export class PoolRegistry {
           fileIdleTtl: record.fileIdleTtl ?? undefined,
         },
         this.db,
+        this.log,
       )
       pool.start()
 
@@ -263,6 +269,7 @@ export class PoolRegistry {
         ...config,
       },
       this.db,
+      this.log,
     )
     pool.start()
 

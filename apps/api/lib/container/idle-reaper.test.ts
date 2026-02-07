@@ -10,9 +10,12 @@ import { join } from 'node:path'
 import type { ContainerId, ContainerRuntime, PoolId, TenantId } from '@boilerhouse/core'
 import { createTestDatabase, schema } from '@boilerhouse/db'
 import { eq } from 'drizzle-orm'
+import pino from 'pino'
 import { IdleReaper } from './idle-reaper'
 import { ContainerManager } from './manager'
 import { ContainerPool } from './pool'
+
+const silentLogger = pino({ level: 'silent' })
 
 function createMockRuntime(): ContainerRuntime {
   return {
@@ -104,7 +107,12 @@ describe('IdleReaper', () => {
     mkdirSync(stateDir, { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     expect(reaper.isWatching(containerId)).toBe(false)
     expect(reaper.activeWatchCount).toBe(0)
@@ -123,7 +131,12 @@ describe('IdleReaper', () => {
   test('unwatch is a no-op for unwatched container', () => {
     const { db } = setupTest()
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     // Should not throw
     reaper.unwatch('nonexistent' as ContainerId)
@@ -141,7 +154,12 @@ describe('IdleReaper', () => {
     mkdirSync(stateDir, { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     // TTL of 100ms — will expire after a couple poll cycles
     reaper.watch(containerId, tenantId, poolId, stateDir, 100)
@@ -169,7 +187,12 @@ describe('IdleReaper', () => {
     mkdirSync(stateDir, { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     // TTL of 200ms
     reaper.watch(containerId, tenantId, poolId, stateDir, 200)
@@ -198,7 +221,12 @@ describe('IdleReaper', () => {
     mkdirSync(join(stateDir, 'subdir', 'deep'), { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     reaper.watch(containerId, tenantId, poolId, stateDir, 200)
 
@@ -226,7 +254,12 @@ describe('IdleReaper', () => {
     mkdirSync(stateDir, { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     reaper.watch(containerId, tenantId, poolId, stateDir, 100)
 
@@ -244,7 +277,12 @@ describe('IdleReaper', () => {
   test('shutdown clears all watches', () => {
     const { db, stateBaseDir } = setupTest()
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     for (let i = 0; i < 3; i++) {
       const containerId = `container-${i}` as ContainerId
@@ -266,7 +304,12 @@ describe('IdleReaper', () => {
     mkdirSync(stateDir, { recursive: true })
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     reaper.watch(containerId, 'tenant-1' as TenantId, 'pool-1' as PoolId, stateDir, 60000)
     expect(reaper.activeWatchCount).toBe(1)
@@ -299,7 +342,12 @@ describe('IdleReaper', () => {
       .run()
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     reaper.watch(containerId, tenantId, poolId, stateDir, 5000)
 
@@ -360,7 +408,12 @@ describe('IdleReaper', () => {
       .run()
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     const runtime = createMockRuntime()
     const pool = new ContainerPool(
@@ -371,6 +424,7 @@ describe('IdleReaper', () => {
       }),
       { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5, fileIdleTtl: 60000 },
       db,
+      silentLogger,
     )
 
     const pools = new Map<PoolId, ContainerPool>([[poolId, pool]])
@@ -418,7 +472,12 @@ describe('IdleReaper', () => {
       .run()
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     const runtime = createMockRuntime()
     const pool = new ContainerPool(
@@ -429,6 +488,7 @@ describe('IdleReaper', () => {
       }),
       { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5, fileIdleTtl: 1 },
       db,
+      silentLogger,
     )
 
     const pools = new Map<PoolId, ContainerPool>([[poolId, pool]])
@@ -479,7 +539,12 @@ describe('IdleReaper', () => {
       .run()
 
     const onExpiry = mock<ExpiryFn>(async () => {})
-    const reaper = new IdleReaper({ db, onExpiry, pollIntervalMs: TEST_POLL_MS })
+    const reaper = new IdleReaper({
+      db,
+      onExpiry,
+      pollIntervalMs: TEST_POLL_MS,
+      logger: silentLogger,
+    })
 
     const runtime = createMockRuntime()
     const pool = new ContainerPool(
@@ -490,6 +555,7 @@ describe('IdleReaper', () => {
       }),
       { workload: WORKLOAD_FIXTURE, poolId, minIdle: 0, maxSize: 5 },
       db,
+      silentLogger,
     )
 
     const pools = new Map<PoolId, ContainerPool>([[poolId, pool]])

@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { WorkloadSyncConfig, WorkloadSyncPolicy } from '@boilerhouse/core'
+import pino from 'pino'
 import { createTestDb } from '../../test/db'
 import {
   createMockRcloneExecutor,
@@ -48,7 +49,9 @@ describe('SyncCoordinator', () => {
     executor = createMockRcloneExecutor() as unknown as RcloneSyncExecutor
     const db = createTestDb()
     statusTracker = new SyncStatusTracker(db)
-    coordinator = new SyncCoordinator(executor, statusTracker, { verbose: false })
+    coordinator = new SyncCoordinator(executor, statusTracker, pino({ level: 'silent' }), {
+      verbose: false,
+    })
   })
 
   afterEach(async () => {

@@ -14,6 +14,7 @@ import {
   IdleReaper,
   releaseContainer,
 } from '../lib/container'
+import { type Logger, createLogger } from '../lib/logger'
 import { PoolRegistry } from '../lib/pool/registry'
 import { recoverState } from '../lib/recovery'
 import { RcloneSyncExecutor, SyncCoordinator, SyncStatusTracker } from '../lib/sync'
@@ -31,6 +32,8 @@ export interface AppConfig {
   labelPrefix?: string
   /** Poll interval for idle reaper (default: 5000ms) */
   idleReaperPollIntervalMs?: number
+  /** Logger instance (creates a default one if not provided) */
+  logger?: Logger
 }
 
 export class App {
@@ -42,6 +45,7 @@ export class App {
   readonly syncCoordinator: SyncCoordinator
   readonly idleReaper: IdleReaper
   readonly server: ReturnType<typeof createServer>
+  readonly log: Logger
 
   private readonly config: AppConfig
 
@@ -49,20 +53,29 @@ export class App {
     this.config = config
     const { runtime, db, workloadsDir } = config
 
+    this.log = config.logger ?? createLogger()
+
     this.workloadRegistry = createWorkloadRegistry(workloadsDir)
     this.activityLog = new ActivityLog(db)
     this.manager = new ContainerManager(runtime, config.managerConfig)
-    this.poolRegistry = new PoolRegistry(this.manager, this.workloadRegistry, this.activityLog, db)
+    this.poolRegistry = new PoolRegistry(
+      this.manager,
+      this.workloadRegistry,
+      this.activityLog,
+      db,
+      this.log,
+    )
     this.syncStatusTracker = new SyncStatusTracker(db)
 
     const rcloneExecutor = new RcloneSyncExecutor({ verbose: true })
-    this.syncCoordinator = new SyncCoordinator(rcloneExecutor, this.syncStatusTracker, {
+    this.syncCoordinator = new SyncCoordinator(rcloneExecutor, this.syncStatusTracker, this.log, {
       verbose: true,
     })
 
     this.idleReaper = new IdleReaper({
       db,
       pollIntervalMs: config.idleReaperPollIntervalMs,
+      logger: this.log,
       onExpiry: async (_containerId, tenantId, poolId) => {
         const pool = this.poolRegistry.getPool(poolId)
         if (!pool) return
@@ -81,6 +94,7 @@ export class App {
       syncStatusTracker: this.syncStatusTracker,
       activityLog: this.activityLog,
       idleReaper: this.idleReaper,
+      logger: this.log,
     })
   }
 
@@ -93,6 +107,7 @@ export class App {
     if (this.config.runRecovery !== false) {
       recoveryStats = await recoverState(this.config.runtime, this.config.db, {
         labelPrefix: this.config.labelPrefix ?? 'boilerhouse',
+        logger: this.log,
       })
     }
 
