@@ -1,6 +1,6 @@
 // Re-export runtime types from @boilerhouse/core
 export type {
-  ContainerInfo,
+  RuntimeContainerInfo,
   ContainerRuntime,
   ContainerSecurityConfig,
   ContainerSpec,

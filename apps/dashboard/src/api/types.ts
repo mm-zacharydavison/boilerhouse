@@ -5,12 +5,15 @@
 
 import type {
   ContainerId,
-  ContainerStatus,
+  ContainerInfo as CoreContainerInfo,
   PoolId,
-  SyncStatus,
+  PoolInfo,
   TenantId,
+  TenantInfo,
   WorkloadId,
 } from '@boilerhouse/core'
+
+export type { PoolInfo, TenantInfo }
 
 // =============================================================================
 // Dashboard Stats
@@ -39,28 +42,6 @@ export interface WorkloadInfo {
   image: string
 }
 
-// =============================================================================
-// Pool Types
-// =============================================================================
-
-export interface PoolInfo {
-  id: PoolId
-  workloadId: WorkloadId
-  workloadName: string
-  image: string
-  minIdle: number
-  maxSize: number
-  currentSize: number
-  claimedCount: number
-  idleCount: number
-  status: 'healthy' | 'degraded' | 'error'
-  createdAt: string
-  lastError?: {
-    message: string
-    timestamp: string
-  }
-}
-
 export interface PoolMetrics {
   poolId: PoolId
   cpuUsagePercent: number
@@ -75,34 +56,14 @@ export interface PoolMetrics {
 // Container Types
 // =============================================================================
 
-export interface ContainerInfo {
-  id: ContainerId
-  poolId: PoolId
-  tenantId: TenantId | null
-  status: ContainerStatus
-  workloadId: WorkloadId
-  workloadName: string
-  image: string
-  createdAt: string
-  lastActivityAt: string
-  idleExpiresAt: string | null
+export interface ContainerInfo extends CoreContainerInfo {
   cpuUsagePercent?: number
   memoryUsageMb?: number
 }
 
 // =============================================================================
-// Tenant Types
+// Tenant Types (TenantInfo re-exported from @boilerhouse/core)
 // =============================================================================
-
-export interface TenantInfo {
-  id: TenantId
-  poolId: PoolId | null
-  containerId: ContainerId | null
-  status: 'active' | 'warm' | 'pending' | 'provisioning' | 'releasing' | 'idle' | 'cold'
-  claimedAt: string | null
-  lastActivityAt: string | null
-  syncStatus: SyncStatus | null
-}
 
 // =============================================================================
 // Sync Types

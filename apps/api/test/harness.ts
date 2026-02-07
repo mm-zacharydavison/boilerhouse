@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import type {
   ContainerRuntime,
   PoolContainer,
-  ContainerInfo as RuntimeContainerInfo,
+  RuntimeContainerInfo,
   TenantId,
   WorkloadSpec,
 } from '@boilerhouse/core'

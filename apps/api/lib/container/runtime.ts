@@ -4,7 +4,7 @@
  */
 
 export type {
-  ContainerInfo,
+  RuntimeContainerInfo,
   ContainerRuntime,
   ContainerSecurityConfig,
   ContainerSpec,

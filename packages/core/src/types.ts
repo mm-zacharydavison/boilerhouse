@@ -392,3 +392,57 @@ export interface ReleaseContainerRequest {
   /** Whether to sync state before releasing. */
   sync?: boolean
 }
+
+// =============================================================================
+// API Response Types (shared between API and dashboard)
+// =============================================================================
+
+/**
+ * Pool information for API responses.
+ */
+export interface PoolInfo {
+  id: PoolId
+  workloadId: WorkloadId
+  workloadName: string
+  image: string
+  minIdle: number
+  maxSize: number
+  currentSize: number
+  claimedCount: number
+  idleCount: number
+  status: 'healthy' | 'degraded' | 'error'
+  createdAt: string
+  lastError?: {
+    message: string
+    timestamp: string
+  }
+}
+
+/**
+ * Container information for API responses.
+ */
+export interface ContainerInfo {
+  id: ContainerId
+  poolId: PoolId
+  tenantId: TenantId | null
+  status: ContainerStatus
+  workloadId: WorkloadId
+  workloadName: string
+  image: string
+  createdAt: string
+  lastActivityAt: string
+  idleExpiresAt: string | null
+}
+
+/**
+ * Tenant information for API responses.
+ */
+export interface TenantInfo {
+  id: TenantId
+  poolId: PoolId | null
+  containerId: ContainerId | null
+  status: 'active' | 'warm' | 'pending' | 'provisioning' | 'releasing' | 'idle' | 'cold'
+  claimedAt: string | null
+  lastActivityAt: string | null
+  syncStatus: SyncStatus | null
+}

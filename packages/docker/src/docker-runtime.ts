@@ -5,10 +5,10 @@
  */
 
 import type {
-  ContainerInfo,
   ContainerRuntime,
   ContainerSpec,
   RuntimeContainerId,
+  RuntimeContainerInfo,
   RuntimeContainerStatus,
 } from '@boilerhouse/core'
 import Docker from 'dockerode'
@@ -48,7 +48,7 @@ export class DockerRuntime implements ContainerRuntime {
     }
   }
 
-  async createContainer(spec: ContainerSpec): Promise<ContainerInfo> {
+  async createContainer(spec: ContainerSpec): Promise<RuntimeContainerInfo> {
     const container = await this.docker.createContainer({
       name: spec.name,
       Image: spec.image,
@@ -150,7 +150,7 @@ export class DockerRuntime implements ContainerRuntime {
     await container.restart({ t: timeoutSeconds })
   }
 
-  async getContainer(id: RuntimeContainerId): Promise<ContainerInfo | null> {
+  async getContainer(id: RuntimeContainerId): Promise<RuntimeContainerInfo | null> {
     try {
       const container = this.docker.getContainer(id)
       const info = await container.inspect()
@@ -173,7 +173,7 @@ export class DockerRuntime implements ContainerRuntime {
     }
   }
 
-  async listContainers(labels: Record<string, string>): Promise<ContainerInfo[]> {
+  async listContainers(labels: Record<string, string>): Promise<RuntimeContainerInfo[]> {
     const filters: Record<string, string[]> = {
       label: Object.entries(labels).map(([k, v]) => `${k}=${v}`),
     }
@@ -252,7 +252,7 @@ export class DockerRuntime implements ContainerRuntime {
     })
   }
 
-  private toContainerInfo(info: Docker.ContainerInspectInfo): ContainerInfo {
+  private toContainerInfo(info: Docker.ContainerInspectInfo): RuntimeContainerInfo {
     return {
       id: info.Id,
       name: info.Name.replace(/^\//, ''),

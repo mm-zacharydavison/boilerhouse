@@ -280,7 +280,7 @@ export interface ContainerSpec {
 /**
  * Container info returned by the runtime.
  */
-export interface ContainerInfo {
+export interface RuntimeContainerInfo {
   /**
    * Runtime-specific container ID.
    * @example 'abc123def456'
@@ -334,7 +334,7 @@ export interface ContainerRuntime {
    * @param spec Container specification
    * @returns Container info after creation
    */
-  createContainer(spec: ContainerSpec): Promise<ContainerInfo>
+  createContainer(spec: ContainerSpec): Promise<RuntimeContainerInfo>
 
   /**
    * Stop a running container.
@@ -361,7 +361,7 @@ export interface ContainerRuntime {
    * @param id Container ID
    * @returns Container info or null if not found
    */
-  getContainer(id: RuntimeContainerId): Promise<ContainerInfo | null>
+  getContainer(id: RuntimeContainerId): Promise<RuntimeContainerInfo | null>
 
   /**
    * Check if container is healthy/running.
@@ -375,7 +375,7 @@ export interface ContainerRuntime {
    * @param labels Labels to filter by
    * @returns List of matching containers
    */
-  listContainers(labels: Record<string, string>): Promise<ContainerInfo[]>
+  listContainers(labels: Record<string, string>): Promise<RuntimeContainerInfo[]>
 
   /**
    * Execute a command in a running container.

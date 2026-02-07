@@ -10,152 +10,23 @@
 
 import type {
   ContainerId,
+  ContainerInfo,
   ContainerStatus,
   PoolContainer,
   PoolId,
+  PoolInfo,
   TenantId,
   WorkloadId,
   WorkloadSpec,
 } from '@boilerhouse/core'
 import { type DrizzleDb, schema } from '@boilerhouse/db'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { type ActivityLog, logPoolCreated, logPoolScaled } from '../activity'
 import type { ContainerManager } from '../container/manager'
 import { ContainerPool, type PoolStats } from '../container/pool'
 import { PoolNotFoundError, WorkloadNotFoundError } from '../errors'
 import type { Logger } from '../logger'
 import type { WorkloadRegistry } from '../workload'
-
-/**
- * Extended pool information for API responses.
- */
-export interface PoolInfo {
-  /**
-   * Unique identifier for this pool.
-   * @example 'prod-workers'
-   */
-  id: PoolId
-
-  /**
-   * ID of the workload this pool runs.
-   * @example 'python-worker'
-   */
-  workloadId: WorkloadId
-
-  /**
-   * Human-readable name of the workload.
-   * @example 'Python ML Worker'
-   */
-  workloadName: string
-
-  /**
-   * Docker image used by containers in this pool.
-   * @example 'myregistry/python-worker:latest'
-   */
-  image: string
-
-  /** Minimum number of idle containers to maintain. */
-  minIdle: number
-
-  /** Maximum total containers allowed in this pool. */
-  maxSize: number
-
-  /** Current number of containers in the pool (idle + claimed). */
-  currentSize: number
-
-  /** Number of containers currently claimed by tenants. */
-  claimedCount: number
-
-  /** Number of containers available for claiming. */
-  idleCount: number
-
-  /**
-   * Health status of the pool.
-   * - `healthy`: Pool is operating normally
-   * - `degraded`: Pool is at capacity or low on idle containers
-   * - `error`: Pool has no containers or is failing
-   * @example 'healthy'
-   */
-  status: 'healthy' | 'degraded' | 'error'
-
-  /**
-   * ISO 8601 timestamp when the pool was created.
-   * @example '2024-01-15T10:00:00.000Z'
-   */
-  createdAt: string
-
-  /**
-   * Last error that occurred in this pool (if any).
-   */
-  lastError?: {
-    message: string
-    timestamp: string
-  }
-}
-
-/**
- * Extended container information for API responses.
- */
-export interface ContainerInfo {
-  /**
-   * Unique identifier for this container.
-   * @example 'ml7wk37p-vbjcpb5g'
-   */
-  id: ContainerId
-
-  /**
-   * ID of the pool this container belongs to.
-   * @example 'prod-workers'
-   */
-  poolId: PoolId
-
-  /**
-   * ID of the tenant that claimed this container, or null if idle.
-   * @example 'tenant-12345'
-   */
-  tenantId: TenantId | null
-
-  /**
-   * Current lifecycle status of the container.
-   * @example 'claimed'
-   */
-  status: ContainerStatus
-
-  /**
-   * ID of the workload this container runs.
-   * @example 'python-worker'
-   */
-  workloadId: WorkloadId
-
-  /**
-   * Human-readable name of the workload.
-   * @example 'Python ML Worker'
-   */
-  workloadName: string
-
-  /**
-   * Docker image this container is running.
-   * @example 'myregistry/python-worker:latest'
-   */
-  image: string
-
-  /**
-   * ISO 8601 timestamp when the container was created.
-   * @example '2024-02-05T08:00:00.000Z'
-   */
-  createdAt: string
-
-  /**
-   * ISO 8601 timestamp of the last activity on this container.
-   * @example '2024-02-05T11:30:00.000Z'
-   */
-  lastActivityAt: string
-
-  /**
-   * ISO 8601 timestamp when this idle container will be evicted, or null.
-   */
-  idleExpiresAt: string | null
-}
 
 /**
  * Pool registry for managing multiple pools
@@ -396,30 +267,32 @@ export class PoolRegistry {
 
   /**
    * Get container info for API responses.
-   * Looks up the container across all pools.
+   * Direct DB lookup — O(1) instead of scanning all pools.
    */
   getContainerInfo(containerId: ContainerId): ContainerInfo | undefined {
-    for (const [poolId, pool] of this.pools) {
-      const containers = pool.getAllContainers()
-      const container = containers.find((c) => c.containerId === containerId)
-      if (!container) continue
+    const row = this.db
+      .select()
+      .from(schema.containers)
+      .where(eq(schema.containers.containerId, containerId))
+      .get()
+    if (!row) return undefined
 
-      const workload = pool.getWorkload()
-      return {
-        id: containerId,
-        poolId,
-        tenantId: container.tenantId,
-        status: container.status,
-        workloadId: workload.id,
-        workloadName: workload.name,
-        image: workload.image,
-        createdAt: container.lastActivity.toISOString(),
-        lastActivityAt: container.lastActivity.toISOString(),
-        idleExpiresAt: container.idleExpiresAt?.toISOString() ?? null,
-      }
+    const pool = this.pools.get(row.poolId)
+    if (!pool) return undefined
+
+    const workload = pool.getWorkload()
+    return {
+      id: containerId,
+      poolId: row.poolId,
+      tenantId: row.tenantId,
+      status: row.status as ContainerStatus,
+      workloadId: workload.id,
+      workloadName: workload.name,
+      image: workload.image,
+      createdAt: row.lastActivity.toISOString(),
+      lastActivityAt: row.lastActivity.toISOString(),
+      idleExpiresAt: row.idleExpiresAt?.toISOString() ?? null,
     }
-
-    return undefined
   }
 
   /**
@@ -457,37 +330,55 @@ export class PoolRegistry {
   }
 
   /**
-   * Destroy a container by ID
+   * Destroy a container by ID.
+   * DB lookup to find the pool — O(1) instead of scanning all pools.
    */
   async destroyContainer(containerId: ContainerId): Promise<boolean> {
-    for (const pool of this.pools.values()) {
-      const destroyed = await pool.destroyContainer(containerId)
-      if (destroyed) return true
-    }
-    return false
+    const row = this.db
+      .select({ poolId: schema.containers.poolId })
+      .from(schema.containers)
+      .where(eq(schema.containers.containerId, containerId))
+      .get()
+    if (!row) return false
+
+    const pool = this.pools.get(row.poolId)
+    if (!pool) return false
+
+    return pool.destroyContainer(containerId)
   }
 
   /**
-   * Get pool by tenant ID (find which pool has this tenant)
+   * Get pool by tenant ID.
+   * Direct DB lookup — O(1) instead of scanning all pools.
    */
   getPoolForTenant(tenantId: TenantId): ContainerPool | undefined {
-    for (const pool of this.pools.values()) {
-      if (pool.hasTenant(tenantId)) {
-        return pool
-      }
-    }
-    return undefined
+    const row = this.db
+      .select({ poolId: schema.containers.poolId })
+      .from(schema.containers)
+      .where(and(eq(schema.containers.tenantId, tenantId), eq(schema.containers.status, 'claimed')))
+      .get()
+    if (!row) return undefined
+
+    return this.pools.get(row.poolId)
   }
 
   /**
-   * Get container for a tenant (searches all pools)
+   * Get container for a tenant.
+   * Direct DB lookup — O(1) instead of scanning all pools.
    */
   getContainerForTenant(tenantId: TenantId): PoolContainer | null {
-    for (const pool of this.pools.values()) {
-      const container = pool.getContainerForTenant(tenantId)
-      if (container) return container
-    }
-    return null
+    const row = this.db
+      .select()
+      .from(schema.containers)
+      .where(and(eq(schema.containers.tenantId, tenantId), eq(schema.containers.status, 'claimed')))
+      .get()
+    if (!row) return null
+
+    const pool = this.pools.get(row.poolId)
+    if (!pool) return null
+
+    // Use pool's toPoolContainer-equivalent to get computed paths
+    return pool.getContainerForTenant(tenantId) ?? null
   }
 
   /**
