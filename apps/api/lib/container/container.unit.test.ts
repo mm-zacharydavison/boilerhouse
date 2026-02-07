@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, type mock, test } from 'bun:test'
-import { DEFAULT_SECURITY_CONFIG } from '@boilerhouse/core'
+import { DEFAULT_SECURITY_CONFIG, TenantId } from '@boilerhouse/core'
 import { createTestDatabase } from '@boilerhouse/db'
 import pino from 'pino'
 import type { ContainerRuntime } from '.'
@@ -82,8 +82,8 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      const container1 = await pool.acquireForTenant('tenant-pool-1')
-      const container2 = await pool.acquireForTenant('tenant-pool-1')
+      const container1 = await pool.acquireForTenant(TenantId('tenant-pool-1'))
+      const container2 = await pool.acquireForTenant(TenantId('tenant-pool-1'))
 
       expect(container1.containerId).toBe(container2.containerId)
 
@@ -109,8 +109,8 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      const container1 = await pool.acquireForTenant('tenant-a')
-      const container2 = await pool.acquireForTenant('tenant-b')
+      const container1 = await pool.acquireForTenant(TenantId('tenant-a'))
+      const container2 = await pool.acquireForTenant(TenantId('tenant-b'))
 
       expect(container1.containerId).not.toBe(container2.containerId)
 
@@ -136,10 +136,10 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      expect(pool.hasTenant('tenant-check')).toBe(false)
+      expect(pool.hasTenant(TenantId('tenant-check'))).toBe(false)
 
-      await pool.acquireForTenant('tenant-check')
-      expect(pool.hasTenant('tenant-check')).toBe(true)
+      await pool.acquireForTenant(TenantId('tenant-check'))
+      expect(pool.hasTenant(TenantId('tenant-check'))).toBe(true)
 
       await pool.drain()
     })
@@ -163,11 +163,11 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      const container1 = await pool.acquireForTenant('tenant-affinity')
-      await pool.releaseForTenant('tenant-affinity')
+      const container1 = await pool.acquireForTenant(TenantId('tenant-affinity'))
+      await pool.releaseForTenant(TenantId('tenant-affinity'))
 
       // Reclaim - should get same container via lastTenantId match
-      const container2 = await pool.acquireForTenant('tenant-affinity')
+      const container2 = await pool.acquireForTenant(TenantId('tenant-affinity'))
       expect(container2.containerId).toBe(container1.containerId)
 
       await pool.drain()
@@ -193,11 +193,11 @@ describe('ContainerPool', () => {
       )
 
       // Tenant A claims and releases
-      const containerA = await pool.acquireForTenant('tenant-A')
-      await pool.releaseForTenant('tenant-A')
+      const containerA = await pool.acquireForTenant(TenantId('tenant-A'))
+      await pool.releaseForTenant(TenantId('tenant-A'))
 
       // Tenant B claims - with maxSize=1, gets same container (wiped)
-      const containerB = await pool.acquireForTenant('tenant-B')
+      const containerB = await pool.acquireForTenant(TenantId('tenant-B'))
       expect(containerB.containerId).toBe(containerA.containerId)
 
       await pool.drain()
@@ -251,12 +251,12 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      await pool.acquireForTenant('tenant-x')
-      await pool.acquireForTenant('tenant-y')
+      await pool.acquireForTenant(TenantId('tenant-x'))
+      await pool.acquireForTenant(TenantId('tenant-y'))
 
       const tenants = pool.getTenantsWithClaims()
-      expect(tenants).toContain('tenant-x')
-      expect(tenants).toContain('tenant-y')
+      expect(tenants).toContain(TenantId('tenant-x'))
+      expect(tenants).toContain(TenantId('tenant-y'))
       expect(tenants).toHaveLength(2)
 
       await pool.drain()
@@ -281,8 +281,8 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      await pool.acquireForTenant('tenant-stats-1')
-      await pool.acquireForTenant('tenant-stats-2')
+      await pool.acquireForTenant(TenantId('tenant-stats-1'))
+      await pool.acquireForTenant(TenantId('tenant-stats-2'))
 
       const stats = pool.getStats()
       expect(stats.borrowed).toBe(2)
@@ -311,11 +311,11 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      await pool.acquireForTenant('tenant-release')
+      await pool.acquireForTenant(TenantId('tenant-release'))
       const statsBefore = pool.getStats()
       expect(statsBefore.borrowed).toBe(1)
 
-      await pool.releaseForTenant('tenant-release')
+      await pool.releaseForTenant(TenantId('tenant-release'))
       const statsAfter = pool.getStats()
       // Container goes to idle
       expect(statsAfter.borrowed).toBe(0)
@@ -344,8 +344,8 @@ describe('ContainerPool', () => {
         silentLogger,
       )
 
-      await pool.acquireForTenant('tenant-all-1')
-      await pool.acquireForTenant('tenant-all-2')
+      await pool.acquireForTenant(TenantId('tenant-all-1'))
+      await pool.acquireForTenant(TenantId('tenant-all-2'))
 
       const allContainers = pool.getAllContainers()
       expect(allContainers).toHaveLength(2)

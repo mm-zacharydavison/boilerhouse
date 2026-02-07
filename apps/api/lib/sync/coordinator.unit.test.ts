@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { WorkloadSyncConfig, WorkloadSyncPolicy } from '@boilerhouse/core'
+import { SyncId, type WorkloadSyncConfig, type WorkloadSyncPolicy } from '@boilerhouse/core'
 import pino from 'pino'
 import { createTestDb } from '../../test/db'
 import {
@@ -149,7 +149,7 @@ describe('SyncCoordinator', () => {
       const container = createPoolContainer()
 
       // Create some status
-      const syncId = `workload-sync-${container.poolId}`
+      const syncId = SyncId(`workload-sync-${container.poolId}`)
       statusTracker.markSyncStarted(tenantId, syncId)
       statusTracker.markSyncCompleted(tenantId, syncId)
 

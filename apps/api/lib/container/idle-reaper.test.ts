@@ -7,7 +7,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ContainerId, ContainerRuntime, PoolId, TenantId } from '@boilerhouse/core'
+import {
+  type ContainerId,
+  type ContainerRuntime,
+  type PoolId,
+  TenantId,
+  WorkloadId,
+} from '@boilerhouse/core'
 import { createTestDatabase, schema } from '@boilerhouse/db'
 import { eq } from 'drizzle-orm'
 import pino from 'pino'
@@ -78,7 +84,7 @@ function cleanup() {
 }
 
 const WORKLOAD_FIXTURE = {
-  id: 'workload-1',
+  id: WorkloadId('workload-1'),
   name: 'Test',
   image: 'test:latest',
   volumes: {
@@ -385,7 +391,7 @@ describe('IdleReaper', () => {
     db.insert(schema.pools)
       .values({
         poolId,
-        workloadId: 'workload-1',
+        workloadId: WorkloadId('workload-1'),
         minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
@@ -449,7 +455,7 @@ describe('IdleReaper', () => {
     db.insert(schema.pools)
       .values({
         poolId,
-        workloadId: 'workload-1',
+        workloadId: WorkloadId('workload-1'),
         minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
@@ -518,7 +524,7 @@ describe('IdleReaper', () => {
     db.insert(schema.pools)
       .values({
         poolId,
-        workloadId: 'workload-1',
+        workloadId: WorkloadId('workload-1'),
         minIdle: 1,
         maxSize: 5,
         idleTimeoutMs: 300000,
@@ -532,7 +538,7 @@ describe('IdleReaper', () => {
         containerId,
         poolId,
         status: 'claimed',
-        tenantId: 'some-tenant',
+        tenantId: TenantId('some-tenant'),
         lastActivity: new Date(),
         createdAt: new Date(),
       })

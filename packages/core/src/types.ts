@@ -28,45 +28,50 @@ import type {
 // Branded ID Types
 // =============================================================================
 
+/** Branded type helper — makes structural type aliases nominally distinct. */
+type Brand<T, B extends string> = T & { readonly __brand: B }
+
 /**
  * Unique identifier for a tenant (user/organization).
- * @example 'tenant-12345'
- * @example 'org_abc123'
+ * @example TenantId('tenant-12345')
  */
-export type TenantId = string
+export type TenantId = Brand<string, 'TenantId'>
+export const TenantId = (s: string) => s as TenantId
 
 /**
  * Unique identifier for a container instance.
- * @example 'ml7wk37p-vbjcpb5g'
+ * @example ContainerId('ml7wk37p-vbjcpb5g')
  */
-export type ContainerId = string
+export type ContainerId = Brand<string, 'ContainerId'>
+export const ContainerId = (s: string) => s as ContainerId
 
 /**
  * Unique identifier for a workload specification.
- * @example 'python-worker'
- * @example 'node-api'
+ * @example WorkloadId('python-worker')
  */
-export type WorkloadId = string
+export type WorkloadId = Brand<string, 'WorkloadId'>
+export const WorkloadId = (s: string) => s as WorkloadId
 
 /**
  * Unique identifier for a container pool.
- * @example 'prod-workers'
- * @example 'dev-sandbox'
+ * @example PoolId('prod-workers')
  */
-export type PoolId = string
+export type PoolId = Brand<string, 'PoolId'>
+export const PoolId = (s: string) => s as PoolId
 
 /**
  * Unique identifier for a sync specification.
- * @example 'worker-state-sync'
+ * @example SyncId('worker-state-sync')
  */
-export type SyncId = string
+export type SyncId = Brand<string, 'SyncId'>
+export const SyncId = (s: string) => s as SyncId
 
 /**
  * Key identifying a session, typically channel:userId format.
- * @example 'api:user-12345'
- * @example 'ws:session-uuid'
+ * @example SessionKey('api:user-12345')
  */
-export type SessionKey = string
+export type SessionKey = Brand<string, 'SessionKey'>
+export const SessionKey = (s: string) => s as SessionKey
 
 // =============================================================================
 // Container Types
@@ -190,7 +195,7 @@ export type SinkConfig = CamelCasedPropertiesDeep<SinkConfigRaw>
 export type WorkloadSyncConfig = CamelCasedPropertiesDeep<WorkloadSyncConfigRaw>
 
 /** Workload specification - defines a complete deployable unit. */
-export type WorkloadSpec = CamelCasedPropertiesDeep<WorkloadSpecRaw>
+export type WorkloadSpec = CamelCasedPropertiesDeep<WorkloadSpecRaw> & { id: WorkloadId }
 
 // =============================================================================
 // Pool Specification

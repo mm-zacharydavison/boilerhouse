@@ -4,6 +4,7 @@
  * Endpoints for listing and managing containers.
  */
 
+import { ContainerId, PoolId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import type { PoolRegistry } from '../../lib/pool/registry'
 
@@ -18,7 +19,7 @@ export function containersController(deps: ContainersControllerDeps) {
     .get(
       '/',
       ({ query }) => {
-        const poolId = query.poolId || undefined
+        const poolId = query.poolId ? PoolId(query.poolId) : undefined
         return poolRegistry.listContainersInfo(poolId)
       },
       {
@@ -31,10 +32,11 @@ export function containersController(deps: ContainersControllerDeps) {
     .get(
       '/:id',
       ({ params, set }) => {
-        const container = poolRegistry.getContainerInfo(params.id)
+        const containerId = ContainerId(params.id)
+        const container = poolRegistry.getContainerInfo(containerId)
         if (!container) {
           set.status = 404
-          return { error: `Container ${params.id} not found` }
+          return { error: `Container ${containerId} not found` }
         }
         return container
       },
@@ -48,10 +50,11 @@ export function containersController(deps: ContainersControllerDeps) {
     .delete(
       '/:id',
       async ({ params, set }) => {
-        const container = poolRegistry.getContainerInfo(params.id)
+        const containerId = ContainerId(params.id)
+        const container = poolRegistry.getContainerInfo(containerId)
         if (!container) {
           set.status = 404
-          return { error: `Container ${params.id} not found` }
+          return { error: `Container ${containerId} not found` }
         }
 
         // Cannot delete claimed containers
@@ -60,7 +63,7 @@ export function containersController(deps: ContainersControllerDeps) {
           return { error: 'Cannot delete claimed container. Release it first.' }
         }
 
-        const destroyed = await poolRegistry.destroyContainer(params.id)
+        const destroyed = await poolRegistry.destroyContainer(containerId)
         if (!destroyed) {
           set.status = 500
           return { error: 'Failed to destroy container' }

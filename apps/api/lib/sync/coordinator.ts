@@ -7,13 +7,13 @@
  * Sync config is read from WorkloadSpec.sync - there is no separate sync registry.
  */
 
-import type {
-  PoolContainer,
-  TenantId,
-  WorkloadId,
-  WorkloadSyncConfig,
-  WorkloadSyncMapping,
-  WorkloadSyncPolicy,
+import {
+  type PoolContainer,
+  SyncId,
+  type TenantId,
+  type WorkloadSyncConfig,
+  type WorkloadSyncMapping,
+  type WorkloadSyncPolicy,
 } from '@boilerhouse/core'
 import type { Logger } from '../logger'
 import {
@@ -289,7 +289,7 @@ export class SyncCoordinator {
     const policy: WorkloadSyncPolicy = { ...DEFAULT_POLICY, ...syncConfig.policy }
     const specInterval = policy.interval ?? 0
     const interval = Math.max(specInterval, this.config.minSyncInterval)
-    const workloadId = container.poolId as WorkloadId
+    const workloadId = container.poolId as string
 
     const job: PeriodicSyncJob = {
       tenantId,
@@ -346,7 +346,7 @@ export class SyncCoordinator {
   private stopPeriodicSync(tenantId: TenantId): void {
     const job = this.periodicJobs.get(tenantId)
     if (job) {
-      const workloadId = job.container.poolId as WorkloadId
+      const workloadId = job.container.poolId as string
       if (job.timerId) {
         clearTimeout(job.timerId)
       }
@@ -368,7 +368,7 @@ export class SyncCoordinator {
     container: PoolContainer,
     initialSync = false,
   ): Promise<SyncResult> {
-    const workloadId = container.poolId as WorkloadId // poolId corresponds to workloadId
+    const workloadId = container.poolId as string // poolId corresponds to workloadId
     const direction = mapping.direction ?? 'bidirectional'
     const mode = mapping.mode ?? 'sync'
 
@@ -379,7 +379,7 @@ export class SyncCoordinator {
 
     this.runningCount++
     this.updateConcurrencyMetrics(workloadId)
-    const syncId = `workload-sync-${container.poolId}`
+    const syncId = SyncId(`workload-sync-${container.poolId}`)
     this.statusTracker.markSyncStarted(tenantId, syncId)
 
     const endTimer = syncDuration.startTimer({ workload_id: workloadId, direction, mode })
@@ -543,7 +543,7 @@ export class SyncCoordinator {
   /**
    * Update concurrency-related metrics.
    */
-  private updateConcurrencyMetrics(workloadId: WorkloadId): void {
+  private updateConcurrencyMetrics(workloadId: string): void {
     syncConcurrentOperations.set({ workload_id: workloadId }, this.runningCount)
     syncQueueLength.set({ workload_id: workloadId }, this.pendingQueue.length)
   }
@@ -551,7 +551,7 @@ export class SyncCoordinator {
   /**
    * Update periodic job metrics for a workload.
    */
-  private updatePeriodicJobMetrics(workloadId: WorkloadId): void {
+  private updatePeriodicJobMetrics(workloadId: string): void {
     // Count jobs for this workload
     let count = 0
     for (const job of this.periodicJobs.values()) {

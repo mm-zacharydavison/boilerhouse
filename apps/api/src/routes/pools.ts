@@ -4,6 +4,7 @@
  * Endpoints for managing container pools.
  */
 
+import { PoolId, WorkloadId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import type { PoolRegistry } from '../../lib/pool/registry'
 
@@ -22,10 +23,11 @@ export function poolsController(deps: PoolsControllerDeps) {
     .get(
       '/:id',
       ({ params, set }) => {
-        const pool = poolRegistry.getPoolInfo(params.id)
+        const poolId = PoolId(params.id)
+        const pool = poolRegistry.getPoolInfo(poolId)
         if (!pool) {
           set.status = 404
-          return { error: `Pool ${params.id} not found` }
+          return { error: `Pool ${poolId} not found` }
         }
         return pool
       },
@@ -40,7 +42,7 @@ export function poolsController(deps: PoolsControllerDeps) {
       '/',
       async ({ body, set }) => {
         try {
-          const pool = poolRegistry.createPool(body.poolId, body.workloadId, {
+          const pool = poolRegistry.createPool(PoolId(body.poolId), WorkloadId(body.workloadId), {
             minIdle: body.minIdle,
             maxSize: body.maxSize,
             networks: body.networks,
@@ -66,7 +68,7 @@ export function poolsController(deps: PoolsControllerDeps) {
       '/:id',
       async ({ params, set }) => {
         try {
-          await poolRegistry.destroyPool(params.id)
+          await poolRegistry.destroyPool(PoolId(params.id))
           return { success: true }
         } catch (err) {
           set.status = 404
@@ -83,15 +85,16 @@ export function poolsController(deps: PoolsControllerDeps) {
     .get(
       '/:id/metrics',
       ({ params, set }) => {
-        const pool = poolRegistry.getPool(params.id)
+        const poolId = PoolId(params.id)
+        const pool = poolRegistry.getPool(poolId)
         if (!pool) {
           set.status = 404
-          return { error: `Pool ${params.id} not found` }
+          return { error: `Pool ${poolId} not found` }
         }
 
         const stats = pool.getStats()
         return {
-          poolId: params.id,
+          poolId,
           cpuUsagePercent: 0,
           memoryUsagePercent: 0,
           claimLatencyMs: 0,
@@ -110,10 +113,11 @@ export function poolsController(deps: PoolsControllerDeps) {
     .post(
       '/:id/scale',
       async ({ params, body, set }) => {
-        const pool = poolRegistry.getPool(params.id)
+        const poolId = PoolId(params.id)
+        const pool = poolRegistry.getPool(poolId)
         if (!pool) {
           set.status = 404
-          return { error: `Pool ${params.id} not found` }
+          return { error: `Pool ${poolId} not found` }
         }
 
         try {

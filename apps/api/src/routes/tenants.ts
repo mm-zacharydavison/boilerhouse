@@ -4,7 +4,7 @@
  * Endpoints for tenant operations: listing, claiming, releasing, and syncing.
  */
 
-import type { PoolId, TenantId } from '@boilerhouse/core'
+import { PoolId, TenantId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import { type ActivityLog, logSyncStarted } from '../../lib/activity'
 import {
@@ -82,16 +82,17 @@ export function tenantsController(deps: TenantsControllerDeps) {
     .get(
       '/:id',
       ({ params }) => {
-        const pool = poolRegistry.getPoolForTenant(params.id)
+        const tenantId = TenantId(params.id)
+        const pool = poolRegistry.getPoolForTenant(tenantId)
         if (!pool) {
-          throw new TenantNotFoundError(params.id)
+          throw new TenantNotFoundError(tenantId)
         }
 
-        const container = pool.getContainerForTenant(params.id)
-        const syncStatuses = syncStatusTracker.getStatusesForTenant(params.id)
+        const container = pool.getContainerForTenant(tenantId)
+        const syncStatuses = syncStatusTracker.getStatusesForTenant(tenantId)
 
         return {
-          id: params.id,
+          id: tenantId,
           poolId: pool.getPoolId(),
           containerId: container?.containerId ?? null,
           status: container?.status === 'claimed' ? 'active' : 'pending',
@@ -110,9 +111,10 @@ export function tenantsController(deps: TenantsControllerDeps) {
     .get(
       '/:id/status',
       ({ params }) => {
-        const pool = poolRegistry.getPoolForTenant(params.id)
-        const container = poolRegistry.getContainerForTenant(params.id)
-        const syncStatuses = syncStatusTracker.getStatusesForTenant(params.id)
+        const tenantId = TenantId(params.id)
+        const pool = poolRegistry.getPoolForTenant(tenantId)
+        const container = poolRegistry.getContainerForTenant(tenantId)
+        const syncStatuses = syncStatusTracker.getStatusesForTenant(tenantId)
 
         if (!pool && !container) {
           return {
@@ -139,17 +141,19 @@ export function tenantsController(deps: TenantsControllerDeps) {
     .post(
       '/:id/claim',
       async ({ params, body }) => {
-        const pool = poolRegistry.getPool(body.poolId)
+        const tenantId = TenantId(params.id)
+        const poolId = PoolId(body.poolId)
+        const pool = poolRegistry.getPool(poolId)
         if (!pool) {
-          throw new PoolNotFoundError(body.poolId)
+          throw new PoolNotFoundError(poolId)
         }
 
-        const { container } = await claimContainer(
-          params.id as TenantId,
-          body.poolId as PoolId,
-          pool,
-          { containerManager, syncCoordinator, activityLog, idleReaper },
-        )
+        const { container } = await claimContainer(tenantId, poolId, pool, {
+          containerManager,
+          syncCoordinator,
+          activityLog,
+          idleReaper,
+        })
 
         return {
           containerId: container.containerId,
@@ -172,21 +176,22 @@ export function tenantsController(deps: TenantsControllerDeps) {
     .post(
       '/:id/release',
       async ({ params, body }) => {
-        const pool = poolRegistry.getPoolForTenant(params.id)
+        const tenantId = TenantId(params.id)
+        const pool = poolRegistry.getPoolForTenant(tenantId)
         if (!pool) {
-          throw new TenantNotFoundError(params.id)
+          throw new TenantNotFoundError(tenantId)
         }
 
-        const container = pool.getContainerForTenant(params.id)
+        const container = pool.getContainerForTenant(tenantId)
         if (!container) {
-          throw new ContainerNotFoundError(`No container for tenant ${params.id}`)
+          throw new ContainerNotFoundError(`No container for tenant ${tenantId}`)
         }
 
         // Stop filesystem idle watch before release
         idleReaper.unwatch(container.containerId)
 
         await releaseContainer(
-          params.id,
+          tenantId,
           pool,
           { syncCoordinator, activityLog },
           {
@@ -209,14 +214,15 @@ export function tenantsController(deps: TenantsControllerDeps) {
     .post(
       '/:id/sync',
       async ({ params, body }) => {
-        const pool = poolRegistry.getPoolForTenant(params.id)
+        const tenantId = TenantId(params.id)
+        const pool = poolRegistry.getPoolForTenant(tenantId)
         if (!pool) {
-          throw new TenantNotFoundError(params.id)
+          throw new TenantNotFoundError(tenantId)
         }
 
-        const container = pool.getContainerForTenant(params.id)
+        const container = pool.getContainerForTenant(tenantId)
         if (!container) {
-          throw new ContainerNotFoundError(`No container for tenant ${params.id}`)
+          throw new ContainerNotFoundError(`No container for tenant ${tenantId}`)
         }
 
         const workload = pool.getWorkload()
@@ -224,15 +230,15 @@ export function tenantsController(deps: TenantsControllerDeps) {
           throw new SyncNotConfiguredError()
         }
 
-        logSyncStarted(params.id, body.direction ?? 'both', activityLog)
+        logSyncStarted(tenantId, body.direction ?? 'both', activityLog)
         const results = await syncCoordinator.triggerSync(
-          params.id,
+          tenantId,
           container,
           workload.sync,
           body.direction ?? 'both',
         )
 
-        const { hasErrors } = logSyncResults(params.id, results, activityLog)
+        const { hasErrors } = logSyncResults(tenantId, results, activityLog)
 
         return {
           success: !hasErrors,

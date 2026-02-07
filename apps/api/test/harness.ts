@@ -8,12 +8,14 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type {
-  ContainerRuntime,
-  PoolContainer,
-  RuntimeContainerInfo,
-  TenantId,
-  WorkloadSpec,
+import {
+  type ContainerRuntime,
+  type PoolContainer,
+  PoolId,
+  type RuntimeContainerInfo,
+  type TenantId,
+  WorkloadId,
+  type WorkloadSpec,
 } from '@boilerhouse/core'
 import { DockerRuntime } from '@boilerhouse/docker'
 import { App } from '../src/app'
@@ -42,7 +44,7 @@ export interface TestHarnessConfig {
  * Default test workload that runs a simple Alpine container
  */
 export const DEFAULT_TEST_WORKLOAD: WorkloadSpec = {
-  id: 'test-workload',
+  id: WorkloadId('test-workload'),
   name: 'Test Workload',
   image: 'alpine:latest',
   command: ['sh', '-c', 'while true; do sleep 1; done'],
@@ -169,7 +171,7 @@ healthcheck:
 
     // Create default pool
     const poolConfig = this._config.poolConfig ?? {}
-    this._app.poolRegistry.createPool('test-pool', workload.id, {
+    this._app.poolRegistry.createPool(PoolId('test-pool'), workload.id, {
       minIdle: poolConfig.minIdle ?? 0,
       maxSize: poolConfig.maxSize ?? 5,
       idleTimeoutMs: poolConfig.idleTimeoutMs ?? 60000,
@@ -422,7 +424,7 @@ healthcheck:
   /**
    * Get pool statistics
    */
-  getPoolStats(poolId = 'test-pool') {
+  getPoolStats(poolId = PoolId('test-pool')) {
     const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.getStats() ?? null
   }
@@ -430,7 +432,10 @@ healthcheck:
   /**
    * Get container for a tenant
    */
-  getContainerForTenant(tenantId: TenantId, poolId = 'test-pool'): PoolContainer | undefined {
+  getContainerForTenant(
+    tenantId: TenantId,
+    poolId = PoolId('test-pool'),
+  ): PoolContainer | undefined {
     const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.getContainerForTenant(tenantId)
   }
@@ -438,7 +443,7 @@ healthcheck:
   /**
    * Check if tenant has an assigned container
    */
-  hasTenant(tenantId: TenantId, poolId = 'test-pool'): boolean {
+  hasTenant(tenantId: TenantId, poolId = PoolId('test-pool')): boolean {
     const pool = this._app?.poolRegistry.getPool(poolId)
     return pool?.hasTenant(tenantId) ?? false
   }

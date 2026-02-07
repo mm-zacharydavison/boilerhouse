@@ -4,6 +4,7 @@
  * Endpoints for listing and retrieving workload specifications.
  */
 
+import { WorkloadId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import type { WorkloadRegistry } from '../../lib/workload'
 
@@ -26,7 +27,7 @@ export function workloadsController(deps: WorkloadsControllerDeps) {
     .get(
       '/:id',
       ({ params, set }) => {
-        const workload = workloadRegistry.get(params.id)
+        const workload = workloadRegistry.get(WorkloadId(params.id))
         if (!workload) {
           set.status = 404
           return { error: `Workload ${params.id} not found` }

@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import type { SinkConfig } from '@boilerhouse/core'
+import { type SinkConfig, TenantId } from '@boilerhouse/core'
 import { createS3SinkConfig } from '../../test/fixtures'
 import { type SinkAdapter, SinkAdapterRegistry } from './sink-adapter'
 
@@ -57,6 +57,8 @@ describe('SinkAdapterRegistry', () => {
     registry.register(customS3Adapter)
     const sink = createS3SinkConfig()
 
-    expect(registry.getAdapter(sink).buildRemotePath(sink, 'tenant', 'path')).toBe('custom-path')
+    expect(registry.getAdapter(sink).buildRemotePath(sink, TenantId('tenant'), 'path')).toBe(
+      'custom-path',
+    )
   })
 })

@@ -4,7 +4,7 @@
  * Endpoints for sync specifications, jobs, and history.
  */
 
-import type { TenantId } from '@boilerhouse/core'
+import { type TenantId, WorkloadId } from '@boilerhouse/core'
 import { Elysia, t } from 'elysia'
 import type { ActivityLog } from '../../lib/activity'
 import type { PoolRegistry } from '../../lib/pool/registry'
@@ -82,7 +82,7 @@ export function syncController(deps: SyncControllerDeps) {
       '/sync-specs/:id',
       ({ params, set }) => {
         // ID format: sync-{workloadId}
-        const workloadId = params.id.replace(/^sync-/, '')
+        const workloadId = WorkloadId(params.id.replace(/^sync-/, ''))
         const workload = workloadRegistry.get(workloadId)
 
         if (!workload?.sync) {
@@ -145,7 +145,7 @@ export function syncController(deps: SyncControllerDeps) {
       '/sync-specs/:id/trigger',
       async ({ params, set }) => {
         // ID format: sync-{workloadId}
-        const workloadId = params.id.replace(/^sync-/, '')
+        const workloadId = WorkloadId(params.id.replace(/^sync-/, ''))
         const workload = workloadRegistry.get(workloadId)
 
         if (!workload?.sync) {

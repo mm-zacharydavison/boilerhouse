@@ -13,7 +13,7 @@ import { mkdir, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
-  type ContainerId,
+  ContainerId,
   type ContainerRuntime,
   type ContainerSpec,
   DEFAULT_SECURITY_CONFIG,
@@ -306,8 +306,8 @@ export class ContainerManager {
     return this.config.labelPrefix
   }
 
-  private generateContainerId(): string {
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  private generateContainerId(): ContainerId {
+    return ContainerId(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
   }
 
   private async wipeDirectory(dir: string): Promise<void> {

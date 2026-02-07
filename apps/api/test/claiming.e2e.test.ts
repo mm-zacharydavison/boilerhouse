@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { TenantId } from '@boilerhouse/core'
 import { type TestHarness, createTestHarness } from './harness'
 
 describe('Container Claiming', () => {
@@ -29,7 +30,7 @@ describe('Container Claiming', () => {
   })
 
   test('tenant gets same container back after release (affinity)', async () => {
-    const tenantId = 'tenant-affinity-test'
+    const tenantId = TenantId('tenant-affinity-test')
 
     // First claim
     const claim1 = await harness.claimContainer(tenantId)
@@ -50,8 +51,8 @@ describe('Container Claiming', () => {
   })
 
   test('different tenants get different containers', async () => {
-    const tenantA = 'tenant-A'
-    const tenantB = 'tenant-B'
+    const tenantA = TenantId('tenant-A')
+    const tenantB = TenantId('tenant-B')
 
     // Tenant A claims
     const claimA = await harness.claimContainer(tenantA)
@@ -70,7 +71,7 @@ describe('Container Claiming', () => {
   })
 
   test('pool scales up when all containers are claimed', async () => {
-    const tenants = ['tenant-1', 'tenant-2', 'tenant-3']
+    const tenants = [TenantId('tenant-1'), TenantId('tenant-2'), TenantId('tenant-3')]
     const containerIds: string[] = []
 
     // Claim containers for all tenants (should scale up from 0 to 3)
@@ -92,7 +93,7 @@ describe('Container Claiming', () => {
   })
 
   test('returns error when pool is at max capacity', async () => {
-    const tenants = ['tenant-1', 'tenant-2', 'tenant-3']
+    const tenants = [TenantId('tenant-1'), TenantId('tenant-2'), TenantId('tenant-3')]
 
     // Fill the pool to max capacity (3)
     for (const tenantId of tenants) {
@@ -101,7 +102,7 @@ describe('Container Claiming', () => {
     }
 
     // Try to claim one more - should fail with 429 (pool at capacity)
-    const overflow = await harness.claimContainer('tenant-overflow')
+    const overflow = await harness.claimContainer(TenantId('tenant-overflow'))
     expect(overflow.status).toBe(429)
     expect(overflow.data).toHaveProperty('error')
 
@@ -130,7 +131,7 @@ describe('Container State Wiping', () => {
     })
     await harness.setup()
 
-    const tenantId = 'tenant-state-test'
+    const tenantId = TenantId('tenant-state-test')
 
     // Claim container
     const claim1 = await harness.claimContainer(tenantId)
@@ -175,8 +176,8 @@ describe('Container State Wiping', () => {
     })
     await harness.setup()
 
-    const tenantA = 'tenant-A'
-    const tenantB = 'tenant-B'
+    const tenantA = TenantId('tenant-A')
+    const tenantB = TenantId('tenant-B')
 
     // Tenant A claims
     const claimA = await harness.claimContainer(tenantA)
