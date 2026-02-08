@@ -1,0 +1,29 @@
+apps/api/lib/sync/rclone-errors.ts
+  3eeee03fe11aeedd 1-65
+apps/api/lib/sync/rclone.ts
+  3eeee03fe11aeedd 12,248
+apps/api/lib/sync/rclone-errors.unit.test.ts
+  3eeee03fe11aeedd 1-112
+apps/api/lib/sync/coordinator.ts
+  3eeee03fe11aeedd 31,176,180-185,187,445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "441ca14aed9b96ab15d4f73336b38e4bb6c70baf",
+  "prompts": {
+    "3eeee03fe11aeedd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29e9d72e-607a-4716-9331-96613174df72",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 193,
+      "total_deletions": 13,
+      "accepted_lines": 189,
+      "overriden_lines": 0
+    }
+  }
+}
