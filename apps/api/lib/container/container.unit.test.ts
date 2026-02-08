@@ -490,6 +490,298 @@ describe('Security Configuration', () => {
   })
 })
 
+describe('applySeed', () => {
+  test('copies seed files to empty state directory', async () => {
+    const { mkdtemp } = await import('node:fs/promises')
+    const { writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+    const seedDir = join(baseDir, 'seed')
+
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+    await mkdir(seedDir, { recursive: true })
+
+    // Create seed files
+    await writeFile(join(seedDir, 'config.json'), '{"key":"value"}')
+    await writeFile(join(seedDir, 'README.md'), '# Hello')
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    // Create a container to get a real containerId with host dirs
+    const workload = createWorkloadSpec({
+      volumes: {
+        state: { target: '/state', readOnly: false, seed: seedDir },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    // State dir should be empty before seed
+    const { readdir } = await import('node:fs/promises')
+    const filesBefore = await readdir(manager.getStateDir(container.containerId))
+    expect(filesBefore).toHaveLength(0)
+
+    // Apply seed
+    await manager.applySeed(container.containerId, workload)
+
+    // Seed files should now exist
+    const filesAfter = await readdir(manager.getStateDir(container.containerId))
+    expect(filesAfter).toContain('config.json')
+    expect(filesAfter).toContain('README.md')
+
+    // Clean up
+    const { rm } = await import('node:fs/promises')
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  test('skips seed when state directory already has files', async () => {
+    const { mkdtemp, writeFile, mkdir, readdir, readFile, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+    const seedDir = join(baseDir, 'seed')
+
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+    await mkdir(seedDir, { recursive: true })
+
+    // Seed has a config.json with default content
+    await writeFile(join(seedDir, 'config.json'), '{"default":true}')
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    const workload = createWorkloadSpec({
+      volumes: {
+        state: { target: '/state', readOnly: false, seed: seedDir },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    // Pre-populate the state dir (simulates sync having downloaded data)
+    await writeFile(
+      join(manager.getStateDir(container.containerId), 'existing.txt'),
+      'tenant data',
+    )
+
+    // Apply seed — should be a no-op
+    await manager.applySeed(container.containerId, workload)
+
+    // Only the existing file should be present, no seed files
+    const files = await readdir(manager.getStateDir(container.containerId))
+    expect(files).toContain('existing.txt')
+    expect(files).not.toContain('config.json')
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  test('chowns seed files when workload has a user UID', async () => {
+    const { mkdtemp, writeFile, mkdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+    const seedDir = join(baseDir, 'seed')
+
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+    await mkdir(seedDir, { recursive: true })
+
+    await writeFile(join(seedDir, 'app.conf'), 'setting=1')
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    const workload = createWorkloadSpec({
+      user: 1000,
+      volumes: {
+        state: { target: '/state', readOnly: false, seed: seedDir },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    chownMock.mockClear()
+
+    await manager.applySeed(container.containerId, workload)
+
+    // chown should have been called for the seeded files/dirs
+    expect(chownMock).toHaveBeenCalled()
+    // All chown calls should use the workload UID
+    for (const call of chownMock.mock.calls) {
+      expect(call[1]).toBe(1000)
+      expect(call[2]).toBe(1000)
+    }
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  test('no-op when workload has no seed configured', async () => {
+    const { mkdtemp, mkdir, readdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    // No seed field on volumes
+    const workload = createWorkloadSpec({
+      volumes: {
+        state: { target: '/state', readOnly: false },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    // Should not throw and state dir should remain empty
+    await manager.applySeed(container.containerId, workload)
+
+    const files = await readdir(manager.getStateDir(container.containerId))
+    expect(files).toHaveLength(0)
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  test('copies nested seed directories recursively', async () => {
+    const { mkdtemp, writeFile, mkdir, readdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+    const seedDir = join(baseDir, 'seed')
+
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+    await mkdir(join(seedDir, 'workspace'), { recursive: true })
+
+    await writeFile(join(seedDir, 'config.json'), '{}')
+    await writeFile(join(seedDir, 'workspace', 'SOUL.md'), '# Soul')
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    const workload = createWorkloadSpec({
+      volumes: {
+        state: { target: '/state', readOnly: false, seed: seedDir },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    await manager.applySeed(container.containerId, workload)
+
+    const stateDir = manager.getStateDir(container.containerId)
+    const topFiles = await readdir(stateDir)
+    expect(topFiles).toContain('config.json')
+    expect(topFiles).toContain('workspace')
+
+    const nestedFiles = await readdir(join(stateDir, 'workspace'))
+    expect(nestedFiles).toContain('SOUL.md')
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+
+  test('seeds multiple volumes independently', async () => {
+    const { mkdtemp, writeFile, mkdir, readdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const baseDir = await mkdtemp(join(tmpdir(), 'seed-test-'))
+    const stateBaseDir = join(baseDir, 'state')
+    const secretsBaseDir = join(baseDir, 'secrets')
+    const socketBaseDir = join(baseDir, 'sockets')
+    const stateSeedDir = join(baseDir, 'state-seed')
+    const secretsSeedDir = join(baseDir, 'secrets-seed')
+
+    await mkdir(stateBaseDir, { recursive: true })
+    await mkdir(secretsBaseDir, { recursive: true })
+    await mkdir(socketBaseDir, { recursive: true })
+    await mkdir(stateSeedDir, { recursive: true })
+    await mkdir(secretsSeedDir, { recursive: true })
+
+    await writeFile(join(stateSeedDir, 'state-file.txt'), 'state default')
+    await writeFile(join(secretsSeedDir, 'secret-file.txt'), 'secret default')
+
+    const runtime = createMockContainerRuntime() as unknown as ContainerRuntime
+    const manager = new ContainerManager(runtime, {
+      stateBaseDir,
+      secretsBaseDir,
+      socketBaseDir,
+    })
+
+    const workload = createWorkloadSpec({
+      volumes: {
+        state: { target: '/state', readOnly: false, seed: stateSeedDir },
+        secrets: { target: '/secrets', readOnly: true, seed: secretsSeedDir },
+      },
+    })
+    const poolId = createPoolId()
+    const container = await manager.createContainer(workload, poolId)
+
+    await manager.applySeed(container.containerId, workload)
+
+    const stateFiles = await readdir(manager.getStateDir(container.containerId))
+    expect(stateFiles).toContain('state-file.txt')
+
+    const secretsFiles = await readdir(manager.getSecretsDir(container.containerId))
+    expect(secretsFiles).toContain('secret-file.txt')
+
+    await rm(baseDir, { recursive: true, force: true })
+  })
+})
+
 describe('ContainerRuntime abstraction', () => {
   test('manager works with any ContainerRuntime implementation', async () => {
     // This test verifies that the manager only depends on the interface

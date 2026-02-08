@@ -9,7 +9,7 @@
  * Paths are computed deterministically from containerId.
  */
 
-import { chown, mkdir, readdir, rm } from 'node:fs/promises'
+import { chown, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -289,6 +289,60 @@ export class ContainerManager {
   }
 
   /**
+   * Copy seed files into empty volume directories.
+   * For each volume with a `seed` path, checks if the target directory is empty.
+   * If empty, copies the seed directory contents. Skips if ANY files already in the directories.
+   * (e.g. sync downloaded tenant data).
+   */
+  async applySeed(containerId: ContainerId, workload: WorkloadSpec): Promise<void> {
+    const uid = this.parseUid(workload.user)
+
+    const seedTasks: { hostDir: string; seedDir: string }[] = []
+
+    if (workload.volumes.state?.seed) {
+      seedTasks.push({
+        hostDir: this.getStateDir(containerId),
+        seedDir: workload.volumes.state.seed,
+      })
+    }
+
+    if (workload.volumes.secrets?.seed) {
+      seedTasks.push({
+        hostDir: this.getSecretsDir(containerId),
+        seedDir: workload.volumes.secrets.seed,
+      })
+    }
+
+    if (workload.volumes.comm?.seed) {
+      seedTasks.push({
+        hostDir: join(this.config.socketBaseDir, containerId),
+        seedDir: workload.volumes.comm.seed,
+      })
+    }
+
+    if (workload.volumes.custom) {
+      for (const custom of workload.volumes.custom) {
+        if (!custom.seed) continue
+        seedTasks.push({
+          hostDir: join(this.config.stateBaseDir, containerId, 'custom', custom.name),
+          seedDir: custom.seed,
+        })
+      }
+    }
+
+    for (const { hostDir, seedDir } of seedTasks) {
+      const entries = await readdir(hostDir)
+      if (entries.length > 0) continue
+
+      await cp(seedDir, hostDir, { recursive: true })
+
+      if (uid !== undefined) {
+        await this.chownRecursive(hostDir, uid)
+      }
+    }
+  }
+
+  /**
    * Stop and remove a container completely (runtime + host dirs only).
    * Does not touch the DB — the pool handles DB cleanup.
    */
@@ -348,6 +402,19 @@ export class ContainerManager {
 
   private generateContainerId(): ContainerId {
     return ContainerId(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
+  }
+
+  private async chownRecursive(dir: string, uid: number): Promise<void> {
+    await chown(dir, uid, uid)
+    const entries = await readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        await this.chownRecursive(fullPath, uid)
+      } else {
+        await chown(fullPath, uid, uid)
+      }
+    }
   }
 
   private async wipeDirectory(dir: string, uid?: number): Promise<void> {

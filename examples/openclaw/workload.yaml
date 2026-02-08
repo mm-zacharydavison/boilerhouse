@@ -5,6 +5,7 @@ image: ghcr.io/openclaw/openclaw:latest
 volumes:
   state:
     target: /home/node/.openclaw    # OpenClaw's default state directory
+    seed: ./seed                    # Default config + workspace for new tenants
   secrets:
     target: /secrets
     read_only: true

@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { WorkloadId, WorkloadSpec } from '@boilerhouse/core'
 import {
   type ParseResult,
@@ -41,6 +41,38 @@ export class WorkloadValidationError extends Error {
 }
 
 /**
+ * Resolve relative seed paths to absolute and validate they exist.
+ * Mutates the spec in place for simplicity (called right after parse).
+ */
+function resolveSeedPaths(spec: WorkloadSpec, yamlDir: string, filePath: string): void {
+  const volumeKeys = ['state', 'secrets', 'comm'] as const
+  for (const key of volumeKeys) {
+    const vol = spec.volumes[key]
+    if (!vol?.seed) continue
+    const resolved = isAbsolute(vol.seed) ? vol.seed : resolve(yamlDir, vol.seed)
+    if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+      throw new WorkloadValidationError(filePath, [
+        { path: `volumes.${key}.seed`, message: `Seed directory does not exist: ${resolved}` },
+      ])
+    }
+    vol.seed = resolved
+  }
+
+  if (spec.volumes.custom) {
+    for (const custom of spec.volumes.custom) {
+      if (!custom.seed) continue
+      const resolved = isAbsolute(custom.seed) ? custom.seed : resolve(yamlDir, custom.seed)
+      if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+        throw new WorkloadValidationError(filePath, [
+          { path: `volumes.custom.${custom.name}.seed`, message: `Seed directory does not exist: ${resolved}` },
+        ])
+      }
+      custom.seed = resolved
+    }
+  }
+}
+
+/**
  * Load and validate a single workload YAML file
  * Environment variables in ${VAR} format are interpolated from process.env
  */
@@ -53,6 +85,8 @@ export function loadWorkloadFile(filePath: string): WorkloadSpec {
   if (!result.success) {
     throw new WorkloadValidationError(filePath, result.errors)
   }
+
+  resolveSeedPaths(result.data, dirname(filePath), filePath)
 
   return result.data
 }

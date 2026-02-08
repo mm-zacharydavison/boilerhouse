@@ -58,6 +58,9 @@ export async function claimContainer(
     logSyncResults(tenantId, results, activityLog)
   }
 
+  // Seed: fill defaults into empty volumes (skipped if sync provided data)
+  await containerManager.applySeed(container.containerId, workload)
+
   // Restart container to get fresh process with synced data
   // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
   await containerManager.restartContainer(container.containerId, 2)

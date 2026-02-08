@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "theme": "dark",
+  "editor": {
+    "fontSize": 14,
+    "tabSize": 2
+  },
+  "gateway": {
+    "autoConnect": true
+  }
+}

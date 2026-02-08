@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "model": "claude-sonnet-4-5-20250929",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  }
+}

@@ -98,6 +98,13 @@ const workloadId = z
 export const volumeConfigSchema = z.object({
   target: z.string().describe('Path inside the container where the volume is mounted'),
   read_only: z.boolean().optional().default(false).describe('Mount as read-only'),
+  seed: z
+    .string()
+    .optional()
+    .describe(
+      'Path to a directory of seed files to copy into this volume during claim. '
+        + 'Only copies when the volume is empty. Resolved relative to the workload YAML file.',
+    ),
 })
 
 /**

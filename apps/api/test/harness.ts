@@ -130,6 +130,11 @@ export class TestHarness {
     // Write test workload YAML to disk so WorkloadRegistry can load it
     const workload = this._config.workload ?? DEFAULT_TEST_WORKLOAD
     const workloadFile = join(workloadDir, `${workload.id}.yaml`)
+
+    const stateSeed = workload.volumes.state?.seed ? `\n    seed: ${workload.volumes.state.seed}` : ''
+    const secretsSeed = workload.volumes.secrets?.seed ? `\n    seed: ${workload.volumes.secrets.seed}` : ''
+    const commSeed = workload.volumes.comm?.seed ? `\n    seed: ${workload.volumes.comm.seed}` : ''
+
     await writeFile(
       workloadFile,
       `id: ${workload.id}
@@ -138,12 +143,12 @@ image: ${workload.image}
 command: ${JSON.stringify(workload.command)}
 volumes:
   state:
-    target: ${workload.volumes.state?.target ?? '/state'}
+    target: ${workload.volumes.state?.target ?? '/state'}${stateSeed}
   secrets:
     target: ${workload.volumes.secrets?.target ?? '/secrets'}
-    read_only: true
+    read_only: true${secretsSeed}
   comm:
-    target: ${workload.volumes.comm?.target ?? '/comm'}
+    target: ${workload.volumes.comm?.target ?? '/comm'}${commSeed}
 environment:
   STATE_DIR: /state
   TEST_MODE: "true"

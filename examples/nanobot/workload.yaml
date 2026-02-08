@@ -8,6 +8,7 @@ command: ["nanobot", "gateway"]
 volumes:
   state:
     target: /root/.nanobot    # Nanobot's default state directory (sessions, workspace, config)
+    seed: ./seed              # Default config + workspace for new tenants
   secrets:
     target: /run/secrets/nanobot
     read_only: true
