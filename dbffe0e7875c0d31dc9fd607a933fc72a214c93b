@@ -1,0 +1,25 @@
+packages/docker/src/docker-runtime.test.ts
+  7e3c5ec181aefdf6 1-65
+packages/docker/src/docker-runtime.ts
+  7e3c5ec181aefdf6 150-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "dbffe0e7875c0d31dc9fd607a933fc72a214c93b",
+  "prompts": {
+    "7e3c5ec181aefdf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94491e0d-5cd7-4309-a7e5-5e9931890008",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 82,
+      "total_deletions": 2,
+      "accepted_lines": 81,
+      "overriden_lines": 0
+    }
+  }
+}
