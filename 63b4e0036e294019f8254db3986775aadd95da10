@@ -1,0 +1,64 @@
+apps/api/lib/workload/loader.test.ts
+  f1f39ffd3beffd49 1-149
+examples/openclaw/workload.yaml
+  f1f39ffd3beffd49 8
+apps/api/lib/workload/loader.ts
+  f1f39ffd3beffd49 1-2,44-74,89
+examples/nanobot/seed/config.json
+  f1f39ffd3beffd49 1-8
+apps/api/test/harness.ts
+  f1f39ffd3beffd49 133-137,146,149,151
+apps/api/lib/container/claim.ts
+  f1f39ffd3beffd49 61-63
+docs/plans/seed.md
+  4c5fa0ff915d3029 1-18,20-200
+examples/openclaw/seed/workspace/SOUL.md
+  f1f39ffd3beffd49 1-3
+apps/api/lib/container/manager.ts
+  f1f39ffd3beffd49 12,292,295-344,407-419
+apps/api/test/claiming.e2e.test.ts
+  f1f39ffd3beffd49 8,210-414
+examples/nanobot/workload.yaml
+  f1f39ffd3beffd49 11
+packages/core/src/schemas/workload.ts
+  f1f39ffd3beffd49 101-107
+examples/openclaw/seed/openclaw.json
+  f1f39ffd3beffd49 1-11
+apps/api/lib/container/container.unit.test.ts
+  f1f39ffd3beffd49 493-784
+examples/nanobot/seed/workspace/MEMORY.md
+  f1f39ffd3beffd49 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "63b4e0036e294019f8254db3986775aadd95da10",
+  "prompts": {
+    "4c5fa0ff915d3029": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17ad9f60-d87c-4a26-97b4-59461ecbc1e9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 241,
+      "total_deletions": 46,
+      "accepted_lines": 199,
+      "overriden_lines": 0
+    },
+    "f1f39ffd3beffd49": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9cea3e4f-950f-467b-ac55-d665f5db34e3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 796,
+      "total_deletions": 7,
+      "accepted_lines": 794,
+      "overriden_lines": 2
+    }
+  }
+}
