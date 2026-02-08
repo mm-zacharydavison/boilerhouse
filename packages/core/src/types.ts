@@ -387,6 +387,8 @@ export interface ClaimContainerResponse {
     socket?: string
     /** HTTP endpoint if exposed. */
     http?: string
+    /** Container hostname (stable across restarts on user-defined bridge networks). */
+    host?: string
   }
 }
 

@@ -292,6 +292,14 @@ export class ContainerManager {
   }
 
   /**
+   * Get the Docker hostname for a container.
+   * On user-defined bridge networks, containers resolve each other by name.
+   */
+  getHostname(containerId: ContainerId): string {
+    return `container-${containerId}`
+  }
+
+  /**
    * Check container health via runtime
    */
   async isHealthy(containerId: ContainerId): Promise<boolean> {

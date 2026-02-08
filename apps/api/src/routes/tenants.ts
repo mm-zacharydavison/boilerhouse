@@ -148,7 +148,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
           throw new PoolNotFoundError(poolId)
         }
 
-        const { container } = await claimContainer(tenantId, poolId, pool, {
+        const { container, hostname } = await claimContainer(tenantId, poolId, pool, {
           containerManager,
           syncCoordinator,
           activityLog,
@@ -159,6 +159,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
           containerId: container.containerId,
           endpoints: {
             socket: container.socketPath,
+            host: hostname,
           },
         }
       },

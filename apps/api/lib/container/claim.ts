@@ -22,6 +22,7 @@ export interface ClaimContainerDeps {
 
 export interface ClaimResult {
   container: PoolContainer
+  hostname: string
 }
 
 /**
@@ -67,5 +68,6 @@ export async function claimContainer(
     idleReaper.watch(container.containerId, tenantId, poolId, container.stateDir, fileIdleTtl)
   }
 
-  return { container }
+  const hostname = containerManager.getHostname(container.containerId)
+  return { container, hostname }
 }
