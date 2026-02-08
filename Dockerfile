@@ -49,9 +49,14 @@ FROM oven/bun:1-alpine AS production
 WORKDIR /app
 
 # Install runtime dependencies:
-# - rclone: for state sync to S3/GCS/etc
-# - curl: for healthcheck
-RUN apk add --no-cache rclone curl
+# - rclone: installed from official script to get latest version (apk lags behind)
+# - curl, unzip: for healthcheck and rclone install
+RUN apk add --no-cache curl unzip && \
+    curl -O https://downloads.rclone.org/rclone-current-linux-amd64.zip && \
+    unzip rclone-current-linux-amd64.zip && \
+    cp rclone-*-linux-amd64/rclone /usr/bin/ && \
+    chmod +x /usr/bin/rclone && \
+    rm -rf rclone-*
 
 # Copy built application and dependencies
 COPY --from=build /app/node_modules ./node_modules
