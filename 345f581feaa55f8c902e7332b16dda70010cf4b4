@@ -1,0 +1,29 @@
+apps/api/lib/container/manager.ts
+  7c28fb674fe47eb1 295-301
+apps/api/lib/container/claim.ts
+  7c28fb674fe47eb1 25,71-72
+packages/core/src/types.ts
+  7c28fb674fe47eb1 390-391
+apps/api/src/routes/tenants.ts
+  7c28fb674fe47eb1 151,162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "345f581feaa55f8c902e7332b16dda70010cf4b4",
+  "prompts": {
+    "7c28fb674fe47eb1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "407d78a6-aa1f-4221-b52c-64dbf0101133",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 17,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}
