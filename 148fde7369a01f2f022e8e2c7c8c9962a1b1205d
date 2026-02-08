@@ -1,0 +1,27 @@
+packages/docker/src/docker-runtime.ts
+  a440e7a2b188d5c2 185-189
+apps/api/lib/container/manager.ts
+  a440e7a2b188d5c2 200,203-205,324-334
+apps/api/lib/container/claim.ts
+  a440e7a2b188d5c2 65-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "148fde7369a01f2f022e8e2c7c8c9962a1b1205d",
+  "prompts": {
+    "a440e7a2b188d5c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a11a4d23-b5e3-4659-b1d2-4344a4c3b06e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 2,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    }
+  }
+}
