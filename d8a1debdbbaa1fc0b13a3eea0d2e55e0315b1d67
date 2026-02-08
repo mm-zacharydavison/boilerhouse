@@ -1,0 +1,36 @@
+Dockerfile
+  8f199e6b1ef2bf68 52-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "d8a1debdbbaa1fc0b13a3eea0d2e55e0315b1d67",
+  "prompts": {
+    "8f199e6b1ef2bf68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fae1dc0f-8031-46d6-9387-0e006e93b73a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 3,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "fd639e21e9fec96e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a0290b2-573e-4ec8-a834-1846a93f66f9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 1393,
+      "total_deletions": 5,
+      "accepted_lines": 1407,
+      "overriden_lines": 13
+    }
+  }
+}
