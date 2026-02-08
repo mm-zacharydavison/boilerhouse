@@ -1,0 +1,25 @@
+LICENSE
+  ba3dab91ca5127b4 1-9
+.github/workflows/build.yml
+  ba3dab91ca5127b4 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "a58715a294b6ea9ba4daf3e09c708ac8b8b694fb",
+  "prompts": {
+    "ba3dab91ca5127b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "45a3c7ae-c573-43d6-b367-c99c231741e0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 7,
+      "accepted_lines": 53,
+      "overriden_lines": 0
+    }
+  }
+}
