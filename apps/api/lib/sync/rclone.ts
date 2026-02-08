@@ -9,6 +9,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SinkConfig, SyncMapping, TenantId } from '@boilerhouse/core'
+import { isBisyncResyncRequired } from './rclone-errors'
 import {
   type SinkAdapter,
   type SinkAdapterRegistry,
@@ -244,11 +245,7 @@ export class RcloneSyncExecutor {
     )
 
     // If bisync failed due to corrupted state and we didn't already use --resync, retry with --resync
-    if (
-      !result.success &&
-      !initialSync &&
-      result.errors?.some((e) => e.includes('Must run --resync to recover'))
-    ) {
+    if (!initialSync && isBisyncResyncRequired(result)) {
       if (this.config.verbose) {
         console.log('[rclone] Bisync state corrupted, retrying with --resync')
       }

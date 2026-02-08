@@ -28,6 +28,7 @@ import {
   syncPeriodicJobsActive,
   syncQueueLength,
 } from '../metrics'
+import { isBisyncResyncRequired, isSourceDirectoryNotFound } from './rclone-errors'
 import type { RcloneSyncExecutor, SyncResult } from './rclone'
 import type { SyncStatusTracker } from './status'
 
@@ -172,12 +173,18 @@ export class SyncCoordinator {
 
     for (const mapping of downloadMappings) {
       // On claim, force bidirectional mappings to download-only.
-      // The container was just wiped so there's nothing local to upload,
-      // and rclone sync handles non-existent remote paths gracefully (unlike bisync).
+      // The container was just wiped so there's nothing local to upload.
       const claimMapping =
         mapping.direction === 'bidirectional' ? { ...mapping, direction: 'download' as const } : mapping
       const result = await this.executeSync(tenantId, syncConfig, claimMapping, container)
-      results.push(result)
+
+      // For a new tenant the remote S3 path won't exist yet — there's genuinely
+      // nothing to download, so treat as a no-op success.
+      if (isSourceDirectoryNotFound(result)) {
+        results.push({ success: true, bytesTransferred: 0, filesTransferred: 0, duration: result.duration })
+      } else {
+        results.push(result)
+      }
     }
 
     // Start periodic sync if configured
@@ -435,8 +442,7 @@ export class SyncCoordinator {
         syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'failure' })
         syncErrorsTotal.inc({ workload_id: workloadId, error_type: classifySyncError(errorMsg) })
 
-        // Track bisync resync events
-        if (errorMsg.includes('--resync')) {
+        if (isBisyncResyncRequired(result)) {
           syncBisyncResyncTotal.inc({ workload_id: workloadId })
         }
 
