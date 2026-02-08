@@ -182,7 +182,11 @@ export class DockerRuntime implements ContainerRuntime {
     try {
       const container = this.docker.getContainer(id)
       const info = await container.inspect()
-      return info.State.Running === true
+      if (!info.State.Running) return false
+      // If the container has a healthcheck, require it to be passing
+      const health = info.State.Health?.Status
+      if (health && health !== 'healthy') return false
+      return true
     } catch {
       return false
     }

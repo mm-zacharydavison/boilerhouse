@@ -62,6 +62,9 @@ export async function claimContainer(
   // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
   await containerManager.restartContainer(container.containerId, 2)
 
+  // Wait for the container to pass its health check before returning
+  await containerManager.waitForHealthy(container.containerId)
+
   // Start filesystem idle TTL watch if configured
   const fileIdleTtl = pool.getConfig().fileIdleTtl
   if (fileIdleTtl) {
