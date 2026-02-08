@@ -171,7 +171,12 @@ export class SyncCoordinator {
     )
 
     for (const mapping of downloadMappings) {
-      const result = await this.executeSync(tenantId, syncConfig, mapping, container, initialSync)
+      // On claim, force bidirectional mappings to download-only.
+      // The container was just wiped so there's nothing local to upload,
+      // and rclone sync handles non-existent remote paths gracefully (unlike bisync).
+      const claimMapping =
+        mapping.direction === 'bidirectional' ? { ...mapping, direction: 'download' as const } : mapping
+      const result = await this.executeSync(tenantId, syncConfig, claimMapping, container)
       results.push(result)
     }
 
