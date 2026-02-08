@@ -3,13 +3,7 @@
  * This is used when the API is not available
  */
 
-import {
-  ContainerId,
-  PoolId,
-  SyncId,
-  TenantId,
-  WorkloadId,
-} from '@boilerhouse/core'
+import { ContainerId, PoolId, SyncId, TenantId, WorkloadId } from '@boilerhouse/core'
 
 import type {
   ActivityEvent,

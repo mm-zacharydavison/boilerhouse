@@ -11,6 +11,8 @@ import type { z } from 'zod'
 import type {
   deployConfigSchema,
   healthCheckConfigSchema,
+  hookCommandSchema,
+  hooksSchema,
   poolConfigSchema,
   resourceLimitsSchema,
   resourcesConfigSchema,
@@ -151,6 +153,12 @@ export type SinkConfigRaw = z.infer<typeof sinkConfigSchema>
 /** Raw sync config from YAML (snake_case). */
 export type WorkloadSyncConfigRaw = z.infer<typeof workloadSyncConfigSchema>
 
+/** Raw hook command from YAML (snake_case). */
+export type HookCommandRaw = z.infer<typeof hookCommandSchema>
+
+/** Raw hooks config from YAML (snake_case). */
+export type HooksConfigRaw = z.infer<typeof hooksSchema>
+
 /** Raw workload spec from YAML (snake_case). */
 export type WorkloadSpecRaw = z.infer<typeof workloadSpecSchema>
 
@@ -193,6 +201,12 @@ export type SinkConfig = CamelCasedPropertiesDeep<SinkConfigRaw>
 
 /** Workload sync configuration - embedded in WorkloadSpec. */
 export type WorkloadSyncConfig = CamelCasedPropertiesDeep<WorkloadSyncConfigRaw>
+
+/** Hook command - a command to execute inside a container at a lifecycle point. */
+export type HookCommand = CamelCasedPropertiesDeep<HookCommandRaw>
+
+/** Hooks configuration - lifecycle hook commands for a workload. */
+export type HooksConfig = CamelCasedPropertiesDeep<HooksConfigRaw>
 
 /** Workload specification - defines a complete deployable unit. */
 export type WorkloadSpec = CamelCasedPropertiesDeep<WorkloadSpecRaw> & { id: WorkloadId }

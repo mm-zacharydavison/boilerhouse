@@ -131,8 +131,12 @@ export class TestHarness {
     const workload = this._config.workload ?? DEFAULT_TEST_WORKLOAD
     const workloadFile = join(workloadDir, `${workload.id}.yaml`)
 
-    const stateSeed = workload.volumes.state?.seed ? `\n    seed: ${workload.volumes.state.seed}` : ''
-    const secretsSeed = workload.volumes.secrets?.seed ? `\n    seed: ${workload.volumes.secrets.seed}` : ''
+    const stateSeed = workload.volumes.state?.seed
+      ? `\n    seed: ${workload.volumes.state.seed}`
+      : ''
+    const secretsSeed = workload.volumes.secrets?.seed
+      ? `\n    seed: ${workload.volumes.secrets.seed}`
+      : ''
     const commSeed = workload.volumes.comm?.seed ? `\n    seed: ${workload.volumes.comm.seed}` : ''
 
     await writeFile(

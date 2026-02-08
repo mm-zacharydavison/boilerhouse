@@ -82,6 +82,7 @@ export class App {
         await releaseContainer(tenantId, pool, {
           syncCoordinator: this.syncCoordinator,
           activityLog: this.activityLog,
+          containerManager: this.manager,
         })
       },
     })

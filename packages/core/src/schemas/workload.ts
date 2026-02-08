@@ -102,8 +102,8 @@ export const volumeConfigSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Path to a directory of seed files to copy into this volume during claim. '
-        + 'Only copies when the volume is empty. Resolved relative to the workload YAML file.',
+      'Path to a directory of seed files to copy into this volume during claim. ' +
+        'Only copies when the volume is empty. Resolved relative to the workload YAML file.',
     ),
 })
 
@@ -321,6 +321,49 @@ export const workloadSyncConfigSchema = z.object({
 })
 
 // =============================================================================
+// Lifecycle Hooks Configuration
+// =============================================================================
+
+/**
+ * A single hook command to execute inside a container
+ */
+export const hookCommandSchema = z.object({
+  command: z.array(z.string()).min(1).describe('Command to execute inside the container'),
+  timeout: z
+    .union([z.number().int().min(0), durationString.transform(parseDuration)])
+    .optional()
+    .default(30000)
+    .describe('Maximum time for the command to complete (e.g., "30s")'),
+  on_error: z
+    .enum(['fail', 'continue', 'retry'])
+    .optional()
+    .default('fail')
+    .describe('Behavior on non-zero exit or timeout'),
+  retries: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .default(1)
+    .describe('Number of attempts (only used when on_error is retry)'),
+})
+
+/**
+ * Lifecycle hooks configuration
+ */
+export const hooksSchema = z.object({
+  post_claim: z
+    .array(hookCommandSchema)
+    .optional()
+    .describe('Commands to run after container is claimed, synced, seeded, restarted, and healthy'),
+  pre_release: z
+    .array(hookCommandSchema)
+    .optional()
+    .describe('Commands to run before sync upload and pool release'),
+})
+
+// =============================================================================
 // Main Workload Schema
 // =============================================================================
 
@@ -368,6 +411,9 @@ export const workloadSpecSchema = z.object({
 
   // Sync configuration (boilerhouse-specific)
   sync: workloadSyncConfigSchema.optional().describe('State synchronization configuration'),
+
+  // Lifecycle hooks (boilerhouse-specific)
+  hooks: hooksSchema.optional().describe('Lifecycle hook commands'),
 })
 
 // =============================================================================

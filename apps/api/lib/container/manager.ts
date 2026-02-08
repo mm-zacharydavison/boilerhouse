@@ -200,9 +200,10 @@ export class ContainerManager {
     // Strip Docker test type prefix (CMD/CMD-SHELL) — the runtime adds it back
     const healthCheck: HealthCheckSpec | undefined = workload.healthcheck
       ? {
-          command: workload.healthcheck.test[0] === 'CMD' || workload.healthcheck.test[0] === 'CMD-SHELL'
-            ? workload.healthcheck.test.slice(1)
-            : workload.healthcheck.test,
+          command:
+            workload.healthcheck.test[0] === 'CMD' || workload.healthcheck.test[0] === 'CMD-SHELL'
+              ? workload.healthcheck.test.slice(1)
+              : workload.healthcheck.test,
           intervalMs: workload.healthcheck.interval,
           timeoutMs: workload.healthcheck.timeout,
           retries: workload.healthcheck.retries,
@@ -377,7 +378,11 @@ export class ContainerManager {
   /**
    * Poll until a container passes its health check, or throw on timeout.
    */
-  async waitForHealthy(containerId: ContainerId, timeoutMs = 60_000, intervalMs = 1_000): Promise<void> {
+  async waitForHealthy(
+    containerId: ContainerId,
+    timeoutMs = 60_000,
+    intervalMs = 1_000,
+  ): Promise<void> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       if (await this.isHealthy(containerId)) return

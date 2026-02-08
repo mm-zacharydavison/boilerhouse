@@ -9,6 +9,7 @@ import type { PoolContainer, PoolId, TenantId } from '@boilerhouse/core'
 import { type ActivityLog, logContainerClaimed, logSyncStarted } from '../activity'
 import type { SyncCoordinator } from '../sync'
 import { logSyncResults } from '../sync/logging'
+import { HookError, runHooks } from './hooks'
 import type { IdleReaper } from './idle-reaper'
 import type { ContainerManager } from './manager'
 import type { ContainerPool } from './pool'
@@ -67,6 +68,21 @@ export async function claimContainer(
 
   // Wait for the container to pass its health check before returning
   await containerManager.waitForHealthy(container.containerId)
+
+  // Run post_claim hooks (after container is healthy and ready)
+  if (workload.hooks?.postClaim) {
+    const hookResult = await runHooks(
+      'post_claim',
+      workload.hooks.postClaim,
+      container.containerId,
+      containerManager.getRuntime(),
+      activityLog,
+    )
+    if (hookResult.aborted) {
+      await pool.releaseForTenant(tenantId)
+      throw new HookError('post_claim', hookResult)
+    }
+  }
 
   // Start filesystem idle TTL watch if configured
   const fileIdleTtl = pool.getConfig().fileIdleTtl

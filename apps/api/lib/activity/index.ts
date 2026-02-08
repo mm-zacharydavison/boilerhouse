@@ -26,6 +26,9 @@ export type ActivityEventType =
   | 'pool.scaled'
   | 'pool.destroyed'
   | 'pool.warning'
+  | 'hook.started'
+  | 'hook.completed'
+  | 'hook.failed'
 
 /**
  * Activity event

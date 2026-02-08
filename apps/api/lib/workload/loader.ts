@@ -1,4 +1,12 @@
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, watch, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  watch,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { WorkloadId, WorkloadSpec } from '@boilerhouse/core'
 import {
@@ -64,7 +72,10 @@ function resolveSeedPaths(spec: WorkloadSpec, yamlDir: string, filePath: string)
       const resolved = isAbsolute(custom.seed) ? custom.seed : resolve(yamlDir, custom.seed)
       if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
         throw new WorkloadValidationError(filePath, [
-          { path: `volumes.custom.${custom.name}.seed`, message: `Seed directory does not exist: ${resolved}` },
+          {
+            path: `volumes.custom.${custom.name}.seed`,
+            message: `Seed directory does not exist: ${resolved}`,
+          },
         ])
       }
       custom.seed = resolved

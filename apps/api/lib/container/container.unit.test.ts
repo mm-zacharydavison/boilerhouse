@@ -582,10 +582,7 @@ describe('applySeed', () => {
     const container = await manager.createContainer(workload, poolId)
 
     // Pre-populate the state dir (simulates sync having downloaded data)
-    await writeFile(
-      join(manager.getStateDir(container.containerId), 'existing.txt'),
-      'tenant data',
-    )
+    await writeFile(join(manager.getStateDir(container.containerId), 'existing.txt'), 'tenant data')
 
     // Apply seed — should be a no-op
     await manager.applySeed(container.containerId, workload)

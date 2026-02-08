@@ -194,7 +194,7 @@ export function tenantsController(deps: TenantsControllerDeps) {
         await releaseContainer(
           tenantId,
           pool,
-          { syncCoordinator, activityLog },
+          { syncCoordinator, activityLog, containerManager },
           {
             skipSync: body.sync === false,
           },
