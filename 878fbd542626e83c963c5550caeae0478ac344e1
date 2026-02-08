@@ -1,0 +1,27 @@
+apps/api/src/index.ts
+  c29d26f886de213c 1,58-62
+examples/deploy/docker-compose.yml
+  c29d26f886de213c 69
+Dockerfile
+  c29d26f886de213c 85-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "878fbd542626e83c963c5550caeae0478ac344e1",
+  "prompts": {
+    "c29d26f886de213c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6bc159df-3545-47ca-a662-65a384bb7dfc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 6,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
