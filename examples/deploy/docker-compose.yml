@@ -66,7 +66,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /home/bun/.cache
+      - /root/.cache
     # NO ports: section - not reachable from host network
     # Your app must join the 'boilerhouse' network to access the API
 

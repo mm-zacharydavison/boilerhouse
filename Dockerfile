@@ -82,11 +82,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/api/v1/health || exit 1
 
-# Create /data directory with correct permissions
-RUN mkdir -p /data && chown bun:bun /data
-
-# Run as non-root user (bun user from oven/bun image)
-USER bun
+# Create /data directory
+RUN mkdir -p /data
 
 # Start the API server
 CMD ["bun", "run", "apps/api/dist/index.js"]

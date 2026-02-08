@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs'
 import { closeDatabase, initDatabase } from '@boilerhouse/db'
 import { DockerRuntime, type DockerRuntimeConfig } from '@boilerhouse/docker'
 import { config } from '../lib/config'
@@ -53,6 +54,11 @@ log.info(
   },
   'Starting Boilerhouse API server',
 )
+
+// Ensure base directories exist before any container operations
+for (const dir of [config.stateBaseDir, config.secretsBaseDir, config.socketBaseDir]) {
+  mkdirSync(dir, { recursive: true })
+}
 
 // Initialize SQLite database with WAL mode
 const db = initDatabase({ path: config.dbPath })
