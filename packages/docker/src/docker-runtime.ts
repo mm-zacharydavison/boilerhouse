@@ -147,7 +147,22 @@ export class DockerRuntime implements ContainerRuntime {
 
   async restartContainer(id: RuntimeContainerId, timeoutSeconds = 10): Promise<void> {
     const container = this.docker.getContainer(id)
-    await container.restart({ t: timeoutSeconds })
+    try {
+      await container.restart({ t: timeoutSeconds })
+    } catch (err: unknown) {
+      // Docker returns 304 when trying to restart an already-stopped container.
+      // Fall back to start — achieves the same result (fresh process).
+      if (
+        err &&
+        typeof err === 'object' &&
+        'statusCode' in err &&
+        (err as { statusCode: number }).statusCode === 304
+      ) {
+        await container.start()
+        return
+      }
+      throw err
+    }
   }
 
   async getContainer(id: RuntimeContainerId): Promise<RuntimeContainerInfo | null> {

@@ -9,7 +9,7 @@
  * Paths are computed deterministically from containerId.
  */
 
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { chown, mkdir, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -120,6 +120,16 @@ export class ContainerManager {
       mkdir(socketDir, { recursive: true }),
     ])
 
+    // Fix ownership so non-root containers can write to their volumes
+    const uid = typeof workload.user === 'number' ? workload.user : undefined
+    if (uid !== undefined) {
+      await Promise.all([
+        chown(stateDir, uid, uid),
+        chown(secretsDir, uid, uid),
+        chown(socketDir, uid, uid),
+      ])
+    }
+
     // Build volume mounts from workload spec
     const volumes: ContainerSpec['volumes'] = []
 
@@ -152,6 +162,9 @@ export class ContainerManager {
       for (const custom of workload.volumes.custom) {
         const customDir = join(this.config.stateBaseDir, containerId, 'custom', custom.name)
         await mkdir(customDir, { recursive: true })
+        if (uid !== undefined) {
+          await chown(customDir, uid, uid)
+        }
         volumes.push({
           source: customDir,
           target: custom.target,
@@ -255,13 +268,13 @@ export class ContainerManager {
    * Wipe container state for a new tenant.
    * Wipes state, secrets, and bisync cache for tenant isolation.
    */
-  async wipeForNewTenant(containerId: ContainerId): Promise<void> {
+  async wipeForNewTenant(containerId: ContainerId, uid?: number): Promise<void> {
     const stateDir = this.getStateDir(containerId)
     const secretsDir = this.getSecretsDir(containerId)
 
     await Promise.all([
-      this.wipeDirectory(stateDir),
-      this.wipeDirectory(secretsDir),
+      this.wipeDirectory(stateDir, uid),
+      this.wipeDirectory(secretsDir, uid),
       this.wipeBisyncCache(stateDir),
     ])
   }
@@ -318,13 +331,16 @@ export class ContainerManager {
     return ContainerId(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
   }
 
-  private async wipeDirectory(dir: string): Promise<void> {
+  private async wipeDirectory(dir: string, uid?: number): Promise<void> {
     try {
       await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { recursive: true })
     } catch {
       // Directory might not exist, that's fine
       await mkdir(dir, { recursive: true })
+    }
+    if (uid !== undefined) {
+      await chown(dir, uid, uid)
     }
   }
 

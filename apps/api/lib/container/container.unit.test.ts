@@ -5,7 +5,17 @@
  * Note: Some tests require Docker to be running.
  */
 
-import { describe, expect, type mock, test } from 'bun:test'
+import { describe, expect, type mock, mock as mockFn, test } from 'bun:test'
+
+const chownMock = mockFn(() => Promise.resolve())
+
+mockFn.module('node:fs/promises', () => {
+  const actual = require('node:fs/promises')
+  return {
+    ...actual,
+    chown: chownMock,
+  }
+})
 import { DEFAULT_SECURITY_CONFIG, TenantId } from '@boilerhouse/core'
 import { createTestDatabase } from '@boilerhouse/db'
 import pino from 'pino'
@@ -409,6 +419,34 @@ describe('Security Configuration', () => {
 
     expect(callArgs.security.readOnlyRootFilesystem).toBe(false)
     expect(callArgs.security.runAsUser).toBe(1000)
+  })
+
+  test('volume directories are chowned when user is specified', async () => {
+    const { manager } = setupTest()
+    chownMock.mockClear()
+
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec({ user: 1000 })
+    await manager.createContainer(workload, poolId)
+
+    // state, secrets, and socket dirs should all be chowned
+    const chownCalls = chownMock.mock.calls
+    expect(chownCalls.length).toBe(3)
+    for (const call of chownCalls) {
+      expect(call[1]).toBe(1000)
+      expect(call[2]).toBe(1000)
+    }
+  })
+
+  test('volume directories are not chowned when user is not specified', async () => {
+    const { manager } = setupTest()
+    chownMock.mockClear()
+
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec()
+    await manager.createContainer(workload, poolId)
+
+    expect(chownMock).not.toHaveBeenCalled()
   })
 
   test('workload environment variables are passed to container', async () => {
