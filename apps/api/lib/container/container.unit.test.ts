@@ -438,6 +438,27 @@ describe('Security Configuration', () => {
     }
   })
 
+  test('string user is parsed and applied to security and chown', async () => {
+    const { manager, runtime } = setupTest()
+    chownMock.mockClear()
+
+    const poolId = createPoolId()
+    const workload = createWorkloadSpec({ user: '1000' as unknown as number })
+    await manager.createContainer(workload, poolId)
+
+    // runAsUser should be parsed to number
+    const createMock = runtime.createContainer as ReturnType<typeof mock>
+    const callArgs = createMock.mock.calls[0][0]
+    expect(callArgs.security.runAsUser).toBe(1000)
+
+    // chown should fire with parsed uid
+    expect(chownMock.mock.calls.length).toBe(3)
+    for (const call of chownMock.mock.calls) {
+      expect(call[1]).toBe(1000)
+      expect(call[2]).toBe(1000)
+    }
+  })
+
   test('volume directories are not chowned when user is not specified', async () => {
     const { manager } = setupTest()
     chownMock.mockClear()

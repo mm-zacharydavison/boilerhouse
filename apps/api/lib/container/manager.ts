@@ -120,8 +120,8 @@ export class ContainerManager {
       mkdir(socketDir, { recursive: true }),
     ])
 
-    // Fix ownership so non-root containers can write to their volumes
-    const uid = typeof workload.user === 'number' ? workload.user : undefined
+    // Parse user UID (workload.user can be number or numeric string)
+    const uid = this.parseUid(workload.user)
     if (uid !== undefined) {
       await Promise.all([
         chown(stateDir, uid, uid),
@@ -193,10 +193,7 @@ export class ContainerManager {
     const security = {
       ...DEFAULT_SECURITY_CONFIG,
       readOnlyRootFilesystem: workload.readOnly ?? true,
-      runAsUser:
-        typeof workload.user === 'number'
-          ? workload.user
-          : (DEFAULT_SECURITY_CONFIG.runAsUser ?? undefined),
+      runAsUser: uid ?? DEFAULT_SECURITY_CONFIG.runAsUser ?? undefined,
     }
 
     // Build health check from workload spec
@@ -325,6 +322,13 @@ export class ContainerManager {
    */
   getLabelPrefix(): string {
     return this.config.labelPrefix
+  }
+
+  private parseUid(user: number | string | undefined): number | undefined {
+    if (user === undefined) return undefined
+    if (typeof user === 'number') return user
+    const parsed = Number.parseInt(user, 10)
+    return Number.isNaN(parsed) ? undefined : parsed
   }
 
   private generateContainerId(): ContainerId {

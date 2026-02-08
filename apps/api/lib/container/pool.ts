@@ -255,8 +255,9 @@ export class ContainerPool {
 
         // Wipe state for new tenant
         const endWipeTimer = containerWipeDuration.startTimer({ pool_id: this.poolConfig.poolId })
-        const uid = typeof this.poolConfig.workload.user === 'number'
-          ? this.poolConfig.workload.user
+        const user = this.poolConfig.workload.user
+        const uid = typeof user === 'number' ? user
+          : typeof user === 'string' ? Number.parseInt(user, 10) || undefined
           : undefined
         await this.manager.wipeForNewTenant(candidate.containerId, uid)
         endWipeTimer()
