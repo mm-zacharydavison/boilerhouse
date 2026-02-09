@@ -60,18 +60,18 @@ sync:
 
     # Session history - JSONL per-chat conversation logs (CRITICAL for continuity)
     - path: sessions
-      direction: bidirectional
+
       mode: sync
 
     # Workspace and memory - daily notes, MEMORY.md, agent-created files
     - path: workspace
-      direction: bidirectional
+
       mode: sync
 
     # Config - tenant credentials, channel tokens, provider API keys (download only)
     - path: /
       pattern: "config.json"
-      direction: download
+
       mode: copy
 
   policy:

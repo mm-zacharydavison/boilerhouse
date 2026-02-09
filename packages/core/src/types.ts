@@ -248,7 +248,7 @@ export interface SyncMapping {
   /** Destination path prefix in the sink. */
   sinkPath: string
   /** Direction of sync. */
-  direction: 'upload' | 'download' | 'bidirectional'
+  direction: 'upload' | 'download'
   /** Sync mode. */
   mode: 'sync' | 'copy'
 }

@@ -38,8 +38,6 @@ function DirectionBadge({ direction }: { direction: string }) {
       return <Badge variant="outline">Upload</Badge>
     case 'download':
       return <Badge variant="outline">Download</Badge>
-    case 'bidirectional':
-      return <Badge variant="outline">Bidirectional</Badge>
     default:
       return <Badge variant="outline">{direction}</Badge>
   }

@@ -75,23 +75,23 @@ sync:
 
     # Credentials - OAuth tokens and API keys (CRITICAL)
     - path: credentials
-      direction: bidirectional
+
       mode: sync
 
     # Agent data - sessions, memory, auth profiles (CRITICAL)
     - path: agents
-      direction: bidirectional
+
       mode: sync
 
     # Workspace - SOUL.md, USER.md, MEMORY.md, etc. (IMPORTANT)
     - path: workspace
-      direction: bidirectional
+
       mode: sync
 
     # Main config file (IMPORTANT)
     - path: /
       pattern: "openclaw.json"
-      direction: bidirectional
+
       mode: sync
 
   policy:

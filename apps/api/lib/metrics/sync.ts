@@ -67,13 +67,6 @@ export const syncErrorsTotal = new Counter({
   registers: [registry],
 })
 
-export const syncBisyncResyncTotal = new Counter({
-  name: 'boilerhouse_sync_bisync_resync_total',
-  help: 'Bisync resync fallback events',
-  labelNames: ['workload_id'],
-  registers: [registry],
-})
-
 /**
  * Classify sync error for error_type label.
  */

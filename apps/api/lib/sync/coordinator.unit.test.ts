@@ -72,11 +72,11 @@ describe('SyncCoordinator', () => {
       expect(results).toHaveLength(0)
     })
 
-    test('executes download mappings when onClaim is true', async () => {
+    test('executes all mappings as download when onClaim is true', async () => {
       const syncConfig = createSyncConfig({
         mappings: [
-          createWorkloadSyncMapping({ direction: 'download' }),
-          createWorkloadSyncMapping({ direction: 'upload', path: '/logs' }),
+          createWorkloadSyncMapping(),
+          createWorkloadSyncMapping({ path: '/logs' }),
         ],
         policy: { onClaim: true, onRelease: false },
       })
@@ -86,28 +86,19 @@ describe('SyncCoordinator', () => {
       seedPriorSync(tenantId, container)
       const results = await coordinator.onClaim(tenantId, container, syncConfig)
 
-      // Should only execute download mapping
-      expect(results).toHaveLength(1)
-      expect(executor.sync).toHaveBeenCalledTimes(1)
-    })
+      // All mappings participate in claim (as download)
+      expect(results).toHaveLength(2)
+      expect(executor.sync).toHaveBeenCalledTimes(2)
 
-    test('executes bidirectional mappings on claim', async () => {
-      const syncConfig = createSyncConfig({
-        mappings: [createWorkloadSyncMapping({ direction: 'bidirectional' })],
-        policy: { onClaim: true },
-      })
-
-      const tenantId = createTenantId()
-      const container = createPoolContainer()
-      seedPriorSync(tenantId, container)
-      const results = await coordinator.onClaim(tenantId, container, syncConfig)
-
-      expect(results).toHaveLength(1)
+      // Verify executor receives direction='download'
+      const calls = (executor.sync as ReturnType<typeof import('bun:test').mock>).mock.calls
+      expect(calls[0][1].direction).toBe('download')
+      expect(calls[1][1].direction).toBe('download')
     })
 
     test('skips download for new tenant with no prior sync', async () => {
       const syncConfig = createSyncConfig({
-        mappings: [createWorkloadSyncMapping({ direction: 'download' })],
+        mappings: [createWorkloadSyncMapping()],
         policy: { onClaim: true },
       })
 
@@ -151,11 +142,11 @@ describe('SyncCoordinator', () => {
       expect(results).toHaveLength(0)
     })
 
-    test('executes upload mappings when onRelease is true', async () => {
+    test('executes all mappings as upload when onRelease is true', async () => {
       const syncConfig = createSyncConfig({
         mappings: [
-          createWorkloadSyncMapping({ direction: 'upload' }),
-          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
+          createWorkloadSyncMapping(),
+          createWorkloadSyncMapping({ path: '/config' }),
         ],
         policy: { onClaim: false, onRelease: true },
       })
@@ -163,8 +154,13 @@ describe('SyncCoordinator', () => {
       const container = createPoolContainer()
       const results = await coordinator.onRelease(createTenantId(), container, syncConfig)
 
-      // Should only execute upload mapping
-      expect(results).toHaveLength(1)
+      // All mappings participate in release (as upload)
+      expect(results).toHaveLength(2)
+
+      // Verify executor receives direction='upload'
+      const calls = (executor.sync as ReturnType<typeof import('bun:test').mock>).mock.calls
+      expect(calls[0][1].direction).toBe('upload')
+      expect(calls[1][1].direction).toBe('upload')
     })
 
     test('clears tenant status after release', async () => {
@@ -213,26 +209,11 @@ describe('SyncCoordinator', () => {
       expect(results).toHaveLength(0)
     })
 
-    test('executes all mappings with direction=both', async () => {
+    test('executes all mappings with specified direction', async () => {
       const syncConfig = createSyncConfig({
         mappings: [
-          createWorkloadSyncMapping({ direction: 'upload' }),
-          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
-        ],
-        policy: { manual: true },
-      })
-
-      const container = createPoolContainer()
-      const results = await coordinator.triggerSync(createTenantId(), container, syncConfig, 'both')
-
-      expect(results).toHaveLength(2)
-    })
-
-    test('executes only upload mappings with direction=upload', async () => {
-      const syncConfig = createSyncConfig({
-        mappings: [
-          createWorkloadSyncMapping({ direction: 'upload' }),
-          createWorkloadSyncMapping({ direction: 'download', path: '/config' }),
+          createWorkloadSyncMapping(),
+          createWorkloadSyncMapping({ path: '/config' }),
         ],
         policy: { manual: true },
       })
@@ -245,7 +226,12 @@ describe('SyncCoordinator', () => {
         'upload',
       )
 
-      expect(results).toHaveLength(1)
+      expect(results).toHaveLength(2)
+
+      // Verify executor receives direction='upload'
+      const calls = (executor.sync as ReturnType<typeof import('bun:test').mock>).mock.calls
+      expect(calls[0][1].direction).toBe('upload')
+      expect(calls[1][1].direction).toBe('upload')
     })
 
     test('returns empty when manual trigger not allowed', async () => {

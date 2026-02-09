@@ -11,9 +11,7 @@ import type { SyncResult } from './rclone'
 /**
  * Discriminated union of known rclone error types.
  */
-export type RcloneError =
-  | { type: 'source_directory_not_found'; bucket: string; path: string }
-  | { type: 'bisync_resync_required' }
+export type RcloneError = { type: 'source_directory_not_found'; bucket: string; path: string }
 
 /**
  * Match: the remote source directory does not exist.
@@ -30,20 +28,6 @@ export function isSourceDirectoryNotFound(result: SyncResult): result is SyncRes
 }
 
 /**
- * Match: bisync state is corrupted and needs --resync to recover.
- *
- * rclone emits this when bisync tracking files are missing or inconsistent.
- * Pattern (from rclone cmd/bisync):
- *   `Bisync aborted. Must run --resync to recover.`
- */
-const BISYNC_RESYNC_REQUIRED = /Bisync aborted\. Must run --resync to recover/
-
-export function isBisyncResyncRequired(result: SyncResult): result is SyncResult & { success: false } {
-  if (result.success) return false
-  return result.errors?.some((e) => BISYNC_RESYNC_REQUIRED.test(e)) ?? false
-}
-
-/**
  * Attempt to parse a structured RcloneError from a failed SyncResult.
  * Returns the first matching error type, or undefined if unrecognized.
  */
@@ -54,10 +38,6 @@ export function parseRcloneError(result: SyncResult): RcloneError | undefined {
     const dirMatch = SOURCE_DIR_NOT_FOUND.exec(error)
     if (dirMatch) {
       return { type: 'source_directory_not_found', bucket: dirMatch[1], path: dirMatch[2] }
-    }
-
-    if (BISYNC_RESYNC_REQUIRED.test(error)) {
-      return { type: 'bisync_resync_required' }
     }
   }
 

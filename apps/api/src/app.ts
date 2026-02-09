@@ -57,7 +57,7 @@ export class App {
 
     this.workloadRegistry = createWorkloadRegistry(workloadsDir)
     this.activityLog = new ActivityLog(db)
-    this.manager = new ContainerManager(runtime, config.managerConfig)
+    this.manager = new ContainerManager(runtime, config.managerConfig, this.log)
     this.poolRegistry = new PoolRegistry(
       this.manager,
       this.workloadRegistry,

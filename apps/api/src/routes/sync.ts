@@ -31,7 +31,6 @@ export function syncController(deps: SyncControllerDeps) {
         mappings: Array<{
           containerPath: string
           sinkPath: string
-          direction: string
         }>
         sink: {
           type: string
@@ -59,7 +58,6 @@ export function syncController(deps: SyncControllerDeps) {
           mappings: (workload.sync.mappings ?? []).map((m) => ({
             containerPath: m.path,
             sinkPath: m.sinkPath ?? m.path.split('/').pop() ?? '',
-            direction: m.direction ?? 'bidirectional',
           })),
           sink: {
             type: workload.sync.sink.type,
@@ -98,7 +96,6 @@ export function syncController(deps: SyncControllerDeps) {
           mappings: (workload.sync.mappings ?? []).map((m) => ({
             containerPath: m.path,
             sinkPath: m.sinkPath ?? m.path.split('/').pop() ?? '',
-            direction: m.direction ?? 'bidirectional',
           })),
           sink: {
             type: workload.sync.sink.type,
@@ -173,7 +170,6 @@ export function syncController(deps: SyncControllerDeps) {
               tenantId,
               container,
               workload.sync,
-              'both',
             )
 
             results.push({
@@ -202,7 +198,7 @@ export function syncController(deps: SyncControllerDeps) {
           id: `job-${s.tenantId}-${Date.now()}`,
           tenantId: s.tenantId,
           poolId: 'unknown',
-          direction: 'bidirectional',
+          direction: 'upload',
           status: 'running',
           progress: 50,
           startedAt: new Date().toISOString(),
@@ -242,7 +238,7 @@ export function syncController(deps: SyncControllerDeps) {
           id: e.id,
           tenantId: e.tenantId ?? 'unknown',
           poolId: e.poolId ?? 'unknown',
-          direction: (e.metadata?.direction as string) ?? 'bidirectional',
+          direction: (e.metadata?.direction as string) ?? 'upload',
           status: e.type === 'sync.completed' ? 'completed' : 'failed',
           bytesTransferred: (e.metadata?.bytesTransferred as number) ?? 0,
           startedAt: e.timestamp,

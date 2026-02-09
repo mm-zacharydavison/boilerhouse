@@ -18,7 +18,6 @@ import {
 import type { Logger } from '../logger'
 import {
   classifySyncError,
-  syncBisyncResyncTotal,
   syncBytesTransferredTotal,
   syncConcurrentOperations,
   syncDuration,
@@ -28,7 +27,7 @@ import {
   syncPeriodicJobsActive,
   syncQueueLength,
 } from '../metrics'
-import { isBisyncResyncRequired, isSourceDirectoryNotFound } from './rclone-errors'
+import { isSourceDirectoryNotFound } from './rclone-errors'
 import type { RcloneSyncExecutor, SyncResult } from './rclone'
 import type { SyncStatusTracker } from './status'
 
@@ -140,19 +139,16 @@ export class SyncCoordinator {
    * Handle container claim - download state from sink.
    *
    * Called when a tenant claims a container from the pool.
-   * Executes download mappings if onClaim is enabled.
+   * Downloads all mappings if onClaim is enabled.
    *
    * @param tenantId - The tenant claiming the container
    * @param container - The container being claimed
    * @param syncConfig - Sync configuration from the workload spec (optional)
-   * @param initialSync - If true, this is a new container (uses --resync for bisync).
-   *                      If false, tenant is returning to same container (incremental bisync).
    */
   async onClaim(
     tenantId: TenantId,
     container: PoolContainer,
     syncConfig?: WorkloadSyncConfig,
-    initialSync = true,
   ): Promise<SyncResult[]> {
     if (!syncConfig) {
       return []
@@ -172,18 +168,10 @@ export class SyncCoordinator {
       return []
     }
 
-    // Get download mappings
     const mappings = syncConfig.mappings ?? []
-    const downloadMappings = mappings.filter(
-      (m) => m.direction === 'download' || m.direction === 'bidirectional',
-    )
 
-    for (const mapping of downloadMappings) {
-      // On claim, force bidirectional mappings to download-only.
-      // The container was just wiped so there's nothing local to upload.
-      const claimMapping =
-        mapping.direction === 'bidirectional' ? { ...mapping, direction: 'download' as const } : mapping
-      const result = await this.executeSync(tenantId, syncConfig, claimMapping, container)
+    for (const mapping of mappings) {
+      const result = await this.executeSync(tenantId, syncConfig, mapping, container, 'download')
       results.push(result)
     }
 
@@ -192,9 +180,7 @@ export class SyncCoordinator {
       this.startPeriodicSync(tenantId, syncConfig, container)
     }
 
-    this.log(
-      `onClaim completed for tenant ${tenantId}: ${results.length} syncs (initialSync=${initialSync})`,
-    )
+    this.log(`onClaim completed for tenant ${tenantId}: ${results.length} syncs`)
     return results
   }
 
@@ -229,14 +215,10 @@ export class SyncCoordinator {
       return results
     }
 
-    // Get upload mappings
     const mappings = syncConfig.mappings ?? []
-    const uploadMappings = mappings.filter(
-      (m) => m.direction === 'upload' || m.direction === 'bidirectional',
-    )
 
-    for (const mapping of uploadMappings) {
-      const result = await this.executeSync(tenantId, syncConfig, mapping, container)
+    for (const mapping of mappings) {
+      const result = await this.executeSync(tenantId, syncConfig, mapping, container, 'upload')
       results.push(result)
     }
 
@@ -253,13 +235,13 @@ export class SyncCoordinator {
    * @param tenantId - The tenant to sync
    * @param container - The tenant's container
    * @param syncConfig - Sync configuration from the workload spec
-   * @param direction - 'upload', 'download', or 'both'
+   * @param direction - 'upload' or 'download'
    */
   async triggerSync(
     tenantId: TenantId,
     container: PoolContainer,
     syncConfig?: WorkloadSyncConfig,
-    direction: 'upload' | 'download' | 'both' = 'both',
+    direction: 'upload' | 'download' = 'upload',
   ): Promise<SyncResult[]> {
     if (!syncConfig) {
       return []
@@ -273,17 +255,8 @@ export class SyncCoordinator {
     const results: SyncResult[] = []
     const mappings = syncConfig.mappings ?? []
 
-    const filteredMappings = mappings.filter((m) => {
-      if (direction === 'both') return true
-      if (direction === 'upload') {
-        return m.direction === 'upload' || m.direction === 'bidirectional'
-      }
-      return m.direction === 'download' || m.direction === 'bidirectional'
-    })
-
-    for (const mapping of filteredMappings) {
-      const result = await this.executeSync(tenantId, syncConfig, mapping, container)
-      results.push(result)
+    for (const mapping of mappings) {
+      results.push(await this.executeSync(tenantId, syncConfig, mapping, container, direction))
     }
 
     this.log(`Manual trigger completed for tenant ${tenantId}: ${results.length} syncs`)
@@ -341,14 +314,10 @@ export class SyncCoordinator {
   private async executePeriodicSync(job: PeriodicSyncJob): Promise<void> {
     const { tenantId, syncConfig, container } = job
 
-    // Only sync upload mappings during periodic sync
     const mappings = syncConfig.mappings ?? []
-    const uploadMappings = mappings.filter(
-      (m) => m.direction === 'upload' || m.direction === 'bidirectional',
-    )
 
-    for (const mapping of uploadMappings) {
-      await this.executeSync(tenantId, syncConfig, mapping, container)
+    for (const mapping of mappings) {
+      await this.executeSync(tenantId, syncConfig, mapping, container, 'upload')
     }
   }
 
@@ -371,17 +340,16 @@ export class SyncCoordinator {
   /**
    * Execute a single sync operation with concurrency control.
    *
-   * @param initialSync - If true, this is the first sync for a new container (uses --resync for bisync)
+   * @param direction - The sync direction ('upload' or 'download'), determined by lifecycle phase
    */
   private async executeSync(
     tenantId: TenantId,
     syncConfig: WorkloadSyncConfig,
     mapping: WorkloadSyncMapping,
     container: PoolContainer,
-    initialSync = false,
+    direction: 'upload' | 'download',
   ): Promise<SyncResult> {
     const workloadId = container.poolId as string // poolId corresponds to workloadId
-    const direction = mapping.direction ?? 'bidirectional'
     const mode = mapping.mode ?? 'sync'
 
     // Wait for a slot if at max concurrency
@@ -411,7 +379,6 @@ export class SyncCoordinator {
         execMapping,
         syncConfig.sink,
         container.stateDir,
-        initialSync,
       )
 
       if (result.success) {
@@ -448,10 +415,6 @@ export class SyncCoordinator {
         this.statusTracker.markSyncFailed(tenantId, syncId, errorMsg, mapping.path)
         syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'failure' })
         syncErrorsTotal.inc({ workload_id: workloadId, error_type: classifySyncError(errorMsg) })
-
-        if (isBisyncResyncRequired(result)) {
-          syncBisyncResyncTotal.inc({ workload_id: workloadId })
-        }
 
         this.log(`Failed: tenant=${tenantId}, path=${mapping.path}, error=${errorMsg}`)
       }
@@ -498,6 +461,15 @@ export class SyncCoordinator {
     if (this.config.verbose) {
       this._log.info(message)
     }
+  }
+
+  /**
+   * Check whether a tenant has ever completed a sync for a given pool.
+   * Used by the claim flow to decide whether to force-seed volumes.
+   */
+  hasSyncedBefore(tenantId: TenantId, poolId: PoolContainer['poolId']): boolean {
+    const syncId = SyncId(`workload-sync-${poolId}`)
+    return this.statusTracker.hasSyncedBefore(tenantId, syncId)
   }
 
   /**

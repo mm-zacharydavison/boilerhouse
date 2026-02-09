@@ -249,11 +249,6 @@ export const workloadSyncMappingSchema = z.object({
     .string()
     .optional()
     .describe('Destination path prefix in the sink (defaults to path basename)'),
-  direction: z
-    .enum(['upload', 'download', 'bidirectional'])
-    .optional()
-    .default('bidirectional')
-    .describe('Direction of sync'),
   mode: z
     .enum(['sync', 'copy'])
     .optional()

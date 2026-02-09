@@ -218,7 +218,7 @@ export const mockSyncJobs: SyncJobInfo[] = [
     id: 'job-002',
     tenantId: TenantId('tenant-001'),
     poolId: PoolId('prod-workers'),
-    direction: 'bidirectional',
+    direction: 'upload',
     status: 'completed',
     progress: 100,
     bytesTransferred: 1258291,

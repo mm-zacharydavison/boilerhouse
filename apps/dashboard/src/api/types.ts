@@ -73,7 +73,7 @@ export interface SyncJobInfo {
   id: string
   tenantId: TenantId
   poolId: PoolId
-  direction: 'upload' | 'download' | 'bidirectional'
+  direction: 'upload' | 'download'
   status: 'pending' | 'running' | 'completed' | 'failed'
   progress?: number
   bytesTransferred?: number
@@ -88,7 +88,6 @@ export interface SyncSpecInfo {
   mappings: Array<{
     containerPath: string
     sinkPath: string
-    direction: 'upload' | 'download' | 'bidirectional'
   }>
   sink: {
     type: 's3'

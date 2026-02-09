@@ -2,14 +2,12 @@
  * Rclone Sync Executor
  *
  * Executes rclone commands for syncing data between container volumes and remote storage.
- * Supports upload, download, and bidirectional sync with any rclone-supported sink.
+ * Supports upload and download sync with any rclone-supported sink.
  */
 
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SinkConfig, SyncMapping, TenantId } from '@boilerhouse/core'
-import { isBisyncResyncRequired } from './rclone-errors'
 import {
   type SinkAdapter,
   type SinkAdapterRegistry,
@@ -108,14 +106,12 @@ export class RcloneSyncExecutor {
    * @param mapping - Sync mapping configuration
    * @param sink - Sink configuration
    * @param containerVolumePath - Host path to the container's mounted volume
-   * @param initialSync - If true, this is the first sync for a new container (uses --resync for bisync)
    */
   async sync(
     tenantId: TenantId,
     mapping: SyncMapping,
     sink: SinkConfig,
     containerVolumePath: string,
-    initialSync = false,
   ): Promise<SyncResult> {
     const startTime = Date.now()
     const adapter = this.getAdapter(sink)
@@ -137,9 +133,6 @@ export class RcloneSyncExecutor {
         source = remotePath
         destination = localPath
         break
-      case 'bidirectional':
-        // Bidirectional uses bisync command instead
-        return this.executeBisync(localPath, remotePath, mapping, sink, startTime, initialSync)
     }
 
     // Build rclone arguments
@@ -217,96 +210,6 @@ export class RcloneSyncExecutor {
     }
 
     return args
-  }
-
-  /**
-   * Execute bidirectional sync using rclone bisync.
-   *
-   * @param initialSync - If true, uses --resync to initialize bisync state (required for first sync)
-   */
-  private async executeBisync(
-    localPath: string,
-    remotePath: string,
-    mapping: SyncMapping,
-    sink: SinkConfig,
-    startTime: number,
-    initialSync: boolean,
-  ): Promise<SyncResult> {
-    // Ensure local directory exists (bisync requires it)
-    await mkdir(localPath, { recursive: true })
-
-    const result = await this.executeBisyncCommand(
-      localPath,
-      remotePath,
-      mapping,
-      sink,
-      startTime,
-      initialSync,
-    )
-
-    // If bisync failed due to corrupted state and we didn't already use --resync, retry with --resync
-    if (!initialSync && isBisyncResyncRequired(result)) {
-      if (this.config.verbose) {
-        console.log('[rclone] Bisync state corrupted, retrying with --resync')
-      }
-      return this.executeBisyncCommand(
-        localPath,
-        remotePath,
-        mapping,
-        sink,
-        Date.now(),
-        true, // force resync
-      )
-    }
-
-    return result
-  }
-
-  /**
-   * Execute the actual bisync command.
-   */
-  private async executeBisyncCommand(
-    localPath: string,
-    remotePath: string,
-    mapping: SyncMapping,
-    sink: SinkConfig,
-    startTime: number,
-    useResync: boolean,
-  ): Promise<SyncResult> {
-    const adapter = this.getAdapter(sink)
-    const args: string[] = ['bisync', localPath, remotePath]
-
-    // Sink-specific configuration
-    args.push(...adapter.getRcloneArgs(sink))
-
-    // Filter pattern support (use --filter instead of --include/--exclude combo)
-    if (mapping.pattern) {
-      args.push('--filter', `+ ${mapping.pattern}`)
-      args.push('--filter', '- *')
-    }
-
-    // Bisync-specific flags
-    args.push('--create-empty-src-dirs')
-
-    // --resync rebuilds bisync tracking state from scratch
-    if (useResync) {
-      args.push('--resync')
-    }
-
-    // Stats flags (needed for parseRcloneStats to extract bytes/files)
-    args.push('--progress')
-    args.push('--stats-one-line')
-
-    if (this.config.verbose) {
-      args.push('-v')
-    }
-
-    // Add any custom rclone flags from sink config
-    if (sink.rcloneFlags) {
-      args.push(...sink.rcloneFlags)
-    }
-
-    return this.executeRclone(args, startTime)
   }
 
   /**
@@ -395,8 +298,7 @@ export class RcloneSyncExecutor {
     }
 
     // Try to parse transferred stats
-    // Format 1 (sync): "Transferred: 1.234 GiB / 1.234 GiB, 100%, 10.000 MiB/s, ETA 0s"
-    // Format 2 (bisync): "16.054 KiB / 16.054 KiB, 100%, 0 B/s, ETA -"
+    // Format: "Transferred: 1.234 GiB / 1.234 GiB, 100%, 10.000 MiB/s, ETA 0s"
     const bytesMatch = output.match(
       /(?:Transferred:\s*)?([0-9.]+)\s*(B|KiB|MiB|GiB|TiB)\s*\/\s*[0-9.]+\s*(B|KiB|MiB|GiB|TiB),\s*100%/i,
     )
@@ -413,7 +315,7 @@ export class RcloneSyncExecutor {
       files = Number.parseInt(filesMatch[1], 10)
     }
 
-    // For bisync, count "Copied (new)" and "Copied (replaced)" lines
+    // Count "Copied (new)" and "Copied (replaced)" lines
     const copiedMatches = output.match(/: Copied \((new|replaced)\)/g)
     if (copiedMatches) {
       files = Math.max(files, copiedMatches.length)

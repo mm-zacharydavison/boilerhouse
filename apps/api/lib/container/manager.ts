@@ -10,7 +10,6 @@
  */
 
 import { chown, cp, mkdir, readdir, rm } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   ContainerId,
@@ -24,6 +23,7 @@ import {
   type WorkloadSpec,
 } from '@boilerhouse/core'
 import { config } from '../config'
+import type { Logger } from '../logger'
 
 export interface ContainerManagerConfig {
   /** Base directory for tenant state (host path) */
@@ -57,13 +57,16 @@ const DEFAULT_CONFIG: ContainerManagerConfig = {
 export class ContainerManager {
   private runtime: ContainerRuntime
   private config: ContainerManagerConfig
+  private log?: Logger
 
   constructor(
     runtime: ContainerRuntime,
     managerConfig: Partial<ContainerManagerConfig> | undefined,
+    logger?: Logger,
   ) {
     this.runtime = runtime
     this.config = { ...DEFAULT_CONFIG, ...managerConfig }
+    this.log = logger?.child({ component: 'ContainerManager' })
   }
 
   /**
@@ -267,7 +270,7 @@ export class ContainerManager {
 
   /**
    * Wipe container state for a new tenant.
-   * Wipes state, secrets, and bisync cache for tenant isolation.
+   * Wipes state and secrets for tenant isolation.
    */
   async wipeForNewTenant(containerId: ContainerId, uid?: number): Promise<void> {
     const stateDir = this.getStateDir(containerId)
@@ -276,7 +279,6 @@ export class ContainerManager {
     await Promise.all([
       this.wipeDirectory(stateDir, uid),
       this.wipeDirectory(secretsDir, uid),
-      this.wipeBisyncCache(stateDir),
     ])
   }
 
@@ -290,10 +292,9 @@ export class ContainerManager {
   }
 
   /**
-   * Copy seed files into empty volume directories.
-   * For each volume with a `seed` path, checks if the target directory is empty.
-   * If empty, copies the seed directory contents. Skips if ANY files already in the directories.
-   * (e.g. sync downloaded tenant data).
+   * Copy seed files into volume directories.
+   * For each volume with a `seed` path, copies the seed directory contents
+   * into the host directory, overwriting any existing files.
    */
   async applySeed(containerId: ContainerId, workload: WorkloadSpec): Promise<void> {
     const uid = this.parseUid(workload.user)
@@ -331,11 +332,14 @@ export class ContainerManager {
       }
     }
 
-    for (const { hostDir, seedDir } of seedTasks) {
-      const entries = await readdir(hostDir)
-      if (entries.length > 0) continue
+    if (seedTasks.length === 0) {
+      this.log?.debug({ containerId }, 'No seed paths configured')
+      return
+    }
 
-      await cp(seedDir, hostDir, { recursive: true })
+    for (const { hostDir, seedDir } of seedTasks) {
+      this.log?.info({ containerId, seedDir, hostDir }, 'Seeding volume from seed directory')
+      await cp(seedDir, hostDir, { recursive: true, force: true })
 
       if (uid !== undefined) {
         await this.chownRecursive(hostDir, uid)
@@ -435,25 +439,4 @@ export class ContainerManager {
     }
   }
 
-  /**
-   * Wipe rclone bisync cache files for a container.
-   * Bisync stores tracking files in ~/.cache/rclone/bisync/ with paths encoded in filenames.
-   */
-  private async wipeBisyncCache(stateDir: string): Promise<void> {
-    const bisyncCacheDir = join(homedir(), '.cache', 'rclone', 'bisync')
-
-    try {
-      const files = await readdir(bisyncCacheDir)
-      // Convert stateDir path to the format used in bisync filenames (slashes become underscores)
-      const stateDirPattern = stateDir.replace(/\//g, '_')
-
-      const deletions = files
-        .filter((file) => file.includes(stateDirPattern))
-        .map((file) => rm(join(bisyncCacheDir, file), { force: true }))
-
-      await Promise.all(deletions)
-    } catch {
-      // Cache directory might not exist, that's fine
-    }
-  }
 }

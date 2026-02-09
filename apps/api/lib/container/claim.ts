@@ -42,25 +42,24 @@ export async function claimContainer(
   const container = await pool.acquireForTenant(tenantId)
   logContainerClaimed(container.containerId, tenantId, poolId, activityLog)
 
-  // Determine if this tenant is returning to their previous container.
-  // If so, state is intact → incremental bisync. Otherwise → full download.
-  const isReturningTenant = container.lastTenantId === tenantId
-
   // Trigger onClaim sync
   const workload = pool.getWorkload()
   if (workload.sync) {
-    logSyncStarted(tenantId, isReturningTenant ? 'bisync' : 'download', activityLog)
-    const results = await syncCoordinator.onClaim(
-      tenantId,
-      container,
-      workload.sync,
-      !isReturningTenant,
-    )
+    logSyncStarted(tenantId, 'download', activityLog)
+    const results = await syncCoordinator.onClaim(tenantId, container, workload.sync)
     logSyncResults(tenantId, results, activityLog)
   }
 
-  // Seed: fill defaults into empty volumes (skipped if sync provided data)
-  await containerManager.applySeed(container.containerId, workload)
+  // Seed on first claim only.
+  // - Sync workloads: seed once, then sync handles data persistence.
+  // - Non-sync workloads: seed when container was wiped (different tenant).
+  //   Returning tenants (affinity match) keep their existing data.
+  const isFirstClaim = workload.sync
+    ? !syncCoordinator.hasSyncedBefore(tenantId, container.poolId)
+    : container.lastTenantId !== tenantId
+  if (isFirstClaim) {
+    await containerManager.applySeed(container.containerId, workload)
+  }
 
   // Run post_claim hooks (after container is healthy and ready)
   if (workload.hooks?.postClaim) {

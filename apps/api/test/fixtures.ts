@@ -113,7 +113,6 @@ export function createWorkloadSyncMapping(
   return {
     path: `/${faker.system.directoryPath().split('/').pop()}`,
     sinkPath: `${faker.system.directoryPath().split('/').pop()}/`,
-    direction: faker.helpers.arrayElement(['upload', 'download', 'bidirectional']),
     mode: faker.helpers.arrayElement(['sync', 'copy']),
     ...overrides,
   }
@@ -127,7 +126,7 @@ export function createSyncMapping(overrides?: Partial<SyncMapping>): SyncMapping
   return {
     containerPath: `/${faker.system.directoryPath().split('/').pop()}`,
     sinkPath: `${faker.system.directoryPath().split('/').pop()}/`,
-    direction: faker.helpers.arrayElement(['upload', 'download', 'bidirectional']),
+    direction: faker.helpers.arrayElement<'upload' | 'download'>(['upload', 'download']),
     mode: faker.helpers.arrayElement(['sync', 'copy']),
     ...overrides,
   }

@@ -402,6 +402,7 @@ describe('claimContainer with hooks', () => {
     const syncCoordinator = {
       onClaim: mock(async () => []),
       onRelease: mock(async () => []),
+      hasSyncedBefore: mock(() => true),
       startPeriodicSync: mock(() => {}),
       stopPeriodicSync: mock(() => {}),
     }
@@ -611,6 +612,7 @@ describe('releaseContainer with hooks', () => {
     const syncCoordinator = {
       onClaim: mock(async () => []),
       onRelease: mock(async () => []),
+      hasSyncedBefore: mock(() => true),
       startPeriodicSync: mock(() => {}),
       stopPeriodicSync: mock(() => {}),
     }

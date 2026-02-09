@@ -547,7 +547,7 @@ describe('applySeed', () => {
     await rm(baseDir, { recursive: true, force: true })
   })
 
-  test('skips seed when state directory already has files', async () => {
+  test('overwrites existing files when seeding', async () => {
     const { mkdtemp, writeFile, mkdir, readdir, readFile, rm } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
@@ -581,16 +581,20 @@ describe('applySeed', () => {
     const poolId = createPoolId()
     const container = await manager.createContainer(workload, poolId)
 
-    // Pre-populate the state dir (simulates sync having downloaded data)
+    // Pre-populate the state dir (simulates container process creating defaults)
+    await writeFile(join(manager.getStateDir(container.containerId), 'config.json'), '{"container":"default"}')
     await writeFile(join(manager.getStateDir(container.containerId), 'existing.txt'), 'tenant data')
 
-    // Apply seed — should be a no-op
+    // Apply seed — should overwrite config.json but preserve existing.txt
     await manager.applySeed(container.containerId, workload)
 
-    // Only the existing file should be present, no seed files
     const files = await readdir(manager.getStateDir(container.containerId))
+    expect(files).toContain('config.json')
     expect(files).toContain('existing.txt')
-    expect(files).not.toContain('config.json')
+
+    // Seed's config.json should win
+    const config = await readFile(join(manager.getStateDir(container.containerId), 'config.json'), 'utf-8')
+    expect(JSON.parse(config)).toEqual({ default: true })
 
     await rm(baseDir, { recursive: true, force: true })
   })
