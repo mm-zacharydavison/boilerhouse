@@ -165,6 +165,13 @@ export class SyncCoordinator {
       return results
     }
 
+    // Skip download entirely for first-time tenants — there's nothing in S3 yet
+    const syncId = SyncId(`workload-sync-${container.poolId}`)
+    if (!this.statusTracker.hasSyncedBefore(tenantId, syncId)) {
+      this.log(`Skipping download for new tenant ${tenantId} (no prior sync data)`)
+      return []
+    }
+
     // Get download mappings
     const mappings = syncConfig.mappings ?? []
     const downloadMappings = mappings.filter(
@@ -177,14 +184,7 @@ export class SyncCoordinator {
       const claimMapping =
         mapping.direction === 'bidirectional' ? { ...mapping, direction: 'download' as const } : mapping
       const result = await this.executeSync(tenantId, syncConfig, claimMapping, container)
-
-      // For a new tenant the remote S3 path won't exist yet — there's genuinely
-      // nothing to download, so treat as a no-op success.
-      if (isSourceDirectoryNotFound(result)) {
-        results.push({ success: true, bytesTransferred: 0, filesTransferred: 0, duration: result.duration })
-      } else {
-        results.push(result)
-      }
+      results.push(result)
     }
 
     // Start periodic sync if configured
@@ -436,6 +436,13 @@ export class SyncCoordinator {
           `Success: tenant=${tenantId}, path=${mapping.path}, ` +
             `files=${result.filesTransferred ?? 0}, bytes=${result.bytesTransferred ?? 0}`,
         )
+      } else if (isSourceDirectoryNotFound(result)) {
+        // Remote S3 path doesn't exist (e.g. manually deleted) — treat as no-op success
+        this.statusTracker.markSyncCompleted(tenantId, syncId)
+        syncOperationsTotal.inc({ workload_id: workloadId, direction, status: 'success' })
+        this.log(`No remote data for tenant=${tenantId}, path=${mapping.path} (skipped)`)
+        endTimer()
+        return { success: true, bytesTransferred: 0, filesTransferred: 0, duration: result.duration }
       } else {
         const errorMsg = result.errors?.join('; ') ?? 'Unknown error'
         this.statusTracker.markSyncFailed(tenantId, syncId, errorMsg, mapping.path)

@@ -54,6 +54,13 @@ describe('SyncCoordinator', () => {
     })
   })
 
+  /** Simulate a prior successful sync so hasSyncedBefore() returns true */
+  function seedPriorSync(tenantId: ReturnType<typeof createTenantId>, container: ReturnType<typeof createPoolContainer>) {
+    const syncId = SyncId(`workload-sync-${container.poolId}`)
+    statusTracker.markSyncStarted(tenantId, syncId)
+    statusTracker.markSyncCompleted(tenantId, syncId)
+  }
+
   afterEach(async () => {
     await coordinator.shutdown()
   })
@@ -74,8 +81,10 @@ describe('SyncCoordinator', () => {
         policy: { onClaim: true, onRelease: false },
       })
 
+      const tenantId = createTenantId()
       const container = createPoolContainer()
-      const results = await coordinator.onClaim(createTenantId(), container, syncConfig)
+      seedPriorSync(tenantId, container)
+      const results = await coordinator.onClaim(tenantId, container, syncConfig)
 
       // Should only execute download mapping
       expect(results).toHaveLength(1)
@@ -88,10 +97,26 @@ describe('SyncCoordinator', () => {
         policy: { onClaim: true },
       })
 
+      const tenantId = createTenantId()
+      const container = createPoolContainer()
+      seedPriorSync(tenantId, container)
+      const results = await coordinator.onClaim(tenantId, container, syncConfig)
+
+      expect(results).toHaveLength(1)
+    })
+
+    test('skips download for new tenant with no prior sync', async () => {
+      const syncConfig = createSyncConfig({
+        mappings: [createWorkloadSyncMapping({ direction: 'download' })],
+        policy: { onClaim: true },
+      })
+
       const container = createPoolContainer()
       const results = await coordinator.onClaim(createTenantId(), container, syncConfig)
 
-      expect(results).toHaveLength(1)
+      // New tenant — no prior sync data, download should be skipped
+      expect(results).toHaveLength(0)
+      expect(executor.sync).not.toHaveBeenCalled()
     })
 
     test('skips sync when onClaim is false', async () => {
@@ -110,8 +135,10 @@ describe('SyncCoordinator', () => {
         policy: { onClaim: true, interval: 60000 },
       })
 
+      const tenantId = createTenantId()
       const container = createPoolContainer()
-      await coordinator.onClaim(createTenantId(), container, syncConfig)
+      seedPriorSync(tenantId, container)
+      await coordinator.onClaim(tenantId, container, syncConfig)
 
       expect(coordinator.getStats().activeJobs).toBe(1)
     })
@@ -167,6 +194,7 @@ describe('SyncCoordinator', () => {
       })
 
       const container = createPoolContainer()
+      seedPriorSync(tenantId, container)
 
       // Start periodic sync via onClaim
       await coordinator.onClaim(tenantId, container, syncConfig)
@@ -248,8 +276,10 @@ describe('SyncCoordinator', () => {
         policy: { onClaim: true, interval: 60000 },
       })
 
+      const tenantId = createTenantId()
       const container = createPoolContainer()
-      await coordinator.onClaim(createTenantId(), container, syncConfig)
+      seedPriorSync(tenantId, container)
+      await coordinator.onClaim(tenantId, container, syncConfig)
 
       // Should have an active job
       expect(coordinator.getStats().activeJobs).toBe(1)

@@ -305,6 +305,19 @@ export class SyncStatusTracker {
   }
 
   /**
+   * Check if a tenant has ever completed a sync for a given sync spec.
+   * Returns false for first-time tenants (no entry or lastSyncAt is null).
+   */
+  hasSyncedBefore(tenantId: TenantId, syncId: SyncId): boolean {
+    const entry = this.db
+      .select({ lastSyncAt: schema.syncStatus.lastSyncAt })
+      .from(schema.syncStatus)
+      .where(and(eq(schema.syncStatus.tenantId, tenantId), eq(schema.syncStatus.syncId, syncId)))
+      .get()
+    return entry?.lastSyncAt != null
+  }
+
+  /**
    * Clear status for a tenant.
    */
   clearTenant(tenantId: TenantId): void {
