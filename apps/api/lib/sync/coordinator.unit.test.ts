@@ -163,7 +163,7 @@ describe('SyncCoordinator', () => {
       expect(calls[1][1].direction).toBe('upload')
     })
 
-    test('clears tenant status after release', async () => {
+    test('preserves tenant sync status after release (for hasSyncedBefore)', async () => {
       const tenantId = createTenantId()
       const syncConfig = createSyncConfig({
         policy: { onRelease: true },
@@ -178,9 +178,10 @@ describe('SyncCoordinator', () => {
 
       await coordinator.onRelease(tenantId, container, syncConfig)
 
-      // Status should be cleared
+      // Status should persist so hasSyncedBefore returns true on next claim
       const statuses = statusTracker.getStatusesForTenant(tenantId)
-      expect(statuses).toHaveLength(0)
+      expect(statuses).toHaveLength(1)
+      expect(statusTracker.hasSyncedBefore(tenantId, syncId)).toBe(true)
     })
 
     test('stops periodic sync on release', async () => {
