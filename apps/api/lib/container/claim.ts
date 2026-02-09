@@ -37,6 +37,14 @@ export async function claimContainer(
 ): Promise<ClaimResult> {
   const { containerManager, syncCoordinator, activityLog, idleReaper } = deps
 
+  // Fast path: tenant already has a claimed container — idempotent re-claim.
+  const existingContainer = pool.getContainerForTenant(tenantId)
+  if (existingContainer) {
+    pool.recordActivity(tenantId)
+    const hostname = containerManager.getHostname(existingContainer.containerId)
+    return { container: existingContainer, hostname }
+  }
+
   // Wipe-on-entry happens inside acquireForTenant when a different tenant
   // claims a container. Same tenant reclaiming skips the wipe.
   const container = await pool.acquireForTenant(tenantId)

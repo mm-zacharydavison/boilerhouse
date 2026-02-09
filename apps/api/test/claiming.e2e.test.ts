@@ -387,6 +387,29 @@ describe('Volume Seed Files', () => {
     }
   })
 
+  test('repeated claim without release (idempotent) does NOT re-seed', async () => {
+    const tenantId = TenantId('tenant-idempotent-seed')
+
+    // First claim — seed applied
+    const claim1 = await harness.claimContainer(tenantId)
+    expect(claim1.status).toBe(200)
+    const containerId = claim1.data.containerId
+
+    const stateDir = join(harness.baseDir, 'state', containerId)
+
+    // Tenant modifies a seed file
+    await writeFile(join(stateDir, 'config.json'), '{"theme":"custom","version":99}')
+
+    // Second claim without releasing — should be idempotent
+    const claim2 = await harness.claimContainer(tenantId)
+    expect(claim2.status).toBe(200)
+    expect(claim2.data.containerId).toBe(containerId)
+
+    // Modified file should persist (seed NOT re-applied)
+    const config = await readFile(join(stateDir, 'config.json'), 'utf-8')
+    expect(JSON.parse(config)).toEqual({ theme: 'custom', version: 99 })
+  })
+
   test('no seed configured — state dir remains empty, no errors', async () => {
     const noSeedHarness = createTestHarness({
       useRealDocker: false,

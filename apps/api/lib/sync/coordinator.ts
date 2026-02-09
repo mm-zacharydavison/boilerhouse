@@ -222,9 +222,6 @@ export class SyncCoordinator {
       results.push(result)
     }
 
-    // Clear status for this tenant
-    this.statusTracker.clearTenant(tenantId)
-
     this.log(`onRelease completed for tenant ${tenantId}: ${results.length} syncs`)
     return results
   }
