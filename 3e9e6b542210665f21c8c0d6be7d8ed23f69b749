@@ -1,0 +1,23 @@
+apps/api/lib/sync/coordinator.unit.test.ts
+  868099b42d140d91 166,181,183-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.42",
+  "base_commit_sha": "3e9e6b542210665f21c8c0d6be7d8ed23f69b749",
+  "prompts": {
+    "868099b42d140d91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "38b7fb98-b324-471b-89c1-a9b223e07239",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zachary.davison@meetsmore.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 3,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
