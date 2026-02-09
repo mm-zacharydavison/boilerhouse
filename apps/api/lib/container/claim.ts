@@ -1,7 +1,7 @@
 /**
  * Shared container claim flow.
  *
- * Orchestrates: acquire → sync → restart → watch.
+ * Orchestrates: acquire → sync → [restart] → watch.
  * Used by the API claim endpoint. Parallel to releaseContainer.
  */
 
@@ -61,13 +61,6 @@ export async function claimContainer(
 
   // Seed: fill defaults into empty volumes (skipped if sync provided data)
   await containerManager.applySeed(container.containerId, workload)
-
-  // Restart container to get fresh process with synced data
-  // Use short timeout (2s) - if process doesn't handle SIGTERM, just kill it
-  await containerManager.restartContainer(container.containerId, 2)
-
-  // Wait for the container to pass its health check before returning
-  await containerManager.waitForHealthy(container.containerId)
 
   // Run post_claim hooks (after container is healthy and ready)
   if (workload.hooks?.postClaim) {
