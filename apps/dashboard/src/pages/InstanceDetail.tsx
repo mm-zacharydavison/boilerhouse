@@ -1,6 +1,13 @@
 import { useApi } from "../hooks";
 import { api } from "../api";
-import { LoadingSpinner, ErrorMessage, StatusBadge } from "./Overview";
+import {
+	LoadingState,
+	ErrorState,
+	InfoCard,
+	BackLink,
+	StatusIndicator,
+	ActionButton,
+} from "../components";
 
 export function InstanceDetail({ id }: { id: string }) {
 	const { data, loading, error, refetch } = useApi(() => api.fetchInstance(id));
@@ -16,62 +23,54 @@ export function InstanceDetail({ id }: { id: string }) {
 		}
 	}
 
-	if (loading) return <LoadingSpinner />;
-	if (error) return <ErrorMessage message={error} />;
+	if (loading) return <LoadingState />;
+	if (error) return <ErrorState message={error} />;
 	if (!data) return null;
 
 	return (
 		<div>
-			<a
-				href="#/instances"
-				className="text-sm text-gray-400 hover:text-white mb-4 inline-block transition-colors"
-			>
-				&larr; Back to Instances
-			</a>
+			<BackLink href="#/instances" label="instances" />
 
 			<div className="flex items-center gap-3 mb-6">
-				<h2 className="text-2xl font-semibold font-mono">{data.instanceId}</h2>
-				<StatusBadge status={data.status} />
+				<h2 className="text-xl font-tight font-semibold font-mono">{data.instanceId}</h2>
+				<StatusIndicator status={data.status} />
 			</div>
 
 			{data.status !== "destroyed" && (
 				<div className="flex gap-2 mb-6">
 					{data.status === "running" && (
 						<>
-							<button
+							<ActionButton
+								label="stop"
+								variant="warning"
 								onClick={() => handleAction("stop")}
-								className="px-3 py-1.5 text-sm rounded border border-yellow-800 text-yellow-400 hover:bg-yellow-900/30 transition-colors"
-							>
-								Stop
-							</button>
-							<button
+							/>
+							<ActionButton
+								label="hibernate"
+								variant="info"
 								onClick={() => handleAction("hibernate")}
-								className="px-3 py-1.5 text-sm rounded border border-blue-800 text-blue-400 hover:bg-blue-900/30 transition-colors"
-							>
-								Hibernate
-							</button>
+							/>
 						</>
 					)}
-					<button
+					<ActionButton
+						label="destroy"
+						variant="danger"
 						onClick={() => handleAction("destroy")}
-						className="px-3 py-1.5 text-sm rounded border border-red-800 text-red-400 hover:bg-red-900/30 transition-colors"
-					>
-						Destroy
-					</button>
+					/>
 				</div>
 			)}
 
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-				<InfoItem label="Workload ID" value={data.workloadId} />
-				<InfoItem label="Node ID" value={data.nodeId} />
-				<InfoItem label="Tenant ID" value={data.tenantId ?? "-"} />
-				<InfoItem label="Status" value={data.status} />
-				<InfoItem label="Created" value={new Date(data.createdAt).toLocaleString()} />
-				<InfoItem
+				<InfoCard label="Workload ID" value={data.workloadId} />
+				<InfoCard label="Node ID" value={data.nodeId} />
+				<InfoCard label="Tenant ID" value={data.tenantId ?? "-"} />
+				<InfoCard label="Status" value={data.status} />
+				<InfoCard label="Created" value={new Date(data.createdAt).toLocaleString()} />
+				<InfoCard
 					label="Last Activity"
 					value={data.lastActivity ? new Date(data.lastActivity).toLocaleString() : "-"}
 				/>
-				<InfoItem
+				<InfoCard
 					label="Claimed At"
 					value={data.claimedAt ? new Date(data.claimedAt).toLocaleString() : "-"}
 				/>
@@ -79,21 +78,14 @@ export function InstanceDetail({ id }: { id: string }) {
 
 			{data.runtimeMeta != null && (
 				<div>
-					<h3 className="text-lg font-medium mb-3 text-gray-300">Runtime Metadata</h3>
-					<pre className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 overflow-x-auto">
+					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
+						Runtime Metadata
+					</h3>
+					<pre className="bg-surface-2 rounded-md p-4 text-sm font-mono text-muted-light overflow-x-auto">
 						{JSON.stringify(data.runtimeMeta, null, 2)}
 					</pre>
 				</div>
 			)}
-		</div>
-	);
-}
-
-function InfoItem({ label, value }: { label: string; value: string }) {
-	return (
-		<div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-			<p className="text-xs text-gray-400 uppercase mb-1">{label}</p>
-			<p className="text-sm font-mono text-gray-200 break-all">{value}</p>
 		</div>
 	);
 }

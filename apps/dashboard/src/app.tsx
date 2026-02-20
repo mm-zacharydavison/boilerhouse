@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
+import type { LucideIcon } from "lucide-react";
+import { Flame, Package, Server, Users, HardDrive } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
-import { Overview } from "./pages/Overview";
 import { WorkloadList } from "./pages/WorkloadList";
 import { WorkloadDetail } from "./pages/WorkloadDetail";
 import { InstanceList } from "./pages/InstanceList";
@@ -9,13 +10,12 @@ import { InstanceDetail } from "./pages/InstanceDetail";
 import { TenantList } from "./pages/TenantList";
 import { NodeList } from "./pages/NodeList";
 
-const NAV_ITEMS = [
-	{ path: "/", label: "Overview" },
-	{ path: "/workloads", label: "Workloads" },
-	{ path: "/instances", label: "Instances" },
-	{ path: "/tenants", label: "Tenants" },
-	{ path: "/nodes", label: "Nodes" },
-] as const;
+const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
+	{ path: "/workloads", label: "workloads", icon: Package },
+	{ path: "/instances", label: "instances", icon: Server },
+	{ path: "/tenants", label: "tenants", icon: Users },
+	{ path: "/nodes", label: "nodes", icon: HardDrive },
+];
 
 function App() {
 	const [path, navigate] = useHashRoute();
@@ -30,9 +30,7 @@ function App() {
 	let content: React.ReactNode;
 	let params: Record<string, string> | null;
 
-	if (path === "/") {
-		content = <Overview key={tick} />;
-	} else if (path === "/workloads") {
+	if (path === "/" || path === "/workloads") {
 		content = <WorkloadList key={tick} navigate={navigate} />;
 	} else if ((params = matchRoute(path, "/workloads/:name"))) {
 		content = <WorkloadDetail key={`${params.name}-${tick}`} name={params.name!} navigate={navigate} />;
@@ -46,9 +44,11 @@ function App() {
 		content = <NodeList key={tick} />;
 	} else {
 		content = (
-			<div className="text-center py-20 text-gray-400">
-				<h2 className="text-2xl font-semibold mb-2">Not Found</h2>
-				<p>The page <code>{path}</code> does not exist.</p>
+			<div className="text-center py-20 text-muted">
+				<h2 className="text-xl font-tight font-semibold mb-2">not found</h2>
+				<p className="font-mono text-sm">
+					the page <code className="text-accent">{path}</code> does not exist.
+				</p>
 			</div>
 		);
 	}
@@ -56,26 +56,31 @@ function App() {
 	return (
 		<div className="flex h-screen">
 			{/* Sidebar */}
-			<nav className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col">
-				<div className="px-4 py-5 border-b border-gray-800">
-					<h1 className="text-lg font-bold tracking-tight text-white">Boilerhouse</h1>
+			<nav className="w-48 bg-surface-1 flex flex-col">
+				<div className="px-4 py-5 flex items-center gap-2">
+					<Flame size={18} className="text-accent shrink-0" />
+					<h1 className="text-base font-tight font-bold tracking-tight text-white">
+						boilerhouse
+					</h1>
 				</div>
-				<ul className="flex-1 py-2">
+				<ul className="flex-1 py-1">
 					{NAV_ITEMS.map((item) => {
 						const active =
-							item.path === "/"
-								? path === "/"
+							item.path === "/workloads"
+								? path === "/" || path === "/workloads" || path.startsWith("/workloads/")
 								: path === item.path || path.startsWith(item.path + "/");
+						const Icon = item.icon;
 						return (
 							<li key={item.path}>
 								<a
 									href={`#${item.path}`}
-									className={`block px-4 py-2 text-sm transition-colors ${
+									className={`flex items-center gap-2.5 px-4 py-1.5 font-mono text-sm transition-colors ${
 										active
-											? "bg-gray-800 text-white font-medium"
-											: "text-gray-400 hover:text-white hover:bg-gray-800/50"
+											? "bg-surface-3 text-white"
+											: "text-muted-light hover:text-white hover:bg-surface-3/50"
 									}`}
 								>
+									<Icon size={14} className="shrink-0" />
 									{item.label}
 								</a>
 							</li>
@@ -85,7 +90,7 @@ function App() {
 			</nav>
 
 			{/* Main content */}
-			<main className="flex-1 overflow-auto p-6">
+			<main className="flex-1 overflow-auto p-8">
 				{content}
 			</main>
 		</div>
