@@ -1,4 +1,4 @@
-import { eq, asc, count } from "drizzle-orm";
+import { eq, asc, desc, count } from "drizzle-orm";
 import type { InstanceId, TenantId } from "@boilerhouse/core";
 import { activityLog, type ActivityLogInsert, type ActivityLogRow } from "./schema";
 import type { DrizzleDb } from "./database";
@@ -48,6 +48,21 @@ export class ActivityLog {
 			.from(activityLog)
 			.where(eq(activityLog.instanceId, instanceId))
 			.orderBy(asc(activityLog.id))
+			.limit(limit)
+			.all();
+	}
+
+	/**
+	 * Returns the most recent events across all instances/tenants (newest first).
+	 *
+	 * @param limit - Maximum number of events to return.
+	 *   @default 200
+	 */
+	queryRecent(limit = 200): ActivityLogRow[] {
+		return this.db
+			.select()
+			.from(activityLog)
+			.orderBy(desc(activityLog.id))
 			.limit(limit)
 			.all();
 	}

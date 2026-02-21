@@ -14,7 +14,6 @@ export const InstanceStatusSchema = Type.Union([
 	Type.Literal("starting"),
 	Type.Literal("active"),
 	Type.Literal("hibernated"),
-	Type.Literal("stopping"),
 	Type.Literal("destroying"),
 	Type.Literal("destroyed"),
 ]);
@@ -22,10 +21,8 @@ export const InstanceStatusSchema = Type.Union([
 export const InstanceEventSchema = Type.Union([
 	Type.Literal("started"),
 	Type.Literal("hibernate"),
-	Type.Literal("stop"),
 	Type.Literal("destroy"),
 	Type.Literal("restore"),
-	Type.Literal("stopped"),
 	Type.Literal("destroyed"),
 ]);
 
@@ -38,7 +35,6 @@ export const INSTANCE_STATUSES = [
 	"starting",
 	"active",
 	"hibernated",
-	"stopping",
 	"destroying",
 	"destroyed",
 ] as const satisfies readonly InstanceStatus[];
@@ -46,10 +42,8 @@ export const INSTANCE_STATUSES = [
 export const INSTANCE_EVENTS = [
 	"started",
 	"hibernate",
-	"stop",
 	"destroy",
 	"restore",
-	"stopped",
 	"destroyed",
 ] as const satisfies readonly InstanceEvent[];
 
@@ -57,9 +51,8 @@ export const INSTANCE_EVENTS = [
 
 const transitions: TransitionMap<InstanceStatus, InstanceEvent> = {
 	starting: { started: "active" },
-	active: { hibernate: "hibernated", stop: "stopping", destroy: "destroying" },
+	active: { hibernate: "hibernated", destroy: "destroying" },
 	hibernated: { restore: "starting", destroy: "destroying" },
-	stopping: { stopped: "destroyed" },
 	destroying: { destroyed: "destroyed" },
 	destroyed: {},
 };

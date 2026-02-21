@@ -1,0 +1,138 @@
+import { useApi } from "../hooks";
+import { api, type ActivityLogEntry } from "../api";
+import { LoadingState, ErrorState, PageHeader } from "../components";
+
+/** Formats an ISO date string as a short relative time (e.g. "2m ago", "3h ago"). */
+function relativeTime(iso: string): string {
+	const diffMs = Date.now() - new Date(iso).getTime();
+	const seconds = Math.floor(diffMs / 1000);
+	if (seconds < 60) return `${seconds}s ago`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	return `${days}d ago`;
+}
+
+/** Truncates an ID to 8 characters for compact display. */
+function shortId(id: string): string {
+	return id.length > 12 ? id.slice(0, 8) + "\u2026" : id;
+}
+
+/**
+ * Maps event names to colors consistent with the workloads page:
+ * - green: created, claimed, restored from snapshot
+ * - yellow: released, restored from golden
+ * - blue: hibernated
+ * - red: destroyed, error
+ */
+function eventColor(entry: ActivityLogEntry): string {
+	switch (entry.event) {
+		case "instance.created":
+			return "text-status-green";
+		case "instance.restored": {
+			const snapshotType = entry.metadata?.snapshotType;
+			if (snapshotType === "golden") return "text-status-yellow";
+			return "text-status-blue";
+		}
+		case "instance.hibernated":
+			return "text-status-blue";
+		case "instance.destroyed":
+			return "text-status-red";
+		case "instance.error":
+			return "text-status-red";
+		case "tenant.claimed":
+			return "text-status-green";
+		case "tenant.released":
+			return "text-status-yellow";
+		default:
+			return "text-gray-200";
+	}
+}
+
+/** Renders key=value metadata pairs inline. */
+function MetadataInline({ metadata }: { metadata: Record<string, unknown> }) {
+	const entries = Object.entries(metadata);
+	if (entries.length === 0) return null;
+
+	return (
+		<span className="text-muted">
+			{entries.map(([k, v], i) => (
+				<span key={k}>
+					{i > 0 && " "}
+					<span className="text-muted">{k}</span>
+					<span className="text-muted">=</span>
+					<span className="text-muted-light">{String(v)}</span>
+				</span>
+			))}
+		</span>
+	);
+}
+
+const HEADERS = ["Time", "Event", "Workload", "Instance", "Tenant", "Node", "Details"];
+
+export function ActivityLog() {
+	const { data, loading, error } = useApi(api.fetchActivity);
+
+	if (loading) return <LoadingState />;
+	if (error) return <ErrorState message={error} />;
+	if (!data) return null;
+
+	return (
+		<div>
+			<PageHeader>logs</PageHeader>
+			{data.length === 0 ? (
+				<p className="text-muted font-mono text-sm">no activity logged yet.</p>
+			) : (
+				<div className="overflow-x-auto">
+					<table className="w-full text-xs text-left font-mono">
+						<thead className="text-xs font-tight uppercase tracking-wider text-muted border-b border-border/30">
+							<tr>
+								{HEADERS.map((h) => (
+									<th key={h} className="px-2 py-1.5">{h}</th>
+								))}
+							</tr>
+						</thead>
+						<tbody>
+							{data.map((entry) => {
+								const color = eventColor(entry);
+								return (
+									<tr
+										key={entry.id}
+										className="h-7 border-b border-border/10 hover:bg-surface-3/30 transition-colors"
+									>
+										<td
+											className="px-2 text-muted whitespace-nowrap"
+											title={new Date(entry.createdAt).toLocaleString()}
+										>
+											{relativeTime(entry.createdAt)}
+										</td>
+										<td className={`px-2 whitespace-nowrap ${color}`}>
+											{entry.event}
+										</td>
+										<td className="px-2 text-muted-light" title={entry.workloadId ?? undefined}>
+											{entry.workloadId ? shortId(entry.workloadId) : "\u2014"}
+										</td>
+										<td className="px-2 text-muted-light" title={entry.instanceId ?? undefined}>
+											{entry.instanceId ? shortId(entry.instanceId) : "\u2014"}
+										</td>
+										<td className="px-2 text-muted-light" title={entry.tenantId ?? undefined}>
+											{entry.tenantId ?? "\u2014"}
+										</td>
+										<td className="px-2 text-muted-light" title={entry.nodeId ?? undefined}>
+											{entry.nodeId ? shortId(entry.nodeId) : "\u2014"}
+										</td>
+										<td className="px-2">
+											{entry.metadata && <MetadataInline metadata={entry.metadata} />}
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
+				</div>
+			)}
+		</div>
+	);
+}

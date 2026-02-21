@@ -1,22 +1,17 @@
 import { useState, useCallback } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Flame, Package, Server, Users, HardDrive, Camera } from "lucide-react";
+import { Flame, Package, HardDrive, ScrollText } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
 import { WorkloadDetail } from "./pages/WorkloadDetail";
-import { InstanceList } from "./pages/InstanceList";
-import { InstanceDetail } from "./pages/InstanceDetail";
-import { TenantList } from "./pages/TenantList";
 import { NodeList } from "./pages/NodeList";
-import { SnapshotList } from "./pages/SnapshotList";
+import { ActivityLog } from "./pages/ActivityLog";
 
 const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/workloads", label: "workloads", icon: Package },
-	{ path: "/instances", label: "instances", icon: Server },
-	{ path: "/tenants", label: "tenants", icon: Users },
-	{ path: "/snapshots", label: "snapshots", icon: Camera },
 	{ path: "/nodes", label: "nodes", icon: HardDrive },
+	{ path: "/logs", label: "logs", icon: ScrollText },
 ];
 
 function App() {
@@ -36,16 +31,10 @@ function App() {
 		content = <WorkloadList key={tick} navigate={navigate} />;
 	} else if ((params = matchRoute(path, "/workloads/:name"))) {
 		content = <WorkloadDetail key={`${params.name}-${tick}`} name={params.name!} navigate={navigate} />;
-	} else if (path === "/instances") {
-		content = <InstanceList key={tick} navigate={navigate} />;
-	} else if ((params = matchRoute(path, "/instances/:id"))) {
-		content = <InstanceDetail key={`${params.id}-${tick}`} id={params.id!} />;
-	} else if (path === "/tenants") {
-		content = <TenantList key={tick} />;
-	} else if (path === "/snapshots") {
-		content = <SnapshotList key={tick} />;
 	} else if (path === "/nodes") {
 		content = <NodeList key={tick} />;
+	} else if (path === "/logs") {
+		content = <ActivityLog key={tick} />;
 	} else {
 		content = (
 			<div className="text-center py-20 text-muted">

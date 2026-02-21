@@ -45,11 +45,7 @@ for (const rt of availableRuntimes()) {
 			expect(checkRes.status).toBe(200);
 			expect((await checkRes.json()).status).toBe("destroyed");
 
-			// Step 4: Stop on destroyed instance should fail
-			const stopRes = await api(server, "POST", `/api/v1/instances/${instanceId}/stop`);
-			expect(stopRes.status).not.toBe(200);
-
-			// Step 5: Hibernate on destroyed instance should fail
+			// Step 4: Hibernate on destroyed instance should fail
 			const hibernateRes = await api(server, "POST", `/api/v1/instances/${instanceId}/hibernate`);
 			expect(hibernateRes.status).not.toBe(200);
 

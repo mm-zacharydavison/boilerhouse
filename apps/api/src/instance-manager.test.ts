@@ -185,35 +185,6 @@ describe("InstanceManager", () => {
 		});
 	});
 
-	// ── 3.2 — stop & hibernate ──────────────────────────────────────────────
-
-	describe("stop()", () => {
-		test("calls runtime.stop() and updates status to 'destroyed'", async () => {
-			const handle = await manager.create(workloadId, TEST_WORKLOAD);
-			await manager.stop(handle.instanceId);
-
-			const row = db
-				.select()
-				.from(instances)
-				.where(eq(instances.instanceId, handle.instanceId))
-				.get();
-
-			expect(row!.status).toBe("destroyed");
-		});
-
-		test("logs 'instance.stopped' activity", async () => {
-			const handle = await manager.create(workloadId, TEST_WORKLOAD);
-			await manager.stop(handle.instanceId);
-
-			const events = log.queryByInstance(handle.instanceId);
-			const stopEvent = events.find(
-				(e) => e.event === "instance.stopped",
-			);
-			expect(stopEvent).toBeDefined();
-			expect(stopEvent!.nodeId).toBe(nodeId);
-		});
-	});
-
 	describe("hibernate()", () => {
 		test("calls runtime.snapshot() then runtime.destroy()", async () => {
 			const handle = await manager.create(workloadId, TEST_WORKLOAD);

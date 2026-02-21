@@ -7,7 +7,6 @@ import type { Runtime, InstanceHandle, Endpoint, ExecResult } from "./runtime";
 type RuntimeOperation =
 	| "create"
 	| "start"
-	| "stop"
 	| "destroy"
 	| "snapshot"
 	| "restore"
@@ -77,13 +76,6 @@ export class FakeRuntime implements Runtime {
 		const instance = this.requireInstance(handle.instanceId);
 		instance.running = true;
 		handle.running = true;
-	}
-
-	async stop(handle: InstanceHandle): Promise<void> {
-		await this.maybeDelay("stop");
-		const instance = this.requireInstance(handle.instanceId);
-		instance.running = false;
-		handle.running = false;
 	}
 
 	async destroy(handle: InstanceHandle): Promise<void> {

@@ -72,6 +72,7 @@ export function workloadRoutes(deps: RouteDeps) {
 				name: r.name,
 				version: r.version,
 				status: r.status,
+				statusDetail: r.statusDetail,
 				createdAt: r.createdAt.toISOString(),
 				updatedAt: r.updatedAt.toISOString(),
 			}));
@@ -99,6 +100,7 @@ export function workloadRoutes(deps: RouteDeps) {
 				name: row.name,
 				version: row.version,
 				status: row.status,
+				statusDetail: row.statusDetail,
 				config: row.config,
 				instanceCount: instanceCount!.count,
 				createdAt: row.createdAt.toISOString(),

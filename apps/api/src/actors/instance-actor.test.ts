@@ -128,24 +128,6 @@ describe("InstanceActor", () => {
 			expect(next).toBe("destroyed");
 		});
 
-		test("transitions active → stopping via 'stop'", () => {
-			const id = seedInstance({ status: "active" });
-			const actor = new InstanceActor(db, id);
-
-			const next = actor.send("stop");
-
-			expect(next).toBe("stopping");
-		});
-
-		test("transitions stopping → destroyed via 'stopped'", () => {
-			const id = seedInstance({ status: "stopping" });
-			const actor = new InstanceActor(db, id);
-
-			const next = actor.send("stopped");
-
-			expect(next).toBe("destroyed");
-		});
-
 		test("transitions active → hibernated via 'hibernate'", () => {
 			const id = seedInstance({ status: "active" });
 			const actor = new InstanceActor(db, id);

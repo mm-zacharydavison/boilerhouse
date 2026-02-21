@@ -120,29 +120,6 @@ export class FirecrackerRuntime implements Runtime {
 		handle.running = true;
 	}
 
-	async stop(handle: InstanceHandle): Promise<void> {
-		const managed = this.requireInstance(handle.instanceId);
-		await managed.client.putAction({ action_type: "SendCtrlAltDel" });
-
-		if (this.isJailerMode) {
-			// Give the VM time to shut down, then force kill via PID file
-			await Bun.sleep(3000);
-			await (managed.process as JailedProcess).kill();
-		} else {
-			const timeout = setTimeout(() => {
-				(managed.process as FirecrackerProcess).kill();
-			}, 5000);
-			try {
-				await (managed.process as FirecrackerProcess).proc.exited;
-			} finally {
-				clearTimeout(timeout);
-			}
-		}
-
-		managed.running = false;
-		handle.running = false;
-	}
-
 	async destroy(handle: InstanceHandle): Promise<void> {
 		const managed = this.requireInstance(handle.instanceId);
 		const errors: Error[] = [];

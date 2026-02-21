@@ -23,7 +23,7 @@ export function NodeList() {
 							</td>
 							<td className="px-4 py-3 text-muted-light">{n.runtimeType}</td>
 							<td className="px-4 py-3">
-								<StatusIndicator status={n.status} />
+								<StatusIndicator status={n.status} detail={n.statusDetail ?? undefined} />
 							</td>
 							<td className="px-4 py-3 text-muted-light">{n.capacity.vcpus}</td>
 							<td className="px-4 py-3 text-muted-light">

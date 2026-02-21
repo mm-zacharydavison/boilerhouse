@@ -109,9 +109,9 @@ describe("ResourceLimiter", () => {
 		expect(limiter.canCreate(nodeId)).toBe(true);
 	});
 
-	test("counts starting/stopping instances", () => {
+	test("counts starting/destroying instances", () => {
 		insertInstance("starting");
-		insertInstance("stopping");
+		insertInstance("destroying");
 		limiter = new ResourceLimiter(db, { maxInstances: 2 });
 
 		expect(limiter.canCreate(nodeId)).toBe(false);

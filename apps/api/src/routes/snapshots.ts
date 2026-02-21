@@ -16,6 +16,7 @@ export function snapshotRoutes(deps: RouteDeps) {
 			snapshotId: s.snapshotId,
 			type: s.type,
 			status: s.status,
+			statusDetail: s.statusDetail,
 			instanceId: s.instanceId,
 			tenantId: s.tenantId,
 			workloadId: s.workloadId,

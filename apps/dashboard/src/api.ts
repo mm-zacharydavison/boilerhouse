@@ -54,6 +54,8 @@ export interface WorkloadSummary {
 	version: string;
 	/** @example "ready" */
 	status: string;
+	/** Error message or other status context, shown on hover. */
+	statusDetail: string | null;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -69,6 +71,7 @@ export interface InstanceSummary {
 	nodeId: string;
 	tenantId: string | null;
 	status: string;
+	statusDetail: string | null;
 	createdAt: string;
 }
 
@@ -105,6 +108,7 @@ export interface NodeSummary {
 	runtimeType: string;
 	capacity: { vcpus: number; memoryMb: number; diskGb: number };
 	status: string;
+	statusDetail: string | null;
 	lastHeartbeat: string;
 	createdAt: string;
 }
@@ -125,6 +129,7 @@ export interface SnapshotSummary {
 	type: "golden" | "tenant";
 	/** @example "ready" */
 	status: string;
+	statusDetail: string | null;
 	instanceId: string;
 	tenantId: string | null;
 	workloadId: string;
@@ -132,6 +137,18 @@ export interface SnapshotSummary {
 	workloadName: string | null;
 	nodeId: string;
 	sizeBytes: number;
+	createdAt: string;
+}
+
+export interface ActivityLogEntry {
+	id: number;
+	event: string;
+	instanceId: string | null;
+	workloadId: string | null;
+	nodeId: string | null;
+	tenantId: string | null;
+	metadata: Record<string, unknown> | null;
+	/** @example "2026-02-21T12:00:00.000Z" */
 	createdAt: string;
 }
 
@@ -148,6 +165,8 @@ export interface ClaimResult {
 // --- API methods ---
 
 export const api = {
+	fetchActivity: () => get<ActivityLogEntry[]>("/activity"),
+
 	fetchStats: () => get<StatsResponse>("/stats"),
 
 	fetchWorkloads: () => get<WorkloadSummary[]>("/workloads"),
@@ -176,9 +195,6 @@ export const api = {
 	fetchNodes: () => get<NodeSummary[]>("/nodes"),
 
 	fetchNode: (id: string) => get<NodeDetail>(`/nodes/${encodeURIComponent(id)}`),
-
-	stopInstance: (id: string) =>
-		post<{ instanceId: string; status: string }>(`/instances/${encodeURIComponent(id)}/stop`),
 
 	hibernateInstance: (id: string) =>
 		post<{ instanceId: string; status: string; snapshotId: string }>(

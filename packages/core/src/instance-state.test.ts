@@ -17,16 +17,8 @@ describe("instance state machine", () => {
 			expect(transition("active", "hibernate")).toBe("hibernated");
 		});
 
-		test("active → stopping (via 'stop' event)", () => {
-			expect(transition("active", "stop")).toBe("stopping");
-		});
-
 		test("active → destroying (via 'destroy' event)", () => {
 			expect(transition("active", "destroy")).toBe("destroying");
-		});
-
-		test("stopping → destroyed (via 'stopped' event)", () => {
-			expect(transition("stopping", "stopped")).toBe("destroyed");
 		});
 
 		test("destroying → destroyed (via 'destroyed' event)", () => {
@@ -55,12 +47,6 @@ describe("instance state machine", () => {
 			);
 		});
 
-		test("stopping → active throws", () => {
-			expect(() => transition("stopping", "started")).toThrow(
-				InvalidTransitionError,
-			);
-		});
-
 		test("destroyed → anything throws", () => {
 			for (const event of INSTANCE_EVENTS) {
 				expect(() => transition("destroyed", event)).toThrow(
@@ -83,21 +69,18 @@ describe("instance state machine", () => {
 		expect(INSTANCE_STATUSES).toContain("starting");
 		expect(INSTANCE_STATUSES).toContain("active");
 		expect(INSTANCE_STATUSES).toContain("hibernated");
-		expect(INSTANCE_STATUSES).toContain("stopping");
 		expect(INSTANCE_STATUSES).toContain("destroying");
 		expect(INSTANCE_STATUSES).toContain("destroyed");
-		expect(INSTANCE_STATUSES).toHaveLength(6);
+		expect(INSTANCE_STATUSES).toHaveLength(5);
 	});
 
 	test("all events are enumerable", () => {
 		expect(INSTANCE_EVENTS).toContain("started");
 		expect(INSTANCE_EVENTS).toContain("hibernate");
-		expect(INSTANCE_EVENTS).toContain("stop");
 		expect(INSTANCE_EVENTS).toContain("destroy");
 		expect(INSTANCE_EVENTS).toContain("restore");
-		expect(INSTANCE_EVENTS).toContain("stopped");
 		expect(INSTANCE_EVENTS).toContain("destroyed");
-		expect(INSTANCE_EVENTS).toHaveLength(7);
+		expect(INSTANCE_EVENTS).toHaveLength(5);
 	});
 
 	test("InvalidTransitionError has structured fields", () => {

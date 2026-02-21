@@ -15,6 +15,7 @@ export function nodeRoutes(deps: RouteDeps) {
 				runtimeType: r.runtimeType,
 				capacity: r.capacity,
 				status: r.status,
+				statusDetail: r.statusDetail,
 				lastHeartbeat: r.lastHeartbeat.toISOString(),
 				createdAt: r.createdAt.toISOString(),
 			}));

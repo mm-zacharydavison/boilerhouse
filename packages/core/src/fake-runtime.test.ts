@@ -33,16 +33,6 @@ describe("FakeRuntime", () => {
 		expect(handle.running).toBe(true);
 	});
 
-	test("stop() transitions handle to stopped", async () => {
-		const runtime = new FakeRuntime();
-		const handle = await runtime.create(minimalWorkload(), generateInstanceId());
-		await runtime.start(handle);
-
-		expect(handle.running).toBe(true);
-		await runtime.stop(handle);
-		expect(handle.running).toBe(false);
-	});
-
 	test("destroy() removes the instance", async () => {
 		const runtime = new FakeRuntime();
 		const handle = await runtime.create(minimalWorkload(), generateInstanceId());
@@ -126,7 +116,6 @@ describe("FakeRuntime", () => {
 		await runtime.destroy(handle);
 
 		await expect(runtime.start(handle)).rejects.toThrow(/destroyed/i);
-		await expect(runtime.stop(handle)).rejects.toThrow(/destroyed/i);
 		await expect(runtime.destroy(handle)).rejects.toThrow(/destroyed/i);
 		await expect(runtime.snapshot(handle)).rejects.toThrow(/destroyed/i);
 		await expect(runtime.getEndpoint(handle)).rejects.toThrow(/destroyed/i);

@@ -526,7 +526,7 @@ describe("activityLog table", () => {
 
 		db.insert(activityLog)
 			.values({
-				event: "instance.stopped",
+				event: "instance.destroyed",
 				instanceId: "inst-1" as InstanceId,
 				createdAt: now,
 			})

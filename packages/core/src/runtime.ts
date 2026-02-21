@@ -44,9 +44,6 @@ export interface Runtime {
 	/** Start a stopped/created instance. */
 	start(handle: InstanceHandle): Promise<void>;
 
-	/** Stop a running instance gracefully. */
-	stop(handle: InstanceHandle): Promise<void>;
-
 	/** Destroy an instance and clean up all resources. */
 	destroy(handle: InstanceHandle): Promise<void>;
 

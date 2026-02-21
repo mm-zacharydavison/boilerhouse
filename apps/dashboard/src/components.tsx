@@ -11,7 +11,6 @@ const STATUS_SYMBOLS: Record<string, string> = {
 	starting: "◐",
 	creating: "◐",
 	draining: "◐",
-	stopping: "◐",
 	destroying: "◐",
 	hibernated: "○",
 	destroyed: "✕",
@@ -26,7 +25,6 @@ const STATUS_COLORS: Record<string, string> = {
 	starting: "text-status-yellow",
 	creating: "text-status-yellow",
 	draining: "text-status-yellow",
-	stopping: "text-status-orange",
 	destroying: "text-status-orange",
 	hibernated: "text-status-blue",
 	destroyed: "text-status-red",
@@ -34,13 +32,14 @@ const STATUS_COLORS: Record<string, string> = {
 	error: "text-status-red",
 };
 
-export function StatusIndicator({ status }: { status: string }) {
+export function StatusIndicator({ status, detail }: { status: string; detail?: string }) {
 	const symbol = STATUS_SYMBOLS[status] ?? "●";
 	const color = STATUS_COLORS[status] ?? "text-muted";
+	const tooltip = detail ? `${status}: ${detail}` : status;
 
 	return (
-		<span className={`font-mono text-sm ${color}`}>
-			{symbol} {status}
+		<span className={`font-mono text-sm leading-none ${color} cursor-default`} title={tooltip}>
+			{symbol}
 		</span>
 	);
 }

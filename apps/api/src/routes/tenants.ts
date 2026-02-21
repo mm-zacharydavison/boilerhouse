@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
 import type { TenantId } from "@boilerhouse/core";
+import { InvalidTransitionError } from "@boilerhouse/core";
 import { tenants, workloads, instances, snapshots } from "@boilerhouse/db";
 import { NoGoldenSnapshotError } from "../tenant-manager";
 import type { RouteDeps } from "./deps";
@@ -52,6 +53,10 @@ export function tenantRoutes(deps: RouteDeps) {
 			} catch (err) {
 				if (err instanceof NoGoldenSnapshotError) {
 					set.status = 503;
+					return { error: err.message };
+				}
+				if (err instanceof InvalidTransitionError) {
+					set.status = 409;
 					return { error: err.message };
 				}
 				throw err;

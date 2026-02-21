@@ -20,7 +20,6 @@ import { E2E_TIMEOUTS } from "./runtime-matrix";
 type RuntimeOperation =
 	| "create"
 	| "start"
-	| "stop"
 	| "destroy"
 	| "snapshot"
 	| "restore"

@@ -30,6 +30,7 @@ export const nodes = sqliteTable("nodes", {
 	runtimeType: text("runtime_type").notNull().$type<RuntimeType>(),
 	capacity: jsonObject<NodeCapacity>("capacity").notNull(),
 	status: text("status").notNull().default("online").$type<NodeStatus>(),
+	statusDetail: text("status_detail"),
 	lastHeartbeat: timestamp("last_heartbeat").notNull(),
 	createdAt: timestamp("created_at").notNull(),
 });
@@ -44,6 +45,7 @@ export const workloads = sqliteTable(
 		version: text("version").notNull(),
 		config: jsonObject<Workload>("config").notNull(),
 		status: text("status").notNull().default("ready").$type<WorkloadStatus>(),
+		statusDetail: text("status_detail"),
 		createdAt: timestamp("created_at").notNull(),
 		updatedAt: timestamp("updated_at").notNull(),
 	},
@@ -69,6 +71,7 @@ export const instances = sqliteTable(
 			.notNull()
 			.default("starting")
 			.$type<InstanceStatus>(),
+		statusDetail: text("status_detail"),
 		runtimeMeta: jsonObject<Record<string, unknown>>("runtime_meta"),
 		lastActivity: timestamp("last_activity"),
 		claimedAt: timestamp("claimed_at"),
@@ -100,6 +103,7 @@ export const snapshots = sqliteTable(
 			.$type<NodeId>()
 			.references(() => nodes.nodeId),
 		status: text("status").notNull().default("ready").$type<SnapshotStatus>(),
+		statusDetail: text("status_detail"),
 		vmstatePath: text("vmstate_path").notNull(),
 		memoryPath: text("memory_path"),
 		sizeBytes: integer("size_bytes").notNull(),
@@ -127,6 +131,7 @@ export const tenants = sqliteTable(
 			.$type<WorkloadId>()
 			.references(() => workloads.workloadId),
 		status: text("status").notNull().default("idle").$type<TenantStatus>(),
+		statusDetail: text("status_detail"),
 		instanceId: text("instance_id").$type<InstanceId>(),
 		lastSnapshotId: text("last_snapshot_id").$type<SnapshotId>(),
 		dataOverlayRef: text("data_overlay_ref"),

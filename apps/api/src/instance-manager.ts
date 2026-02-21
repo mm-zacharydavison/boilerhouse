@@ -12,7 +12,7 @@ import type {
 import { generateInstanceId } from "@boilerhouse/core";
 import type { DrizzleDb, ActivityLog } from "@boilerhouse/db";
 import { instances, snapshots, tenants } from "@boilerhouse/db";
-import { InstanceActor, SnapshotActor } from "./actors";
+import { InstanceActor, SnapshotActor, TenantActor } from "./actors";
 
 export class SnapshotNotFoundError extends Error {
 	constructor(snapshotId: string) {
@@ -91,42 +91,32 @@ export class InstanceManager {
 
 		actor.send("destroyed");
 
+		if (row.tenantId) {
+			const tenantRow = this.db
+				.select({ status: tenants.status })
+				.from(tenants)
+				.where(eq(tenants.tenantId, row.tenantId))
+				.get();
+
+			if (tenantRow?.status === "active") {
+				const tenantActor = new TenantActor(this.db, row.tenantId);
+				tenantActor.send("release");
+				tenantActor.send("destroyed");
+
+				this.db
+					.update(tenants)
+					.set({ instanceId: null })
+					.where(eq(tenants.tenantId, row.tenantId))
+					.run();
+			}
+		}
+
 		this.activityLog.log({
 			event: "instance.destroyed",
 			instanceId,
 			nodeId: this.nodeId,
 			workloadId: row.workloadId,
-		});
-	}
-
-	async stop(instanceId: InstanceId): Promise<void> {
-		const row = this.db
-			.select()
-			.from(instances)
-			.where(eq(instances.instanceId, instanceId))
-			.get();
-
-		if (!row) {
-			throw new Error(`Instance not found: ${instanceId}`);
-		}
-
-		const handle: InstanceHandle = {
-			instanceId,
-			running: row.status === "active",
-		};
-
-		const actor = new InstanceActor(this.db, instanceId);
-		actor.send("stop");
-
-		await this.runtime.stop(handle);
-
-		actor.send("stopped");
-
-		this.activityLog.log({
-			event: "instance.stopped",
-			instanceId,
-			nodeId: this.nodeId,
-			workloadId: row.workloadId,
+			tenantId: row.tenantId,
 		});
 	}
 
@@ -192,7 +182,7 @@ export class InstanceManager {
 		if (row.tenantId) {
 			// Delete the previous tenant snapshot (keep only the latest)
 			const tenantRow = this.db
-				.select({ lastSnapshotId: tenants.lastSnapshotId })
+				.select({ lastSnapshotId: tenants.lastSnapshotId, status: tenants.status })
 				.from(tenants)
 				.where(eq(tenants.tenantId, row.tenantId))
 				.get();
@@ -209,6 +199,21 @@ export class InstanceManager {
 				.set({ lastSnapshotId: correctedRef.id })
 				.where(eq(tenants.tenantId, row.tenantId))
 				.run();
+
+			// If tenant is still "active", this hibernate was called directly
+			// (not through the tenant release flow). Transition the tenant to
+			// "released" and clear its instanceId so it can be re-claimed.
+			if (tenantRow?.status === "active") {
+				const tenantActor = new TenantActor(this.db, row.tenantId);
+				tenantActor.send("release");
+				tenantActor.send("hibernated");
+
+				this.db
+					.update(tenants)
+					.set({ instanceId: null })
+					.where(eq(tenants.tenantId, row.tenantId))
+					.run();
+			}
 		}
 
 		this.activityLog.log({
@@ -216,6 +221,7 @@ export class InstanceManager {
 			instanceId,
 			nodeId: this.nodeId,
 			workloadId: row.workloadId,
+			tenantId: row.tenantId,
 			metadata: { snapshotId: correctedRef.id },
 		});
 

@@ -29,6 +29,7 @@ export function instanceRoutes(deps: RouteDeps) {
 				nodeId: r.nodeId,
 				tenantId: r.tenantId,
 				status: r.status,
+				statusDetail: r.statusDetail,
 				createdAt: r.createdAt.toISOString(),
 			}));
 		})
@@ -82,39 +83,6 @@ export function instanceRoutes(deps: RouteDeps) {
 				status: row.status,
 				endpoint,
 			};
-		})
-		.post("/instances/:id/stop", async ({ params, set }) => {
-			const instanceId = params.id as InstanceId;
-			const row = db
-				.select()
-				.from(instances)
-				.where(eq(instances.instanceId, instanceId))
-				.get();
-
-			if (!row) {
-				set.status = 404;
-				return { error: `Instance '${params.id}' not found` };
-			}
-
-			try {
-				await instanceManager.stop(instanceId);
-			} catch (err) {
-				if (err instanceof InvalidTransitionError) {
-					set.status = 409;
-					return { error: err.message };
-				}
-				throw err;
-			}
-
-			eventBus.emit({
-				type: "instance.state",
-				instanceId,
-				status: "destroyed",
-				workloadId: row.workloadId,
-				tenantId: row.tenantId ?? undefined,
-			});
-
-			return { instanceId, status: "destroyed" };
 		})
 		.post("/instances/:id/hibernate", async ({ params, set }) => {
 			const instanceId = params.id as InstanceId;

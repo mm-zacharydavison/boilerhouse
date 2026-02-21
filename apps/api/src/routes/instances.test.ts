@@ -98,42 +98,6 @@ describe("GET /api/v1/instances/:id", () => {
 	});
 });
 
-describe("POST /api/v1/instances/:id/stop", () => {
-	test("stops an active instance", async () => {
-		const ctx = createTestApp();
-		const workloadId = seedWorkload(ctx);
-
-		const handle = await ctx.instanceManager.create(workloadId, MINIMAL_WORKLOAD);
-
-		const events: DomainEvent[] = [];
-		ctx.eventBus.on((e) => events.push(e));
-
-		const res = await apiRequest(
-			ctx.app,
-			`/api/v1/instances/${handle.instanceId}/stop`,
-			{ method: "POST" },
-		);
-		const body = await res.json();
-
-		expect(res.status).toBe(200);
-		expect(body.status).toBe("destroyed");
-
-		expect(events).toHaveLength(1);
-		expect(events[0]!.type).toBe("instance.state");
-	});
-
-	test("returns 404 for nonexistent instance", async () => {
-		const ctx = createTestApp();
-		const res = await apiRequest(
-			ctx.app,
-			"/api/v1/instances/nonexistent/stop",
-			{ method: "POST" },
-		);
-
-		expect(res.status).toBe(404);
-	});
-});
-
 describe("POST /api/v1/instances/:id/hibernate", () => {
 	test("hibernates an active instance", async () => {
 		const ctx = createTestApp();

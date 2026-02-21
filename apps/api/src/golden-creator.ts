@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import type { WorkloadId, Workload } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
+import { workloads } from "@boilerhouse/db";
 import type { SnapshotManager } from "./snapshot-manager";
 import type { EventBus } from "./event-bus";
 import { WorkloadActor } from "./actors";
@@ -73,12 +75,18 @@ export class GoldenCreator {
 
 			console.log(`GoldenCreator: golden snapshot ready for workload ${item.workloadId}`);
 		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
 			console.error(
-				`GoldenCreator: failed to create golden snapshot for workload ${item.workloadId}: ${err instanceof Error ? err.message : err}`,
+				`GoldenCreator: failed to create golden snapshot for workload ${item.workloadId}: ${message}`,
 			);
 
 			try {
 				actor.send("failed");
+				this.db
+					.update(workloads)
+					.set({ statusDetail: message })
+					.where(eq(workloads.workloadId, item.workloadId))
+					.run();
 			} catch {
 				// Workload may have been deleted while processing
 			}
