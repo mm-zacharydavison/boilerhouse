@@ -1,24 +1,28 @@
+import { useState, useEffect } from "react";
 import type { ReactNode } from "react";
+import { api, type InstanceEndpoint } from "./api";
 
 // --- Status Indicator ---
 
 const STATUS_SYMBOLS: Record<string, string> = {
-	running: "●",
+	active: "●",
 	online: "●",
 	starting: "◐",
 	draining: "◐",
 	stopping: "◐",
+	destroying: "◐",
 	hibernated: "○",
 	destroyed: "✕",
 	offline: "✕",
 };
 
 const STATUS_COLORS: Record<string, string> = {
-	running: "text-status-green",
+	active: "text-status-green",
 	online: "text-status-green",
 	starting: "text-status-yellow",
 	draining: "text-status-yellow",
 	stopping: "text-status-orange",
+	destroying: "text-status-orange",
 	hibernated: "text-status-blue",
 	destroyed: "text-status-red",
 	offline: "text-status-red",
@@ -158,6 +162,97 @@ export function BackLink({
 	);
 }
 
+// --- Modal ---
+
+export function Modal({
+	title,
+	onClose,
+	children,
+}: {
+	title: string;
+	onClose: () => void;
+	children: ReactNode;
+}) {
+	return (
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+			onClick={onClose}
+		>
+			<div
+				className="bg-surface-1 border border-border rounded-lg shadow-xl w-full max-w-md mx-4"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+					<h3 className="text-sm font-tight font-semibold">{title}</h3>
+					<button
+						onClick={onClose}
+						className="text-muted hover:text-white transition-colors text-lg leading-none"
+					>
+						&times;
+					</button>
+				</div>
+				<div className="p-4">{children}</div>
+			</div>
+		</div>
+	);
+}
+
+// --- Connection Modal ---
+
+export function ConnectionModal({
+	instanceId,
+	onClose,
+}: {
+	instanceId: string;
+	onClose: () => void;
+}) {
+	const [endpointData, setEndpointData] = useState<InstanceEndpoint | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		api.fetchInstanceEndpoint(instanceId)
+			.then((data) => {
+				setEndpointData(data);
+				setLoading(false);
+			})
+			.catch((err: unknown) => {
+				setError(err instanceof Error ? err.message : "Failed to fetch endpoint");
+				setLoading(false);
+			});
+	}, [instanceId]);
+
+	return (
+		<Modal title="Connection Details" onClose={onClose}>
+			{loading && (
+				<p className="font-mono text-sm text-muted animate-pulse">loading...</p>
+			)}
+			{error && (
+				<p className="font-mono text-sm text-status-red">{error}</p>
+			)}
+			{endpointData && (
+				<div className="space-y-3">
+					<div className="grid grid-cols-2 gap-3">
+						<InfoCard label="Host" value={endpointData.endpoint.host} />
+						<InfoCard label="Port" value={String(endpointData.endpoint.port)} />
+					</div>
+					<InfoCard label="Instance" value={endpointData.instanceId} />
+					<InfoCard label="Status" value={endpointData.status} />
+					<div className="bg-surface-2 rounded-md p-3">
+						<p className="text-xs font-tight uppercase tracking-wider text-muted mb-2">Connect via</p>
+						<pre className="text-xs font-mono text-muted-light select-all">
+							ssh root@{endpointData.endpoint.host} -p {endpointData.endpoint.port}
+						</pre>
+						<pre className="text-xs font-mono text-muted-light select-all mt-1">
+							curl http://{endpointData.endpoint.host}:{endpointData.endpoint.port}/
+						</pre>
+					</div>
+				</div>
+			)}
+		</Modal>
+	);
+}
+
 // --- Action Button ---
 
 const ACTION_VARIANTS: Record<string, string> = {
@@ -170,18 +265,22 @@ export function ActionButton({
 	label,
 	variant,
 	onClick,
+	disabled,
 }: {
 	label: string;
 	variant: "danger" | "warning" | "info";
 	onClick: () => void;
+	/** @default false */
+	disabled?: boolean;
 }) {
 	return (
 		<button
+			disabled={disabled}
 			onClick={(e) => {
 				e.stopPropagation();
 				onClick();
 			}}
-			className={`px-2 py-1 text-xs font-mono lowercase rounded-sm transition-colors ${ACTION_VARIANTS[variant]}`}
+			className={`px-2 py-1 text-xs font-mono lowercase rounded-sm transition-colors ${ACTION_VARIANTS[variant]} disabled:opacity-50 disabled:pointer-events-none`}
 		>
 			{label}
 		</button>

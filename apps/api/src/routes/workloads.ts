@@ -5,7 +5,7 @@ import { workloads, instances, snapshots } from "@boilerhouse/db";
 import type { RouteDeps } from "./deps";
 
 export function workloadRoutes(deps: RouteDeps) {
-	const { db } = deps;
+	const { db, snapshotManager } = deps;
 
 	return new Elysia({ name: "workloads" })
 		.post("/workloads", async ({ request, set }) => {
@@ -53,11 +53,23 @@ export function workloadRoutes(deps: RouteDeps) {
 				})
 				.run();
 
+			// Create golden snapshot so the workload is immediately claimable
+			let goldenSnapshotId: string | null = null;
+			try {
+				const ref = await snapshotManager.createGolden(workloadId, workload);
+				goldenSnapshotId = ref.id;
+			} catch (err) {
+				console.error(
+					`Failed to create golden snapshot for ${workload.workload.name}: ${err instanceof Error ? err.message : err}`,
+				);
+			}
+
 			set.status = 201;
 			return {
 				workloadId,
 				name: workload.workload.name,
 				version: workload.workload.version,
+				goldenSnapshotId,
 			};
 		})
 		.get("/workloads", () => {
@@ -97,6 +109,35 @@ export function workloadRoutes(deps: RouteDeps) {
 				createdAt: row.createdAt.toISOString(),
 				updatedAt: row.updatedAt.toISOString(),
 			};
+		})
+		.get("/workloads/:name/snapshots", ({ params, set }) => {
+			const row = db
+				.select()
+				.from(workloads)
+				.where(eq(workloads.name, params.name))
+				.get();
+
+			if (!row) {
+				set.status = 404;
+				return { error: `Workload '${params.name}' not found` };
+			}
+
+			const rows = db
+				.select()
+				.from(snapshots)
+				.where(eq(snapshots.workloadId, row.workloadId))
+				.all();
+
+			return rows.map((s) => ({
+				snapshotId: s.snapshotId,
+				type: s.type,
+				instanceId: s.instanceId,
+				tenantId: s.tenantId,
+				workloadId: s.workloadId,
+				nodeId: s.nodeId,
+				sizeBytes: s.sizeBytes,
+				createdAt: s.createdAt.toISOString(),
+			}));
 		})
 		.delete("/workloads/:name", ({ params, set }) => {
 			const row = db

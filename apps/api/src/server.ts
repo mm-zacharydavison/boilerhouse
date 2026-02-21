@@ -1,6 +1,9 @@
+import { join } from "node:path";
 import { generateNodeId } from "@boilerhouse/core";
-import { FakeRuntime } from "@boilerhouse/core";
-import { initDatabase, ActivityLog } from "@boilerhouse/db";
+import type { Workload } from "@boilerhouse/core";
+import { FirecrackerRuntime } from "@boilerhouse/runtime-firecracker";
+import { initDatabase, ActivityLog, loadWorkloadsFromDir } from "@boilerhouse/db";
+import { workloads as workloadsTable } from "@boilerhouse/db";
 import { nodes } from "@boilerhouse/db";
 import { InstanceManager } from "./instance-manager";
 import { SnapshotManager } from "./snapshot-manager";
@@ -16,10 +19,23 @@ const port = Number(process.env.PORT ?? 3000);
 const dbPath = process.env.DB_PATH ?? "boilerhouse.db";
 const storagePath = process.env.STORAGE_PATH ?? "./data";
 const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
+const workloadsDir = process.env.WORKLOADS_DIR;
+const firecrackerBinary = process.env.FIRECRACKER_BIN ?? "/usr/bin/firecracker";
+const kernelPath = process.env.KERNEL_PATH ?? "/var/lib/boilerhouse/vmlinux";
+const snapshotDir = process.env.SNAPSHOT_DIR ?? join(storagePath, "snapshots");
+const instanceDir = process.env.INSTANCE_DIR ?? join(storagePath, "instances");
+const imagesDir = process.env.IMAGES_DIR ?? join(storagePath, "images");
 
 const db = initDatabase(dbPath);
-const runtime = new FakeRuntime();
 const nodeId = generateNodeId();
+const runtime = new FirecrackerRuntime({
+	binaryPath: firecrackerBinary,
+	kernelPath,
+	snapshotDir,
+	instanceDir,
+	nodeId,
+	imagesDir,
+});
 const activityLog = new ActivityLog(db);
 const eventBus = new EventBus();
 
@@ -36,6 +52,17 @@ if (!existingNode) {
 			createdAt: new Date(),
 		})
 		.run();
+}
+
+// Load workload definitions from disk if configured
+if (workloadsDir) {
+	const result = loadWorkloadsFromDir(db, workloadsDir);
+	console.log(
+		`Workloads: ${result.loaded} loaded, ${result.updated} updated, ${result.unchanged} unchanged, ${result.errors.length} error(s)`,
+	);
+	for (const { file, error } of result.errors) {
+		console.error(`  ${file}: ${error}`);
+	}
 }
 
 const instanceManager = new InstanceManager(runtime, db, activityLog, nodeId);
@@ -75,6 +102,27 @@ const report = await recoverState(runtime, db, nodeId, activityLog);
 console.log(
 	`Recovery: ${report.recovered} recovered, ${report.destroyed} destroyed, ${report.orphanedTapsCleaned} orphaned TAPs cleaned`,
 );
+
+// Ensure all workloads have golden snapshots
+{
+	const allWorkloads = db.select().from(workloadsTable).all();
+	let created = 0;
+	for (const row of allWorkloads) {
+		if (!snapshotManager.goldenExists(row.workloadId, nodeId)) {
+			try {
+				await snapshotManager.createGolden(row.workloadId, row.config as Workload);
+				created++;
+			} catch (err) {
+				console.error(
+					`Failed to create golden snapshot for ${row.name}: ${err instanceof Error ? err.message : err}`,
+				);
+			}
+		}
+	}
+	if (created > 0) {
+		console.log(`Golden snapshots: ${created} created`);
+	}
+}
 
 const app = createApp({
 	db,

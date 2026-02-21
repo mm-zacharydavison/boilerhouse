@@ -31,3 +31,8 @@ export {
 } from "./database";
 
 export { ActivityLog } from "./activity-log";
+
+export {
+	loadWorkloadsFromDir,
+	type WorkloadLoaderResult,
+} from "./workload-loader";

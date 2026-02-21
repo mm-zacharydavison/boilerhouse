@@ -1,0 +1,43 @@
+[workload]
+name = "openclaw"
+version = "0.1.0"
+
+[image]
+ref = "alpine/openclaw:main"
+
+[resources]
+vcpus = 2
+memory_mb = 2048
+disk_gb = 10
+
+[network]
+access = "restricted"
+allowlist = [
+  "api.anthropic.com",
+  "api.openai.com",
+  "registry.npmjs.org",
+]
+expose = [{ guest = 18789, host_range = [30000, 30099] }]
+
+[filesystem]
+overlay_dirs = ["/root/.openclaw"]
+
+[idle]
+timeout_seconds = 600
+action = "hibernate"
+
+[health]
+interval_seconds = 10
+unhealthy_threshold = 3
+
+[health.http_get]
+path = "/health"
+port = 18789
+
+[entrypoint]
+cmd = "node"
+args = ["dist/index.js"]
+
+[metadata]
+description = "OpenClaw autonomous AI agent"
+homepage = "https://github.com/openclaw/openclaw"

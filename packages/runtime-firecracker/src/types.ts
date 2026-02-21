@@ -137,4 +137,11 @@ export interface FirecrackerConfig {
 	 * @default "None"
 	 */
 	cpuTemplate?: CpuTemplate;
+	/**
+	 * Base directory where rootfs images are stored.
+	 * Image refs are resolved to paths within this directory:
+	 * `alpine/openclaw:main` → `<imagesDir>/alpine/openclaw/main/rootfs.ext4`
+	 * @example "/var/lib/boilerhouse/images"
+	 */
+	imagesDir: string;
 }

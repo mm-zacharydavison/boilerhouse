@@ -55,6 +55,33 @@ export function instanceRoutes(deps: RouteDeps) {
 				createdAt: row.createdAt.toISOString(),
 			};
 		})
+		.get("/instances/:id/endpoint", async ({ params, set }) => {
+			const instanceId = params.id as InstanceId;
+			const row = db
+				.select()
+				.from(instances)
+				.where(eq(instances.instanceId, instanceId))
+				.get();
+
+			if (!row) {
+				set.status = 404;
+				return { error: `Instance '${params.id}' not found` };
+			}
+
+			if (row.status === "destroyed" || row.status === "hibernated") {
+				set.status = 409;
+				return { error: `Instance '${params.id}' is ${row.status}` };
+			}
+
+			const handle = { instanceId, running: true };
+			const endpoint = await deps.runtime.getEndpoint(handle);
+
+			return {
+				instanceId,
+				status: row.status,
+				endpoint,
+			};
+		})
 		.post("/instances/:id/stop", async ({ params, set }) => {
 			const instanceId = params.id as InstanceId;
 			const row = db

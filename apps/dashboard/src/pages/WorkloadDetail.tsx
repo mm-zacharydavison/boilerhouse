@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useApi } from "../hooks";
-import { api } from "../api";
-import { LoadingState, ErrorState, PageHeader, InfoCard, BackLink } from "../components";
+import { api, type ClaimResult } from "../api";
+import { LoadingState, ErrorState, PageHeader, InfoCard, BackLink, ActionButton } from "../components";
 
 export function WorkloadDetail({
 	name,
@@ -10,6 +11,26 @@ export function WorkloadDetail({
 	navigate: (path: string) => void;
 }) {
 	const { data, loading, error } = useApi(() => api.fetchWorkload(name));
+
+	const [tenantId, setTenantId] = useState("");
+	const [claiming, setClaiming] = useState(false);
+	const [claimResult, setClaimResult] = useState<ClaimResult | null>(null);
+	const [claimError, setClaimError] = useState<string | null>(null);
+
+	async function handleClaim() {
+		if (!tenantId.trim() || !data) return;
+		setClaiming(true);
+		setClaimResult(null);
+		setClaimError(null);
+		try {
+			const result = await api.claimWorkload(tenantId.trim(), data.name);
+			setClaimResult(result);
+		} catch (err) {
+			setClaimError(err instanceof Error ? err.message : "Claim failed");
+		} finally {
+			setClaiming(false);
+		}
+	}
 
 	if (loading) return <LoadingState />;
 	if (error) return <ErrorState message={error} />;
@@ -27,6 +48,51 @@ export function WorkloadDetail({
 				<InfoCard label="Instances" value={String(data.instanceCount)} />
 				<InfoCard label="Created" value={new Date(data.createdAt).toLocaleString()} />
 				<InfoCard label="Updated" value={new Date(data.updatedAt).toLocaleString()} />
+			</div>
+
+			{/* Claim section */}
+			<div className="mb-6">
+				<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
+					Claim for Tenant
+				</h3>
+				<div className="flex items-center gap-2">
+					<input
+						type="text"
+						placeholder="tenant-id"
+						value={tenantId}
+						onChange={(e) => setTenantId(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") handleClaim();
+						}}
+						className="bg-surface-2 border border-border rounded-md px-3 py-1 text-sm font-mono text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-status-blue"
+					/>
+					<ActionButton
+						label={claiming ? "claiming…" : "claim"}
+						variant="info"
+						disabled={claiming || !tenantId.trim()}
+						onClick={handleClaim}
+					/>
+				</div>
+
+				{claimError && (
+					<p className="mt-2 text-sm text-status-red">{claimError}</p>
+				)}
+
+				{claimResult && (
+					<div className="mt-2 text-sm text-muted-light space-y-1">
+						<p>
+							Instance:{" "}
+							<a
+								href={`#/instances/${claimResult.instanceId}`}
+								className="text-status-blue hover:underline font-mono"
+							>
+								{claimResult.instanceId}
+							</a>
+						</p>
+						<p>Source: {claimResult.source}</p>
+						<p>Latency: {claimResult.latencyMs}ms</p>
+					</div>
+				)}
 			</div>
 
 			{data.config != null && (

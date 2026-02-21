@@ -105,6 +105,7 @@ describe.skipIf(!INTEGRATION)("FirecrackerRuntime integration", () => {
 			kernelPath,
 			snapshotDir: join(tmpDir, "snapshots"),
 			instanceDir: join(tmpDir, "instances"),
+			imagesDir: join(tmpDir, "images"),
 			nodeId: "test-node" as NodeId,
 			tapManager,
 			bootArgs: "console=ttyS0 reboot=k panic=1 pci=off",

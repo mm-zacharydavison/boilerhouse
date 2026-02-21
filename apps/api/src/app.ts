@@ -6,6 +6,7 @@ import { workloadRoutes } from "./routes/workloads";
 import { instanceRoutes } from "./routes/instances";
 import { tenantRoutes } from "./routes/tenants";
 import { nodeRoutes } from "./routes/nodes";
+import { snapshotRoutes } from "./routes/snapshots";
 import { wsPlugin } from "./routes/ws";
 
 export function createApp(deps: RouteDeps) {
@@ -17,7 +18,8 @@ export function createApp(deps: RouteDeps) {
 				.use(workloadRoutes(deps))
 				.use(instanceRoutes(deps))
 				.use(tenantRoutes(deps))
-				.use(nodeRoutes(deps)),
+				.use(nodeRoutes(deps))
+				.use(snapshotRoutes(deps)),
 		)
 		.use(wsPlugin(deps));
 }

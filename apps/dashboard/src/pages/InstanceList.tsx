@@ -8,12 +8,14 @@ import {
 	ActionButton,
 	DataTable,
 	DataRow,
+	ConnectionModal,
 } from "../components";
 
-const STATUSES = ["", "starting", "running", "hibernated", "stopping", "destroyed"] as const;
+const STATUSES = ["", "starting", "active", "hibernated", "stopping", "destroying", "destroyed"] as const;
 
 export function InstanceList({ navigate }: { navigate: (path: string) => void }) {
 	const [statusFilter, setStatusFilter] = useState("");
+	const [connectInstanceId, setConnectInstanceId] = useState<string | null>(null);
 	const fetcher = useCallback(
 		() => api.fetchInstances(statusFilter || undefined),
 		[statusFilter],
@@ -85,8 +87,13 @@ export function InstanceList({ navigate }: { navigate: (path: string) => void })
 							<td className="px-4 py-3">
 								{inst.status !== "destroyed" && (
 									<div className="flex gap-1">
-										{inst.status === "running" && (
+										{inst.status === "active" && (
 											<>
+												<ActionButton
+													label="connect"
+													variant="info"
+													onClick={() => setConnectInstanceId(inst.instanceId)}
+												/>
 												<ActionButton
 													label="stop"
 													variant="warning"
@@ -110,6 +117,13 @@ export function InstanceList({ navigate }: { navigate: (path: string) => void })
 						</DataRow>
 					))}
 				</DataTable>
+			)}
+
+			{connectInstanceId && (
+				<ConnectionModal
+					instanceId={connectInstanceId}
+					onClose={() => setConnectInstanceId(null)}
+				/>
 			)}
 		</div>
 	);

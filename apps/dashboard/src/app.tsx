@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Flame, Package, Server, Users, HardDrive } from "lucide-react";
+import { Flame, Package, Server, Users, HardDrive, Camera } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
@@ -9,11 +9,13 @@ import { InstanceList } from "./pages/InstanceList";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { TenantList } from "./pages/TenantList";
 import { NodeList } from "./pages/NodeList";
+import { SnapshotList } from "./pages/SnapshotList";
 
 const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/workloads", label: "workloads", icon: Package },
 	{ path: "/instances", label: "instances", icon: Server },
 	{ path: "/tenants", label: "tenants", icon: Users },
+	{ path: "/snapshots", label: "snapshots", icon: Camera },
 	{ path: "/nodes", label: "nodes", icon: HardDrive },
 ];
 
@@ -40,6 +42,8 @@ function App() {
 		content = <InstanceDetail key={`${params.id}-${tick}`} id={params.id!} />;
 	} else if (path === "/tenants") {
 		content = <TenantList key={tick} />;
+	} else if (path === "/snapshots") {
+		content = <SnapshotList key={tick} />;
 	} else if (path === "/nodes") {
 		content = <NodeList key={tick} />;
 	} else {

@@ -24,6 +24,22 @@ async function post<T>(path: string): Promise<T> {
 	return res.json() as Promise<T>;
 }
 
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+	const res = await fetch(`${BASE}${path}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		const resBody = await res.json().catch(() => null);
+		throw new Error(
+			(resBody as { error?: string } | null)?.error ??
+				`HTTP ${res.status}: ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<T>;
+}
+
 // --- Types matching API responses ---
 
 export interface StatsResponse {
@@ -95,6 +111,34 @@ export interface NodeDetail extends NodeSummary {
 	instanceCount: number;
 }
 
+export interface InstanceEndpoint {
+	instanceId: string;
+	status: string;
+	endpoint: { host: string; port: number };
+}
+
+export interface SnapshotSummary {
+	snapshotId: string;
+	/** @example "golden" */
+	type: "golden" | "tenant";
+	instanceId: string;
+	tenantId: string | null;
+	workloadId: string;
+	nodeId: string;
+	sizeBytes: number;
+	createdAt: string;
+}
+
+export interface ClaimResult {
+	tenantId: string;
+	instanceId: string;
+	/** @example { host: "10.0.0.1", port: 8080 } */
+	endpoint: { host: string; port: number };
+	/** @example "warm" */
+	source: string;
+	latencyMs: number;
+}
+
 // --- API methods ---
 
 export const api = {
@@ -104,12 +148,20 @@ export const api = {
 
 	fetchWorkload: (name: string) => get<WorkloadDetail>(`/workloads/${encodeURIComponent(name)}`),
 
+	fetchSnapshots: () => get<SnapshotSummary[]>("/snapshots"),
+
+	fetchWorkloadSnapshots: (name: string) =>
+		get<SnapshotSummary[]>(`/workloads/${encodeURIComponent(name)}/snapshots`),
+
 	fetchInstances: (status?: string) => {
 		const qs = status ? `?status=${encodeURIComponent(status)}` : "";
 		return get<InstanceSummary[]>(`/instances${qs}`);
 	},
 
 	fetchInstance: (id: string) => get<InstanceDetail>(`/instances/${encodeURIComponent(id)}`),
+
+	fetchInstanceEndpoint: (id: string) =>
+		get<InstanceEndpoint>(`/instances/${encodeURIComponent(id)}/endpoint`),
 
 	fetchTenants: () => get<TenantSummary[]>("/tenants"),
 
@@ -131,4 +183,9 @@ export const api = {
 		post<{ instanceId: string; status: string }>(
 			`/instances/${encodeURIComponent(id)}/destroy`,
 		),
+
+	claimWorkload: (tenantId: string, workloadName: string) =>
+		postJson<ClaimResult>(`/tenants/${encodeURIComponent(tenantId)}/claim`, {
+			workload: workloadName,
+		}),
 };

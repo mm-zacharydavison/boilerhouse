@@ -42,6 +42,25 @@ describe("POST /api/v1/workloads", () => {
 		expect(body.workloadId).toBeDefined();
 	});
 
+	test("creates a golden snapshot on registration", async () => {
+		const { app, db } = createTestApp();
+
+		const res = await apiRequest(app, "/api/v1/workloads", {
+			method: "POST",
+			body: VALID_TOML,
+			headers: { "content-type": "text/plain" },
+		});
+
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.goldenSnapshotId).toBeDefined();
+
+		const snapshotRows = db.select().from(snapshots).all();
+		expect(snapshotRows).toHaveLength(1);
+		expect(snapshotRows[0]!.type).toBe("golden");
+		expect(snapshotRows[0]!.snapshotId).toBe(body.goldenSnapshotId);
+	});
+
 	test("returns 400 for invalid TOML", async () => {
 		const { app } = createTestApp();
 
@@ -153,6 +172,63 @@ describe("GET /api/v1/workloads/:name", () => {
 		const { app } = createTestApp();
 		const res = await apiRequest(app, "/api/v1/workloads/nonexistent");
 
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("GET /api/v1/workloads/:name/snapshots", () => {
+	test("returns empty list when no snapshots", async () => {
+		const { app, db } = createTestApp();
+
+		const workloadId = generateWorkloadId();
+		db.insert(workloads)
+			.values({
+				workloadId,
+				name: "no-snaps",
+				version: "1.0.0",
+				config: MINIMAL_WORKLOAD,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.run();
+
+		const res = await apiRequest(app, "/api/v1/workloads/no-snaps/snapshots");
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual([]);
+	});
+
+	test("returns snapshots for workload", async () => {
+		const { app, db, snapshotManager } = createTestApp();
+
+		const workloadId = generateWorkloadId();
+		db.insert(workloads)
+			.values({
+				workloadId,
+				name: "snap-list",
+				version: "1.0.0",
+				config: MINIMAL_WORKLOAD,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.run();
+
+		await snapshotManager.createGolden(workloadId, MINIMAL_WORKLOAD);
+
+		const res = await apiRequest(app, "/api/v1/workloads/snap-list/snapshots");
+		const body = await res.json();
+
+		expect(res.status).toBe(200);
+		expect(body).toHaveLength(1);
+		expect(body[0].type).toBe("golden");
+		expect(body[0].snapshotId).toBeDefined();
+		expect(body[0].tenantId).toBeNull();
+		expect(body[0].sizeBytes).toBeDefined();
+		expect(body[0].createdAt).toBeDefined();
+	});
+
+	test("returns 404 for nonexistent workload", async () => {
+		const { app } = createTestApp();
+		const res = await apiRequest(app, "/api/v1/workloads/nope/snapshots");
 		expect(res.status).toBe(404);
 	});
 });

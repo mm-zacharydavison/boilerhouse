@@ -282,7 +282,7 @@ export class FirecrackerRuntime implements Runtime {
 			);
 		}
 
-		// Create new TAP device
+		// Create TAP device
 		const tapDevice = await this.config.tapManager.create(instanceId);
 
 		// Spawn new Firecracker process
@@ -298,7 +298,7 @@ export class FirecrackerRuntime implements Runtime {
 
 		const client = new FirecrackerClient(socketPath);
 
-		// Configure drives and network (required before snapshot load)
+		// Configure drives (required before snapshot load)
 		await client.putDrive("rootfs", {
 			drive_id: "rootfs",
 			path_on_host: instanceRootfs,
@@ -357,6 +357,10 @@ export class FirecrackerRuntime implements Runtime {
 		return { host: guestIp, port };
 	}
 
+	async list(): Promise<InstanceId[]> {
+		return Array.from(this.instances.keys()) as InstanceId[];
+	}
+
 	async available(): Promise<boolean> {
 		const hasBinary = existsSync(this.config.binaryPath);
 		const hasKvm = existsSync("/dev/kvm");
@@ -372,14 +376,23 @@ export class FirecrackerRuntime implements Runtime {
 	}
 
 	private resolveRootfsPath(workload: Workload): string {
-		// The rootfs path is derived from the image reference.
-		// In production, the build pipeline produces rootfs images at a known location.
-		// For now, use the image ref directly as the path.
-		if (workload.image.ref) {
-			return workload.image.ref;
+		if (!workload.image.ref) {
+			throw new FirecrackerError(
+				"Workload must have an image.ref pointing to the rootfs",
+			);
 		}
-		throw new FirecrackerError(
-			"Workload must have an image.ref pointing to the rootfs path",
-		);
+
+		// Map image ref to a filesystem path inside imagesDir.
+		// "alpine/openclaw:main" → "<imagesDir>/alpine/openclaw/main/rootfs.ext4"
+		const refPath = workload.image.ref.replace(/:/g, "/");
+		const rootfsPath = join(this.config.imagesDir, refPath, "rootfs.ext4");
+
+		if (!existsSync(rootfsPath)) {
+			throw new FirecrackerError(
+				`Rootfs not found for image '${workload.image.ref}' at ${rootfsPath}`,
+			);
+		}
+
+		return rootfsPath;
 	}
 }

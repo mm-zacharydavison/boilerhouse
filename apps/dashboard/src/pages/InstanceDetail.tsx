@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useApi } from "../hooks";
 import { api } from "../api";
 import {
@@ -7,10 +8,12 @@ import {
 	BackLink,
 	StatusIndicator,
 	ActionButton,
+	ConnectionModal,
 } from "../components";
 
 export function InstanceDetail({ id }: { id: string }) {
 	const { data, loading, error, refetch } = useApi(() => api.fetchInstance(id));
+	const [showConnect, setShowConnect] = useState(false);
 
 	async function handleAction(action: "stop" | "hibernate" | "destroy") {
 		try {
@@ -38,8 +41,13 @@ export function InstanceDetail({ id }: { id: string }) {
 
 			{data.status !== "destroyed" && (
 				<div className="flex gap-2 mb-6">
-					{data.status === "running" && (
+					{data.status === "active" && (
 						<>
+							<ActionButton
+								label="connect"
+								variant="info"
+								onClick={() => setShowConnect(true)}
+							/>
 							<ActionButton
 								label="stop"
 								variant="warning"
@@ -85,6 +93,13 @@ export function InstanceDetail({ id }: { id: string }) {
 						{JSON.stringify(data.runtimeMeta, null, 2)}
 					</pre>
 				</div>
+			)}
+
+			{showConnect && (
+				<ConnectionModal
+					instanceId={data.instanceId}
+					onClose={() => setShowConnect(false)}
+				/>
 			)}
 		</div>
 	);
