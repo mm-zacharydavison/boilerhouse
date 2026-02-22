@@ -3,7 +3,7 @@ name = "minimal"
 version = "0.1.0"
 
 [image]
-ref = "firecracker-minimal:latest"
+dockerfile = "minimal/Dockerfile"
 
 [resources]
 vcpus = 1

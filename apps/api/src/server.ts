@@ -22,6 +22,7 @@ import { TenantDataStore } from "./tenant-data";
 import { IdleMonitor } from "./idle-monitor";
 import { EventBus } from "./event-bus";
 import { GoldenCreator } from "./golden-creator";
+import { OciImageBuilder } from "./image-builder";
 import { createApp } from "./app";
 import { recoverState } from "./recovery";
 import type { RecoveryOptions } from "./recovery";
@@ -186,7 +187,8 @@ const recoverySummary = [
 ].join(", ");
 console.log(`Recovery: ${recoverySummary}`);
 
-const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus);
+const imageBuilder = new OciImageBuilder(imagesDir, { workloadsDir });
+const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, imageBuilder);
 
 // Enqueue golden snapshot creation for workloads that need it
 {

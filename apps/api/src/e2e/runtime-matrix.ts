@@ -94,7 +94,7 @@ const firecrackerEntry: RuntimeEntry = {
 	capabilities: {
 		snapshot: true,
 		exec: false,
-		networking: false,
+		networking: true,
 		concurrentRestore: false,
 	},
 	workloadFixture: fixturePath("workload-firecracker.toml"),

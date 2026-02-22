@@ -14,6 +14,7 @@
       "name": "@boilerhouse/api",
       "version": "0.0.1",
       "dependencies": {
+        "@boilerhouse/build": "workspace:*",
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/db": "workspace:*",
         "@boilerhouse/runtime-firecracker": "workspace:*",

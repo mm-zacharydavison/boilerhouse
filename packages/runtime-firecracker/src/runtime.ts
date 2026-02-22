@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, symlinkSync, unlinkSync, rmdirSync } from "node:fs";
 import {
 	generateSnapshotId,
+	resolveImagePath,
 	type InstanceId,
 	type SnapshotId,
 	type WorkloadId,
@@ -56,6 +57,20 @@ const DEFAULT_BOOT_ARGS = "console=ttyS0 reboot=k panic=1 pci=off";
  */
 function buildBootArgs(baseArgs: string, guestIp: string, gatewayIp: string): string {
 	return `${baseArgs} ip=${guestIp}::${gatewayIp}:255.255.255.252::eth0:off`;
+}
+
+/**
+ * Splits the workload entrypoint into kernel-side and init-side boot args.
+ * The kernel `--` separator must come AFTER all kernel params (like `ip=`),
+ * because the kernel passes everything after `--` as argv to init.
+ */
+function buildEntrypointBootArgs(workload: Workload): { kernelArgs: string; initArgs: string } {
+	if (!workload.entrypoint) return { kernelArgs: "", initArgs: "" };
+	const parts = [workload.entrypoint.cmd, ...(workload.entrypoint.args ?? [])];
+	return {
+		kernelArgs: " init=/opt/boilerhouse/init",
+		initArgs: ` -- ${parts.join(" ")}`,
+	};
 }
 
 /** Derives the guest IP (.2) from a TAP host IP (.1) in a /30 subnet. */
@@ -294,11 +309,9 @@ export class FirecrackerRuntime implements Runtime {
 		const client = new FirecrackerClient(socketPath);
 
 		const guestIp = deriveGuestIp(tapDevice.ip);
-		const bootArgs = buildBootArgs(
-			this.config.bootArgs ?? DEFAULT_BOOT_ARGS,
-			guestIp,
-			tapDevice.ip,
-		);
+		const entrypoint = buildEntrypointBootArgs(workload);
+		const baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+		const bootArgs = buildBootArgs(baseArgs, guestIp, tapDevice.ip) + entrypoint.initArgs;
 
 		await client.putBootSource({
 			kernel_image_path: this.config.kernelPath,
@@ -528,11 +541,9 @@ export class FirecrackerRuntime implements Runtime {
 		const client = new FirecrackerClient(process.socketPath);
 
 		// Inside the chroot, paths are relative
-		const bootArgs = buildBootArgs(
-			this.config.bootArgs ?? DEFAULT_BOOT_ARGS,
-			netnsHandle.guestIp,
-			netnsHandle.tapIp,
-		);
+		const entrypoint = buildEntrypointBootArgs(workload);
+		const baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+		const bootArgs = buildBootArgs(baseArgs, netnsHandle.guestIp, netnsHandle.tapIp) + entrypoint.initArgs;
 
 		await client.putBootSource({
 			kernel_image_path: jailPaths.kernelRelative,
@@ -722,20 +733,12 @@ export class FirecrackerRuntime implements Runtime {
 	}
 
 	private resolveRootfsPath(workload: Workload): string {
-		if (!workload.image.ref) {
-			throw new FirecrackerError(
-				"Workload must have an image.ref pointing to the rootfs",
-			);
-		}
-
-		// Map image ref to a filesystem path inside imagesDir.
-		// "alpine/openclaw:main" → "<imagesDir>/alpine/openclaw/main/rootfs.ext4"
-		const refPath = workload.image.ref.replace(/:/g, "/");
-		const rootfsPath = join(this.config.imagesDir, refPath, "rootfs.ext4");
+		const rootfsPath = resolveImagePath(this.config.imagesDir, workload);
 
 		if (!existsSync(rootfsPath)) {
+			const imageSource = workload.image.ref ?? workload.image.dockerfile ?? "unknown";
 			throw new FirecrackerError(
-				`Rootfs not found for image '${workload.image.ref}' at ${rootfsPath}`,
+				`Rootfs not found for image '${imageSource}' at ${rootfsPath}`,
 			);
 		}
 

@@ -4,6 +4,7 @@ import type { DrizzleDb } from "@boilerhouse/db";
 import { workloads } from "@boilerhouse/db";
 import type { SnapshotManager } from "./snapshot-manager";
 import type { EventBus } from "./event-bus";
+import type { ImageBuilder } from "./image-builder";
 import { WorkloadActor } from "./actors";
 
 interface QueueItem {
@@ -19,6 +20,7 @@ export class GoldenCreator {
 		private readonly db: DrizzleDb,
 		private readonly snapshotManager: SnapshotManager,
 		private readonly eventBus: EventBus,
+		private readonly imageBuilder?: ImageBuilder,
 	) {}
 
 	/** Enqueue a workload for background golden snapshot creation. */
@@ -64,6 +66,10 @@ export class GoldenCreator {
 		const actor = new WorkloadActor(this.db, item.workloadId);
 
 		try {
+			if (this.imageBuilder) {
+				await this.imageBuilder.ensureRootfs(item.workload);
+			}
+
 			await this.snapshotManager.createGolden(item.workloadId, item.workload);
 			actor.send("created");
 

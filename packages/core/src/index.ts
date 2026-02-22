@@ -121,3 +121,5 @@ export {
 	WORKLOAD_EVENTS,
 	workloadTransition,
 } from "./workload-state";
+
+export { resolveImagePath } from "./image-path";

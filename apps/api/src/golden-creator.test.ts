@@ -18,6 +18,7 @@ import {
 import { SnapshotManager } from "./snapshot-manager";
 import { EventBus, type DomainEvent } from "./event-bus";
 import { GoldenCreator } from "./golden-creator";
+import type { ImageBuilder } from "./image-builder";
 
 const MINIMAL_WORKLOAD: Workload = {
 	workload: { name: "test", version: "1.0.0" },
@@ -191,6 +192,53 @@ describe("GoldenCreator", () => {
 
 		expect(creator.pending).toBe(0);
 		expect(creator.isProcessing).toBe(false);
+	});
+
+	test("calls imageBuilder.ensureRootfs before creating golden snapshot", async () => {
+		const calls: Workload[] = [];
+		const imageBuilder: ImageBuilder = {
+			ensureRootfs: async (workload) => {
+				calls.push(workload);
+			},
+		};
+		const creator = new GoldenCreator(db, snapshotManager, eventBus, imageBuilder);
+		const workloadId = seedWorkload();
+
+		creator.enqueue(workloadId, MINIMAL_WORKLOAD);
+		await waitForIdle(creator);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.image.ref).toBe("test:latest");
+
+		// Snapshot should still be created
+		const snapshotRows = db.select().from(snapshots).all();
+		expect(snapshotRows.length).toBe(1);
+	});
+
+	test("transitions to error when imageBuilder.ensureRootfs fails", async () => {
+		const imageBuilder: ImageBuilder = {
+			ensureRootfs: async () => {
+				throw new Error("docker pull failed");
+			},
+		};
+		const creator = new GoldenCreator(db, snapshotManager, eventBus, imageBuilder);
+		const workloadId = seedWorkload();
+
+		creator.enqueue(workloadId, MINIMAL_WORKLOAD);
+		await waitForIdle(creator);
+
+		const row = db
+			.select()
+			.from(workloads)
+			.where(eq(workloads.workloadId, workloadId))
+			.get();
+		expect(row!.status).toBe("error");
+		expect(row!.statusDetail).toBe("docker pull failed");
+
+		expect(events).toHaveLength(1);
+		if (events[0]!.type === "workload.state") {
+			expect(events[0]!.status).toBe("error");
+		}
 	});
 });
 

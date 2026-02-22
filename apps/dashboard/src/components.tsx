@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { api, type InstanceEndpoint } from "./api";
+import { ClipboardCopy, Check } from "lucide-react";
 
 // --- Status Indicator ---
 
@@ -35,12 +36,71 @@ const STATUS_COLORS: Record<string, string> = {
 export function StatusIndicator({ status, detail }: { status: string; detail?: string }) {
 	const symbol = STATUS_SYMBOLS[status] ?? "●";
 	const color = STATUS_COLORS[status] ?? "text-muted";
+	const hasErrorDetail = status === "error" && !!detail;
+	const [showModal, setShowModal] = useState(false);
+
+	if (hasErrorDetail) {
+		return (
+			<>
+				<span
+					className={`font-mono text-sm leading-none ${color} cursor-pointer hover:opacity-80 transition-opacity`}
+					title="Click to view error details"
+					onClick={(e) => {
+						e.stopPropagation();
+						setShowModal(true);
+					}}
+				>
+					{symbol}
+				</span>
+				{showModal && (
+					<ErrorDetailModal
+						detail={detail}
+						onClose={() => setShowModal(false)}
+					/>
+				)}
+			</>
+		);
+	}
+
 	const tooltip = detail ? `${status}: ${detail}` : status;
 
 	return (
 		<span className={`font-mono text-sm leading-none ${color} cursor-default`} title={tooltip}>
 			{symbol}
 		</span>
+	);
+}
+
+// --- Error Detail Modal ---
+
+function ErrorDetailModal({ detail, onClose }: { detail: string; onClose: () => void }) {
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = useCallback(async () => {
+		await navigator.clipboard.writeText(detail);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	}, [detail]);
+
+	return (
+		<Modal title="Error Details" onClose={onClose}>
+			<div className="space-y-3">
+				<pre className="bg-surface-2 rounded-md p-3 text-sm font-mono text-status-red whitespace-pre-wrap break-words max-h-80 overflow-y-auto select-all">
+					{detail}
+				</pre>
+				<button
+					onClick={handleCopy}
+					className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border transition-colors ${
+						copied
+							? "text-status-green border-status-green/30 bg-status-green/10"
+							: "text-muted-light border-border hover:bg-surface-3"
+					}`}
+				>
+					{copied ? <Check size={13} /> : <ClipboardCopy size={13} />}
+					{copied ? "copied" : "copy to clipboard"}
+				</button>
+			</div>
+		</Modal>
 	);
 }
 
