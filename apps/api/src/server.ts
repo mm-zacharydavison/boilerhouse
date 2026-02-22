@@ -24,6 +24,7 @@ import { IdleMonitor } from "./idle-monitor";
 import { EventBus } from "./event-bus";
 import { GoldenCreator } from "./golden-creator";
 import { OciImageBuilder } from "./image-builder";
+import { BuildLogStore } from "./build-log-store";
 import { createApp } from "./app";
 import { recoverState } from "./recovery";
 import type { RecoveryOptions } from "./recovery";
@@ -214,7 +215,8 @@ const imageBuilder = new OciImageBuilder(imagesDir, {
 		overlayInitPath: join(guestInitDir, "overlay-init.sh"),
 	},
 });
-const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, imageBuilder);
+const buildLogStore = new BuildLogStore(db);
+const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, imageBuilder, buildLogStore);
 
 // Enqueue golden snapshot creation for workloads that need it
 {
@@ -248,6 +250,7 @@ const app = createApp({
 	snapshotManager,
 	eventBus,
 	goldenCreator,
+	buildLogStore,
 	resourceLimiter,
 });
 

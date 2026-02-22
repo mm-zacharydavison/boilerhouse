@@ -167,6 +167,23 @@ export const activityLog = sqliteTable(
 	],
 );
 
+// ── build_logs ──────────────────────────────────────────────────────────────
+
+export const buildLogs = sqliteTable(
+	"build_logs",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		workloadId: text("workload_id")
+			.notNull()
+			.$type<WorkloadId>(),
+		text: text("text").notNull(),
+		createdAt: timestamp("created_at").notNull(),
+	},
+	(table) => [
+		index("build_logs_workload_id_idx").on(table.workloadId),
+	],
+);
+
 // ── Row types (inferred from schema) ─────────────────────────────────────────
 
 export type NodeRow = typeof nodes.$inferSelect;
@@ -187,6 +204,9 @@ export type TenantInsert = typeof tenants.$inferInsert;
 export type ActivityLogRow = typeof activityLog.$inferSelect;
 export type ActivityLogInsert = typeof activityLog.$inferInsert;
 
+export type BuildLogRow = typeof buildLogs.$inferSelect;
+export type BuildLogInsert = typeof buildLogs.$inferInsert;
+
 // ── Schema bundle (for drizzle() calls) ──────────────────────────────────────
 
 export const schema = {
@@ -196,4 +216,5 @@ export const schema = {
 	snapshots,
 	tenants,
 	activityLog,
+	buildLogs,
 };

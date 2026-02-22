@@ -5,6 +5,7 @@ import { workloads } from "@boilerhouse/db";
 import type { SnapshotManager } from "./snapshot-manager";
 import type { EventBus } from "./event-bus";
 import type { ImageBuilder } from "./image-builder";
+import type { BuildLogStore } from "./build-log-store";
 import { applyWorkloadTransition } from "./transitions";
 
 export class GoldenCreator {
@@ -17,11 +18,13 @@ export class GoldenCreator {
 		private readonly snapshotManager: SnapshotManager,
 		private readonly eventBus: EventBus,
 		private readonly imageBuilder?: ImageBuilder,
+		private readonly buildLogStore?: BuildLogStore,
 	) {}
 
 	/** Enqueue a workload for background golden snapshot creation. */
 	enqueue(workloadId: WorkloadId, workload: Workload): void {
 		if (this.queue.has(workloadId)) return;
+		this.buildLogStore?.clear(workloadId);
 		this.queue.set(workloadId, workload);
 		if (!this.processing) {
 			this.processQueue();
@@ -61,13 +64,27 @@ export class GoldenCreator {
 	}
 
 	private async processItem(workloadId: WorkloadId, workload: Workload): Promise<void> {
+		const onLog = (line: string): void => {
+			if (this.buildLogStore) {
+				const entry = this.buildLogStore.append(workloadId, line);
+				this.eventBus.emit({
+					type: "build.log",
+					workloadId,
+					line,
+					timestamp: entry.timestamp,
+				});
+			}
+		};
+
 		try {
 			if (this.imageBuilder) {
-				await this.imageBuilder.ensureRootfs(workload);
+				await this.imageBuilder.ensureRootfs(workload, onLog);
 			}
 
-			await this.snapshotManager.createGolden(workloadId, workload);
+			onLog("Creating golden snapshot...");
+			await this.snapshotManager.createGolden(workloadId, workload, onLog);
 			applyWorkloadTransition(this.db, workloadId, "creating", "created");
+			onLog("Golden snapshot ready.");
 
 			this.eventBus.emit({
 				type: "workload.state",
@@ -78,6 +95,7 @@ export class GoldenCreator {
 			console.log(`GoldenCreator: golden snapshot ready for workload ${workloadId}`);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
+			onLog(`ERROR: ${message}`);
 			console.error(
 				`GoldenCreator: failed to create golden snapshot for workload ${workloadId}: ${message}`,
 			);

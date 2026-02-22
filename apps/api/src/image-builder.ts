@@ -15,16 +15,16 @@ import type { InjectConfig } from "@boilerhouse/build";
 
 /** Injectable build functions for testing. */
 export interface ImageBuildFns {
-	pullImage: (ref: string) => Promise<void>;
+	pullImage: (ref: string, onLog?: (line: string) => void) => Promise<void>;
 	exportFilesystem: (ref: string, tarPath: string) => Promise<void>;
-	buildImage: (dockerfile: string, tarPath: string) => Promise<void>;
-	createExt4: (tarPath: string, outputPath: string, sizeGb: number) => Promise<void>;
-	injectInit: (ext4Path: string, config: InjectConfig) => Promise<void>;
+	buildImage: (dockerfile: string, tarPath: string, onLog?: (line: string) => void) => Promise<void>;
+	createExt4: (tarPath: string, outputPath: string, sizeGb: number, onLog?: (line: string) => void) => Promise<void>;
+	injectInit: (ext4Path: string, config: InjectConfig, onLog?: (line: string) => void) => Promise<void>;
 }
 
 /** Ensures rootfs images exist before VM creation. */
 export interface ImageBuilder {
-	ensureRootfs(workload: Workload): Promise<void>;
+	ensureRootfs(workload: Workload, onLog?: (line: string) => void): Promise<void>;
 }
 
 export interface OciImageBuilderOptions {
@@ -72,13 +72,14 @@ export class OciImageBuilder implements ImageBuilder {
 		this.initConfig = options?.initConfig;
 	}
 
-	async ensureRootfs(workload: Workload): Promise<void> {
+	async ensureRootfs(workload: Workload, onLog?: (line: string) => void): Promise<void> {
 		const rootfsPath = resolveImagePath(this.imagesDir, workload);
+		const log = onLog ?? (() => {});
 
 		if (existsSync(rootfsPath)) return;
 
 		const imageSource = workload.image.ref ?? workload.image.dockerfile!;
-		console.log(`ImageBuilder: building rootfs for '${imageSource}'...`);
+		log(`Building rootfs for '${imageSource}'...`);
 
 		mkdirSync(dirname(rootfsPath), { recursive: true });
 
@@ -88,7 +89,9 @@ export class OciImageBuilder implements ImageBuilder {
 			const tarPath = join(tmpDir, "filesystem.tar");
 
 			if (workload.image.ref) {
-				await this.fns.pullImage(workload.image.ref);
+				log(`Pulling image ${workload.image.ref}...`);
+				await this.fns.pullImage(workload.image.ref, onLog);
+				log("Exporting filesystem...");
 				await this.fns.exportFilesystem(workload.image.ref, tarPath);
 			} else if (workload.image.dockerfile) {
 				if (!this.workloadsDir) {
@@ -97,16 +100,19 @@ export class OciImageBuilder implements ImageBuilder {
 					);
 				}
 				const dockerfilePath = resolve(this.workloadsDir, workload.image.dockerfile);
-				await this.fns.buildImage(dockerfilePath, tarPath);
+				log(`Building from Dockerfile: ${workload.image.dockerfile}...`);
+				await this.fns.buildImage(dockerfilePath, tarPath, onLog);
 			}
 
-			await this.fns.createExt4(tarPath, rootfsPath, workload.resources.disk_gb);
+			log("Creating ext4 image...");
+			await this.fns.createExt4(tarPath, rootfsPath, workload.resources.disk_gb, onLog);
 
 			if (this.initConfig) {
-				await this.fns.injectInit(rootfsPath, this.initConfig);
+				log("Injecting init binaries...");
+				await this.fns.injectInit(rootfsPath, this.initConfig, onLog);
 			}
 
-			console.log(`ImageBuilder: rootfs ready at ${rootfsPath}`);
+			log(`Rootfs ready at ${rootfsPath}`);
 		} catch (err) {
 			// Clean up partial rootfs on failure
 			try {

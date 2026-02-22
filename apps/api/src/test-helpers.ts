@@ -8,6 +8,7 @@ import { TenantDataStore } from "./tenant-data";
 import { EventBus } from "./event-bus";
 import { ResourceLimiter } from "./resource-limits";
 import { GoldenCreator } from "./golden-creator";
+import { BuildLogStore } from "./build-log-store";
 import { createApp } from "./app";
 import type { RouteDeps } from "./routes/deps";
 
@@ -51,7 +52,8 @@ export function createTestApp(): TestContext {
 	);
 
 	const resourceLimiter = new ResourceLimiter(db, { maxInstances: 100 });
-	const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus);
+	const buildLogStore = new BuildLogStore(db);
+	const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, undefined, buildLogStore);
 
 	const deps: RouteDeps = {
 		db,
@@ -63,6 +65,7 @@ export function createTestApp(): TestContext {
 		snapshotManager,
 		eventBus,
 		goldenCreator,
+		buildLogStore,
 		resourceLimiter,
 	};
 

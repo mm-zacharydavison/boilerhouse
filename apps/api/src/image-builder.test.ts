@@ -37,12 +37,14 @@ function createMockFns(): ImageBuildFns & {
 	buildImageCalls: Array<{ dockerfile: string; tarPath: string }>;
 	createExt4Calls: Array<{ tarPath: string; outputPath: string; sizeGb: number }>;
 	injectInitCalls: Array<{ ext4Path: string }>;
+	logCallbacks: Array<((line: string) => void) | undefined>;
 } {
 	const pullCalls: string[] = [];
 	const exportCalls: Array<{ ref: string; tarPath: string }> = [];
 	const buildImageCalls: Array<{ dockerfile: string; tarPath: string }> = [];
 	const createExt4Calls: Array<{ tarPath: string; outputPath: string; sizeGb: number }> = [];
 	const injectInitCalls: Array<{ ext4Path: string }> = [];
+	const logCallbacks: Array<((line: string) => void) | undefined> = [];
 
 	return {
 		pullCalls,
@@ -50,22 +52,27 @@ function createMockFns(): ImageBuildFns & {
 		buildImageCalls,
 		createExt4Calls,
 		injectInitCalls,
-		pullImage: async (ref) => {
+		logCallbacks,
+		pullImage: async (ref, onLog?) => {
 			pullCalls.push(ref);
+			logCallbacks.push(onLog);
 		},
 		exportFilesystem: async (ref, tarPath) => {
 			exportCalls.push({ ref, tarPath });
 		},
-		buildImage: async (dockerfile, tarPath) => {
+		buildImage: async (dockerfile, tarPath, onLog?) => {
 			buildImageCalls.push({ dockerfile, tarPath });
+			logCallbacks.push(onLog);
 		},
-		createExt4: async (tarPath, outputPath, sizeGb) => {
+		createExt4: async (tarPath, outputPath, sizeGb, onLog?) => {
 			createExt4Calls.push({ tarPath, outputPath, sizeGb });
+			logCallbacks.push(onLog);
 			mkdirSync(join(outputPath, ".."), { recursive: true });
 			writeFileSync(outputPath, "fake-ext4");
 		},
-		injectInit: async (ext4Path) => {
+		injectInit: async (ext4Path, _config, onLog?) => {
 			injectInitCalls.push({ ext4Path });
+			logCallbacks.push(onLog);
 		},
 	};
 }
@@ -251,6 +258,49 @@ describe("OciImageBuilder", () => {
 			await builder.ensureRootfs(WORKLOAD);
 
 			expect(fns.injectInitCalls).toHaveLength(0);
+		});
+	});
+
+	describe("onLog callback", () => {
+		test("calls onLog with phase messages during build", async () => {
+			const imagesDir = join(tmpDir, "images");
+			const fns = createMockFns();
+			const builder = new OciImageBuilder(imagesDir, { fns });
+
+			const logLines: string[] = [];
+			await builder.ensureRootfs(WORKLOAD, (line) => logLines.push(line));
+
+			expect(logLines.length).toBeGreaterThan(0);
+			expect(logLines.some((l) => l.includes("Pulling image"))).toBe(true);
+			expect(logLines.some((l) => l.includes("Creating ext4"))).toBe(true);
+			expect(logLines.some((l) => l.includes("Rootfs ready"))).toBe(true);
+		});
+
+		test("does not call onLog when rootfs already exists", async () => {
+			const imagesDir = join(tmpDir, "images");
+			const rootfsDir = join(imagesDir, "alpine", "latest");
+			mkdirSync(rootfsDir, { recursive: true });
+			writeFileSync(join(rootfsDir, "rootfs.ext4"), "existing");
+
+			const fns = createMockFns();
+			const builder = new OciImageBuilder(imagesDir, { fns });
+
+			const logLines: string[] = [];
+			await builder.ensureRootfs(WORKLOAD, (line) => logLines.push(line));
+
+			expect(logLines).toHaveLength(0);
+		});
+
+		test("passes onLog through to build functions", async () => {
+			const imagesDir = join(tmpDir, "images");
+			const fns = createMockFns();
+			const builder = new OciImageBuilder(imagesDir, { fns });
+
+			const onLog = (_line: string) => {};
+			await builder.ensureRootfs(WORKLOAD, onLog);
+
+			// pullImage and createExt4 should have received onLog
+			expect(fns.logCallbacks.filter((cb) => cb === onLog).length).toBeGreaterThanOrEqual(2);
 		});
 	});
 });

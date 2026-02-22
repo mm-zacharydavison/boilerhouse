@@ -27,8 +27,8 @@ timeout_seconds = 600
 action = "hibernate"
 
 [health]
-interval_seconds = 10
-unhealthy_threshold = 3
+interval_seconds = 2
+unhealthy_threshold = 30
 
 [health.http_get]
 path = "/health"

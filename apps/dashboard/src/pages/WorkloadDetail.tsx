@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useApi } from "../hooks";
-import { api, type ClaimResult } from "../api";
+import { useState, useEffect, useRef } from "react";
+import { useApi, useWebSocket } from "../hooks";
+import { api, type ClaimResult, type BuildLogEntry } from "../api";
 import { LoadingState, ErrorState, PageHeader, InfoCard, BackLink, ActionButton, StatusIndicator } from "../components";
 
 export function WorkloadDetail({
@@ -16,6 +16,36 @@ export function WorkloadDetail({
 	const [claiming, setClaiming] = useState(false);
 	const [claimResult, setClaimResult] = useState<ClaimResult | null>(null);
 	const [claimError, setClaimError] = useState<string | null>(null);
+
+	const [buildLogs, setBuildLogs] = useState<BuildLogEntry[]>([]);
+	const logContainerRef = useRef<HTMLDivElement>(null);
+
+	// Fetch logs for any workload that has been through the build pipeline
+	useEffect(() => {
+		if (!data) return;
+		api.fetchBuildLogs(name).then(setBuildLogs).catch(() => {});
+	}, [data?.status, name]);
+
+	// Listen for build.log WS events for this workload
+	useWebSocket((event: unknown) => {
+		const e = event as { type?: string; workloadId?: string; line?: string; timestamp?: string };
+		if (
+			e.type === "build.log" &&
+			data &&
+			e.workloadId === data.workloadId &&
+			e.line !== undefined &&
+			e.timestamp !== undefined
+		) {
+			setBuildLogs((prev) => [...prev, { text: e.line!, timestamp: e.timestamp! }]);
+		}
+	});
+
+	// Auto-scroll log panel
+	useEffect(() => {
+		if (logContainerRef.current) {
+			logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+		}
+	}, [buildLogs]);
 
 	async function handleClaim() {
 		if (!tenantId.trim() || !data) return;
@@ -55,6 +85,37 @@ export function WorkloadDetail({
 				<InfoCard label="Created" value={new Date(data.createdAt).toLocaleString()} />
 				<InfoCard label="Updated" value={new Date(data.updatedAt).toLocaleString()} />
 			</div>
+
+			{/* Build log panel */}
+			{(data.status === "creating" || buildLogs.length > 0) && (
+				<div className="mb-6">
+					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
+						Build Log
+					</h3>
+					<div
+						ref={logContainerRef}
+						className="bg-surface-2 rounded-md p-4 max-h-80 overflow-y-auto"
+					>
+						{buildLogs.length === 0 ? (
+							<p className="text-xs font-mono text-muted">Waiting for build output...</p>
+						) : (
+							buildLogs.map((entry, i) => {
+								const isError = entry.text.startsWith("ERROR:");
+								return (
+									<div key={i} className="flex gap-2 text-xs font-mono leading-5">
+										<span className="text-muted shrink-0">
+											{new Date(entry.timestamp).toLocaleTimeString()}
+										</span>
+										<span className={isError ? "text-status-red" : "text-muted-light"}>
+											{entry.text}
+										</span>
+									</div>
+								);
+							})
+						)}
+					</div>
+				</div>
+			)}
 
 			{/* Claim section */}
 			<div className="mb-6">

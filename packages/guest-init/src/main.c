@@ -74,7 +74,7 @@ static pid_t spawn(char *const argv[]) {
 	if (pid == 0) {
 		/* Create a new session so the child has its own process group. */
 		setsid();
-		execv(argv[0], argv);
+		execvp(argv[0], argv);
 		fprintf(stderr, "init: exec %s failed: %s\n", argv[0], strerror(errno));
 		_exit(127);
 	}

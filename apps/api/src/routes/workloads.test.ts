@@ -235,6 +235,61 @@ describe("GET /api/v1/workloads/:name/snapshots", () => {
 	});
 });
 
+describe("GET /api/v1/workloads/:name/logs", () => {
+	test("returns empty array when no logs exist", async () => {
+		const { app, db } = createTestApp();
+
+		const workloadId = generateWorkloadId();
+		db.insert(workloads)
+			.values({
+				workloadId,
+				name: "no-logs",
+				version: "1.0.0",
+				config: MINIMAL_WORKLOAD,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.run();
+
+		const res = await apiRequest(app, "/api/v1/workloads/no-logs/logs");
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual([]);
+	});
+
+	test("returns 404 for unknown workload", async () => {
+		const { app } = createTestApp();
+		const res = await apiRequest(app, "/api/v1/workloads/ghost/logs");
+		expect(res.status).toBe(404);
+	});
+
+	test("returns log entries from build log store", async () => {
+		const { app, db, buildLogStore } = createTestApp();
+
+		const workloadId = generateWorkloadId();
+		db.insert(workloads)
+			.values({
+				workloadId,
+				name: "has-logs",
+				version: "1.0.0",
+				config: MINIMAL_WORKLOAD,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.run();
+
+		buildLogStore.append(workloadId, "Pulling image...");
+		buildLogStore.append(workloadId, "Creating ext4 image...");
+
+		const res = await apiRequest(app, "/api/v1/workloads/has-logs/logs");
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toHaveLength(2);
+		expect(body[0].text).toBe("Pulling image...");
+		expect(body[1].text).toBe("Creating ext4 image...");
+		expect(body[0].timestamp).toBeDefined();
+	});
+});
+
 describe("DELETE /api/v1/workloads/:name", () => {
 	test("deletes workload with no instances", async () => {
 		const { app, db } = createTestApp();

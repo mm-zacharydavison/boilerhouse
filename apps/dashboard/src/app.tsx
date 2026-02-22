@@ -20,8 +20,9 @@ function App() {
 	const [tick, setTick] = useState(0);
 	const refetch = useCallback(() => setTick((t) => t + 1), []);
 
-	useWebSocket(() => {
-		refetch();
+	useWebSocket((event: unknown) => {
+		const e = event as { type?: string };
+		if (e.type !== "build.log") refetch();
 	});
 
 	let content: React.ReactNode;

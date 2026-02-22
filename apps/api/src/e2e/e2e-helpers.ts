@@ -12,6 +12,7 @@ import { TenantManager } from "../tenant-manager";
 import { TenantDataStore } from "../tenant-data";
 import { EventBus } from "../event-bus";
 import { GoldenCreator } from "../golden-creator";
+import { BuildLogStore } from "../build-log-store";
 import { ResourceLimiter } from "../resource-limits";
 import { TapManager } from "../network/tap";
 import { createApp } from "../app";
@@ -131,7 +132,8 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 	);
 
 	const resourceLimiter = new ResourceLimiter(db, { maxInstances: 100 });
-	const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus);
+	const buildLogStore = new BuildLogStore(db);
+	const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, undefined, buildLogStore);
 
 	const app = createApp({
 		db,
@@ -143,6 +145,7 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		snapshotManager,
 		eventBus,
 		goldenCreator,
+		buildLogStore,
 		resourceLimiter,
 	});
 

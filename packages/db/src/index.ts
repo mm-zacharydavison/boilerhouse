@@ -9,6 +9,7 @@ export {
 	snapshots,
 	tenants,
 	activityLog,
+	buildLogs,
 	schema,
 	type NodeRow,
 	type NodeInsert,
@@ -22,6 +23,8 @@ export {
 	type TenantInsert,
 	type ActivityLogRow,
 	type ActivityLogInsert,
+	type BuildLogRow,
+	type BuildLogInsert,
 } from "./schema";
 
 export {

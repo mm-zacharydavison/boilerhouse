@@ -5,8 +5,8 @@ import { OciError } from "./errors";
  * Pull an OCI image using the Docker CLI.
  * @throws {OciError} if the pull fails
  */
-export async function pullImage(ref: string): Promise<void> {
-	await runDocker(["pull", ref]);
+export async function pullImage(ref: string, onLog?: (line: string) => void): Promise<void> {
+	await runDocker(["pull", ref], onLog);
 }
 
 /**
@@ -52,12 +52,12 @@ export async function exportFilesystem(ref: string, outputTar: string): Promise<
  * @param outputTar - Path where the exported tarball will be written
  * @throws {OciError} if the build or export fails
  */
-export async function buildImage(dockerfile: string, outputTar: string): Promise<void> {
+export async function buildImage(dockerfile: string, outputTar: string, onLog?: (line: string) => void): Promise<void> {
 	const context = dirname(dockerfile);
 	const tempTag = `boilerhouse-build-${Date.now()}`;
 
 	try {
-		await runDocker(["build", "-t", tempTag, "-f", dockerfile, context]);
+		await runDocker(["build", "-t", tempTag, "-f", dockerfile, context], onLog);
 		await exportFilesystem(tempTag, outputTar);
 	} finally {
 		// Clean up the temporary image
@@ -69,11 +69,16 @@ export async function buildImage(dockerfile: string, outputTar: string): Promise
 	}
 }
 
-async function runDocker(args: string[]): Promise<void> {
+async function runDocker(args: string[], onLog?: (line: string) => void): Promise<void> {
 	const proc = Bun.spawn(["docker", ...args], {
 		stdout: "pipe",
 		stderr: "pipe",
 	});
+
+	if (onLog && proc.stdout) {
+		await streamLines(proc.stdout, onLog);
+	}
+
 	const exitCode = await proc.exited;
 
 	if (exitCode !== 0) {
@@ -82,5 +87,27 @@ async function runDocker(args: string[]): Promise<void> {
 			`docker ${args[0]} failed: ${stderr.trim()}`,
 			exitCode,
 		);
+	}
+}
+
+async function streamLines(stream: ReadableStream<Uint8Array>, onLog: (line: string) => void): Promise<void> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const lines = buffer.split("\n");
+			buffer = lines.pop()!;
+			for (const line of lines) {
+				if (line.length > 0) onLog(line);
+			}
+		}
+		if (buffer.length > 0) onLog(buffer);
+	} finally {
+		reader.releaseLock();
 	}
 }

@@ -25,17 +25,20 @@ export async function createExt4(
 	tarPath: string,
 	outputPath: string,
 	sizeGb: number,
+	onLog?: (line: string) => void,
 ): Promise<void> {
 	// Create sparse file
 	await run(
 		["dd", "if=/dev/zero", `of=${outputPath}`, "bs=1", "count=0", `seek=${sizeGb}G`],
 		"Failed to create sparse file",
+		onLog,
 	);
 
 	// Format as ext4
 	await run(
 		["mkfs.ext4", "-F", outputPath],
 		"Failed to format ext4",
+		onLog,
 	);
 
 	// Mount, extract tarball, unmount
@@ -44,6 +47,7 @@ export async function createExt4(
 		await run(
 			["sudo", "tar", "xf", tarPath, "-C", mounted.mountPoint],
 			"Failed to extract tarball into ext4",
+			onLog,
 		);
 	} finally {
 		await unmountImage(mounted);
@@ -60,6 +64,7 @@ export async function createExt4(
 export async function injectInit(
 	ext4Path: string,
 	config: InjectConfig,
+	onLog?: (line: string) => void,
 ): Promise<void> {
 	const mounted = await mountImage(ext4Path);
 	try {
@@ -67,6 +72,7 @@ export async function injectInit(
 		await run(
 			["sudo", "mkdir", "-p", dest],
 			"Failed to create /opt/boilerhouse",
+			onLog,
 		);
 
 		const files: Array<{ src: string; name: string }> = [
@@ -80,10 +86,12 @@ export async function injectInit(
 			await run(
 				["sudo", "cp", src, target],
 				`Failed to copy ${name}`,
+				onLog,
 			);
 			await run(
 				["sudo", "chmod", "755", target],
 				`Failed to chmod ${name}`,
+				onLog,
 			);
 		}
 	} finally {
@@ -145,8 +153,31 @@ async function unmountImage(mounted: MountedImage): Promise<void> {
 	}
 }
 
-async function run(args: string[], errorPrefix: string): Promise<void> {
+async function run(args: string[], errorPrefix: string, onLog?: (line: string) => void): Promise<void> {
 	const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+
+	if (onLog && proc.stdout) {
+		const reader = proc.stdout.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop()!;
+				for (const line of lines) {
+					if (line.length > 0) onLog(line);
+				}
+			}
+			if (buffer.length > 0) onLog(buffer);
+		} finally {
+			reader.releaseLock();
+		}
+	}
+
 	const exitCode = await proc.exited;
 
 	if (exitCode !== 0) {

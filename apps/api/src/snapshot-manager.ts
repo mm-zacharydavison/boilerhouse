@@ -55,9 +55,15 @@ export class SnapshotManager {
 	async createGolden(
 		workloadId: WorkloadId,
 		workload: Workload,
+		onLog?: (line: string) => void,
 	): Promise<SnapshotRef> {
+		const log = onLog ?? (() => {});
 		const instanceId: InstanceId = generateInstanceId();
+
+		log("Creating bootstrap VM...");
 		const handle = await this.runtime.create(workload, instanceId);
+
+		log("Starting bootstrap VM...");
 		await this.runtime.start(handle);
 
 		try {
@@ -70,8 +76,10 @@ export class SnapshotManager {
 					const endpoint = await this.runtime.getEndpoint(handle);
 					const port = workload.health.http_get.port ?? endpoint.ports[0]!;
 					const url = `http://${endpoint.host}:${port}${workload.health.http_get.path}`;
+					log(`Health check: polling ${workload.health.http_get.path} on port ${port}...`);
 					check = createHttpCheck(url);
 				} else {
+					log(`Health check: exec [${workload.health.exec!.command.join(" ")}]...`);
 					check = createExecCheck(
 						this.runtime,
 						handle,
@@ -79,16 +87,21 @@ export class SnapshotManager {
 					);
 				}
 
-				await this.healthChecker(check, {
+				const config: HealthConfig = {
 					interval: intervalMs,
 					unhealthyThreshold: workload.health.unhealthy_threshold,
 					timeoutMs: Math.max(
 						intervalMs * workload.health.unhealthy_threshold * 2,
 						this.defaultHealthTimeoutMs,
 					),
-				});
+				};
+
+				log(`Health check: timeout ${Math.round(config.timeoutMs / 1000)}s, interval ${Math.round(intervalMs / 1000)}s, threshold ${workload.health.unhealthy_threshold}`);
+				await this.healthChecker(check, config);
+				log("Health check passed.");
 			}
 
+			log("Taking snapshot...");
 			// Take the snapshot
 			const ref = await this.runtime.snapshot(handle);
 
@@ -132,6 +145,7 @@ export class SnapshotManager {
 
 			applySnapshotTransition(this.db, goldenRef.id, "creating", "created");
 
+			log("Destroying bootstrap VM...");
 			// Destroy the bootstrap VM
 			await this.runtime.destroy(handle);
 

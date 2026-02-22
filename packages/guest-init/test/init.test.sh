@@ -85,6 +85,17 @@ else
   pass "default shell did not crash"
 fi
 
+# --- Test 6: PATH resolution (execvp) ---
+echo "-- PATH resolution --"
+# Using a bare command name (not absolute path) should work via PATH lookup.
+EXIT_CODE=0
+unshare --pid --fork --mount-proc "$INIT_BIN" sh -c "exit 5" 2>/dev/null || EXIT_CODE=$?
+if [[ "$EXIT_CODE" -eq 5 ]]; then
+  pass "bare command 'sh' resolved via PATH"
+else
+  fail "expected exit code 5 from bare 'sh', got $EXIT_CODE"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

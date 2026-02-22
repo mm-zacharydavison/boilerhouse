@@ -36,11 +36,19 @@ export interface WorkloadStateEvent {
 	status: WorkloadStatus;
 }
 
+export interface BuildLogEvent {
+	type: "build.log";
+	workloadId: WorkloadId;
+	line: string;
+	timestamp: string;
+}
+
 export type DomainEvent =
 	| InstanceStateEvent
 	| TenantClaimEvent
 	| TenantReleaseEvent
-	| WorkloadStateEvent;
+	| WorkloadStateEvent
+	| BuildLogEvent;
 
 export class EventBus {
 	private readonly emitter = new EventEmitter();
