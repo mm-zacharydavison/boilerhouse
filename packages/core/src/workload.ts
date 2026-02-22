@@ -93,6 +93,15 @@ export const WorkloadSchema = Type.Object({
 		Type.Object({
 			interval_seconds: Type.Number({ exclusiveMinimum: 0 }),
 			unhealthy_threshold: Type.Number({ exclusiveMinimum: 0 }),
+			/**
+			 * Maximum time in seconds for a single health check execution
+			 * before it's killed. Applies to exec probes run by the guest
+			 * health-agent.
+			 * @default 60
+			 */
+			check_timeout_seconds: Type.Optional(
+				Type.Number({ exclusiveMinimum: 0, default: 60 }),
+			),
 			http_get: Type.Optional(HttpGetProbeSchema),
 			exec: Type.Optional(ExecProbeSchema),
 		}),
@@ -102,6 +111,12 @@ export const WorkloadSchema = Type.Object({
 			cmd: Type.String({ minLength: 1 }),
 			args: Type.Optional(Type.Array(Type.String())),
 			env: Type.Optional(Type.Record(Type.String(), Type.String())),
+			/**
+			 * Working directory for the entrypoint and health check processes.
+			 * Corresponds to the container image's WORKDIR.
+			 * @example "/app"
+			 */
+			workdir: Type.Optional(Type.String({ minLength: 1 })),
 		}),
 	),
 	/** Arbitrary key-value pairs passed through to the API. */

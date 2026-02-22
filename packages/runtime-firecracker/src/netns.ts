@@ -73,6 +73,20 @@ export function deriveNetnsConfig(instanceId: InstanceId): DerivedNetnsConfig {
 	};
 }
 
+/** Derives the guest IP (.2) from a TAP host IP (.1) in a /30 subnet. */
+function deriveGuestIpFromTap(tapIp: string): string {
+	const parts = tapIp.split(".");
+	const lastOctet = Number.parseInt(parts[3]!, 10);
+	return `${parts[0]}.${parts[1]}.${parts[2]}.${lastOctet + 1}`;
+}
+
+/** Derives the /30 subnet base (.0) from a TAP host IP (.1). */
+function deriveTapSubnet(tapIp: string): string {
+	const parts = tapIp.split(".");
+	const lastOctet = Number.parseInt(parts[3]!, 10);
+	return `${parts[0]}.${parts[1]}.${parts[2]}.${lastOctet & 0xfc}`;
+}
+
 /** Execute a command via sudo and throw NetnsError on failure. */
 async function sudoExec(args: string[], context: string): Promise<void> {
 	const proc = Bun.spawn(["sudo", ...args], {
@@ -100,8 +114,43 @@ export class NetnsManagerImpl {
 	 * @param uid - UID of the jailed process (for TAP device ownership)
 	 */
 	async create(instanceId: InstanceId, uid: number): Promise<NetnsHandle> {
+		return this.createNetns(instanceId, uid, { name: "tap0" });
+	}
+
+	/**
+	 * Creates a network namespace for snapshot restore with a specific TAP config.
+	 *
+	 * Unlike {@link create}, the TAP name and IP/MAC come from the golden
+	 * snapshot's restore-meta.json rather than being hardcoded. This allows
+	 * Firecracker to find the TAP device it expects from the vmstate.
+	 * A host route is added so the guest is reachable from the host.
+	 *
+	 * @param instanceId - Instance ID for deterministic veth/netns naming
+	 * @param tapConfig - TAP device config from the golden snapshot
+	 * @param uid - UID that owns the TAP device (for Firecracker to open it)
+	 */
+	async createForRestore(
+		instanceId: InstanceId,
+		tapConfig: { name: string; ip: string; mac: string },
+		uid: number,
+	): Promise<NetnsHandle> {
+		return this.createNetns(instanceId, uid, tapConfig);
+	}
+
+	private async createNetns(
+		instanceId: InstanceId,
+		uid: number,
+		tapConfig: { name: string; ip?: string; mac?: string },
+	): Promise<NetnsHandle> {
 		const config = deriveNetnsConfig(instanceId);
-		const { nsName, tapIp, tapMac, guestIp, vethHostIp, vethGuestIp, vethHostName, vethGuestName } = config;
+		const { nsName, vethHostIp, vethGuestIp, vethHostName, vethGuestName } = config;
+
+		// Use explicit TAP config if provided (restore mode), otherwise use derived values
+		const effectiveTapName = tapConfig.name;
+		const effectiveTapIp = tapConfig.ip ?? config.tapIp;
+		const effectiveTapMac = tapConfig.mac ?? config.tapMac;
+		const effectiveGuestIp = deriveGuestIpFromTap(effectiveTapIp);
+		const isRestoreMode = !!tapConfig.ip;
 
 		// 1. Create namespace
 		await sudoExec(["ip", "netns", "add", nsName], `Failed to create namespace ${nsName}`);
@@ -109,19 +158,19 @@ export class NetnsManagerImpl {
 		try {
 			// 2. Create TAP device inside namespace
 			await sudoExec(
-				["ip", "netns", "exec", nsName, "ip", "tuntap", "add", "name", "tap0", "mode", "tap", "user", String(uid)],
+				["ip", "netns", "exec", nsName, "ip", "tuntap", "add", "name", effectiveTapName, "mode", "tap", "user", String(uid)],
 				`Failed to create TAP in ${nsName}`,
 			);
 
 			// 3. Configure TAP IP
 			await sudoExec(
-				["ip", "netns", "exec", nsName, "ip", "addr", "add", `${tapIp}/30`, "dev", "tap0"],
+				["ip", "netns", "exec", nsName, "ip", "addr", "add", `${effectiveTapIp}/30`, "dev", effectiveTapName],
 				`Failed to set TAP IP in ${nsName}`,
 			);
 
 			// 4. Bring TAP up
 			await sudoExec(
-				["ip", "netns", "exec", nsName, "ip", "link", "set", "tap0", "up"],
+				["ip", "netns", "exec", nsName, "ip", "link", "set", effectiveTapName, "up"],
 				`Failed to bring up TAP in ${nsName}`,
 			);
 
@@ -168,6 +217,23 @@ export class NetnsManagerImpl {
 				["iptables", "-A", "FORWARD", "-o", vethHostName, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
 				`Failed to add FORWARD rule (in) for ${nsName}`,
 			);
+
+			// 9. Restore mode: enable IP forwarding inside the netns and add a
+			// host route so the guest (behind the TAP) is reachable from the host.
+			// Uses "replace" instead of "add" because multiple instances restored
+			// from the same golden snapshot share the same TAP subnet — a prior
+			// restore's route may already exist.
+			if (isRestoreMode) {
+				await sudoExec(
+					["ip", "netns", "exec", nsName, "sysctl", "-w", "net.ipv4.ip_forward=1"],
+					`Failed to enable IP forwarding in ${nsName}`,
+				);
+				const tapSubnet = deriveTapSubnet(effectiveTapIp);
+				await sudoExec(
+					["ip", "route", "replace", `${tapSubnet}/30`, "via", vethGuestIp],
+					`Failed to add host route for ${nsName}`,
+				);
+			}
 		} catch (err) {
 			// Attempt cleanup on partial creation failure
 			try {
@@ -181,18 +247,26 @@ export class NetnsManagerImpl {
 		return {
 			nsName,
 			nsPath: `/var/run/netns/${nsName}`,
-			tapName: "tap0",
-			tapIp,
-			tapMac,
+			tapName: effectiveTapName,
+			tapIp: effectiveTapIp,
+			tapMac: effectiveTapMac,
 			vethHostIp,
-			guestIp,
+			guestIp: effectiveGuestIp,
 			vethHostName,
 		};
 	}
 
 	/** Destroys a network namespace and associated iptables rules. */
 	async destroy(handle: NetnsHandle): Promise<void> {
-		const { nsName, vethHostName, vethHostIp } = handle;
+		const { nsName, vethHostName, vethHostIp, tapIp } = handle;
+
+		// Remove host route to TAP subnet (present for restore-mode namespaces)
+		try {
+			const tapSubnet = deriveTapSubnet(tapIp);
+			await sudoExec(["ip", "route", "del", `${tapSubnet}/30`], "remove TAP route");
+		} catch {
+			// Route may not exist (jailer-mode namespaces don't add one)
+		}
 
 		// Remove iptables rules (best-effort, ignore errors)
 		const vethGuestIp = vethHostIp.replace(

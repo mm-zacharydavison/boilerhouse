@@ -31,6 +31,12 @@ import type { FirecrackerConfig, TapDevice, NetnsHandle, JailPaths } from "./typ
 import { NetnsManagerImpl } from "./netns";
 import { JailPreparer } from "./jail";
 
+/** Vsock port used by the health agent to report status. */
+const HEALTH_VSOCK_PORT = 52;
+
+/** Guest CID assigned to Firecracker VMs (Firecracker convention). */
+const GUEST_CID = 3;
+
 interface ManagedInstance {
 	instanceId: InstanceId;
 	process: FirecrackerProcess | JailedProcess;
@@ -40,6 +46,8 @@ interface ManagedInstance {
 	running: boolean;
 	/** Guest ports exposed by the workload (from `network.expose[*].guest`). */
 	exposedPorts: number[];
+	/** Host-absolute path to the vsock UDS (if vsock is configured). */
+	vsockUdsPath?: string;
 	// Dev mode
 	tapDevice?: TapDevice;
 	// Jailer mode
@@ -48,7 +56,7 @@ interface ManagedInstance {
 	uid?: number;
 }
 
-const DEFAULT_BOOT_ARGS = "console=ttyS0 reboot=k panic=1 pci=off";
+const DEFAULT_BOOT_ARGS = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on";
 
 /**
  * Builds kernel boot args with an `ip=` parameter for automatic guest
@@ -65,14 +73,54 @@ function buildBootArgs(baseArgs: string, guestIp: string, gatewayIp: string): st
  * Splits the workload entrypoint into kernel-side and init-side boot args.
  * The kernel `--` separator must come AFTER all kernel params (like `ip=`),
  * because the kernel passes everything after `--` as argv to init.
+ *
+ * If the workload has a `health.exec` config, the health command is appended
+ * after a `---` separator so the init process can fork the health-agent.
  */
 function buildEntrypointBootArgs(workload: Workload): { kernelArgs: string; initArgs: string } {
 	if (!workload.entrypoint) return { kernelArgs: "", initArgs: "" };
 	const parts = [workload.entrypoint.cmd, ...(workload.entrypoint.args ?? [])];
-	return {
-		kernelArgs: " init=/opt/boilerhouse/init",
-		initArgs: ` -- ${parts.join(" ")}`,
-	};
+
+	let kernelArgs = " init=/opt/boilerhouse/init";
+
+	if (workload.entrypoint.workdir) {
+		kernelArgs += ` boilerhouse.workdir=${workload.entrypoint.workdir}`;
+	}
+
+	let initArgs = ` -- ${parts.join(" ")}`;
+
+	if (workload.health?.exec) {
+		initArgs += ` --- ${workload.health.exec.command.join(" ")}`;
+	}
+
+	return { kernelArgs, initArgs };
+}
+
+/**
+ * Builds kernel cmdline parameters for the guest health-agent.
+ * Covers both exec and http_get probe types.
+ */
+function buildHealthKernelArgs(workload: Workload): string {
+	const health = workload.health!;
+	let args = ` boilerhouse.health_port=${HEALTH_VSOCK_PORT}`;
+	args += ` boilerhouse.health_interval=${health.interval_seconds}`;
+
+	if (health.exec) {
+		if (health.check_timeout_seconds) {
+			args += ` boilerhouse.health_check_timeout=${health.check_timeout_seconds}`;
+		}
+	}
+
+	if (health.http_get) {
+		const port = health.http_get.port
+			?? (workload.network.expose ?? [])[0]?.guest;
+		if (port) {
+			args += ` boilerhouse.health_http_port=${port}`;
+		}
+		args += ` boilerhouse.health_http_path=${health.http_get.path}`;
+	}
+
+	return args;
 }
 
 /** Derives the guest IP (.2) from a TAP host IP (.1) in a /30 subnet. */
@@ -86,7 +134,7 @@ export class FirecrackerRuntime implements Runtime {
 	private readonly instances = new Map<string, ManagedInstance>();
 	private readonly config: FirecrackerConfig;
 	private readonly isJailerMode: boolean;
-	private readonly netnsManager?: NetnsManagerImpl;
+	private readonly netnsManager: NetnsManagerImpl;
 	private readonly jailPreparer?: JailPreparer;
 
 	constructor(config: FirecrackerConfig) {
@@ -97,9 +145,9 @@ export class FirecrackerRuntime implements Runtime {
 		}
 		this.config = config;
 		this.isJailerMode = !!config.jailer;
+		this.netnsManager = new NetnsManagerImpl();
 
 		if (this.isJailerMode) {
-			this.netnsManager = new NetnsManagerImpl();
 			this.jailPreparer = new JailPreparer();
 		}
 	}
@@ -178,8 +226,16 @@ export class FirecrackerRuntime implements Runtime {
 				errors.push(err instanceof Error ? err : new Error(String(err)));
 			}
 
-			// Destroy TAP device
-			if (managed.tapDevice) {
+			// Destroy network resources
+			if (managed.netnsHandle) {
+				// Restored instance running inside a per-instance netns
+				try {
+					await this.netnsManager.destroy(managed.netnsHandle);
+				} catch (err) {
+					errors.push(err instanceof Error ? err : new Error(String(err)));
+				}
+			} else if (managed.tapDevice) {
+				// Bootstrap instance with a host-namespace TAP device
 				try {
 					await this.config.tapManager!.destroy(managed.tapDevice);
 				} catch (err) {
@@ -267,11 +323,11 @@ export class FirecrackerRuntime implements Runtime {
 			);
 		}
 
-		if (this.isJailerMode && managed.netnsHandle) {
+		if (managed.netnsHandle) {
 			return { host: managed.netnsHandle.guestIp, ports: managed.exposedPorts };
 		}
 
-		// Dev mode: derive guest IP from TAP device IP (host is .1, guest is .2 in /30 subnet)
+		// Dev mode bootstrap: derive guest IP from TAP device IP (host is .1, guest is .2 in /30 subnet)
 		const guestIp = deriveGuestIp(managed.tapDevice!.ip);
 
 		return { host: guestIp, ports: managed.exposedPorts };
@@ -317,7 +373,13 @@ export class FirecrackerRuntime implements Runtime {
 
 		const guestIp = deriveGuestIp(tapDevice.ip);
 		const entrypoint = buildEntrypointBootArgs(workload);
-		const baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+		let baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+
+		// Add health agent kernel params for guest-side health probing
+		if (workload.health) {
+			baseArgs += buildHealthKernelArgs(workload);
+		}
+
 		const bootArgs = buildBootArgs(baseArgs, guestIp, tapDevice.ip) + entrypoint.initArgs;
 
 		await client.putBootSource({
@@ -346,6 +408,14 @@ export class FirecrackerRuntime implements Runtime {
 			guest_mac: tapDevice.mac,
 		});
 
+		// Set up vsock for guest-side health reporting
+		let vsockUdsPath: string | undefined;
+		if (workload.health) {
+			const vsockUds = join(overlayPaths.instanceDir, "vsock.sock");
+			await client.putVsock({ guest_cid: GUEST_CID, uds_path: vsockUds });
+			vsockUdsPath = vsockUds;
+		}
+
 		const managed: ManagedInstance = {
 			instanceId,
 			process,
@@ -355,10 +425,15 @@ export class FirecrackerRuntime implements Runtime {
 			workloadId,
 			running: false,
 			exposedPorts: (workload.network.expose ?? []).map((e) => e.guest),
+			vsockUdsPath,
 		};
 		this.instances.set(instanceId, managed);
 
-		return { instanceId, running: false };
+		const meta: Record<string, string> = {
+			consolePath: process.consolePath,
+		};
+		if (vsockUdsPath) meta.vsockUdsPath = vsockUdsPath;
+		return { instanceId, running: false, meta };
 	}
 
 	private async snapshotDirect(
@@ -436,22 +511,28 @@ export class FirecrackerRuntime implements Runtime {
 		const snapshotDir = join(this.config.snapshotDir, ref.id);
 		const restoreMeta = await this.readRestoreMeta(snapshotDir);
 
-		// Recreate the exact TAP device that existed when the snapshot was
-		// taken. Firecracker opens the TAP during snapshot load and its
-		// PATCH API doesn't support changing host_dev_name after load.
-		const tapDevice = await this.config.tapManager!.createFromDevice(
+		// Create a per-instance network namespace with a TAP device matching
+		// the golden snapshot's original TAP name/IP/MAC. Firecracker opens
+		// the TAP by name during snapshot load (PATCH API doesn't support
+		// changing host_dev_name after load), so each instance needs its own
+		// namespace to avoid TAP device name conflicts.
+		const uid = process.getuid?.() ?? 1000;
+		const netnsHandle = await this.netnsManager.createForRestore(
+			instanceId,
 			restoreMeta.tapDevice!,
+			uid,
 		);
 
 		const socketPath = join(instanceDir, "firecracker.sock");
 		const logPath = join(instanceDir, "firecracker.log");
-		const process = spawnFirecracker({
+		const fcProcess = spawnFirecracker({
 			binaryPath: this.config.binaryPath,
 			socketPath,
 			logPath,
+			netnsName: netnsHandle.nsName,
 		});
 
-		await process.waitForSocket();
+		await fcProcess.waitForSocket();
 
 		const client = new FirecrackerClient(socketPath);
 
@@ -486,9 +567,9 @@ export class FirecrackerRuntime implements Runtime {
 
 		const managed: ManagedInstance = {
 			instanceId,
-			process,
+			process: fcProcess,
 			client,
-			tapDevice,
+			netnsHandle,
 			overlayPaths: { rootfs: instanceRootfs, instanceDir },
 			workloadId: ref.workloadId,
 			running: true,
@@ -552,7 +633,13 @@ export class FirecrackerRuntime implements Runtime {
 
 		// Inside the chroot, paths are relative
 		const entrypoint = buildEntrypointBootArgs(workload);
-		const baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+		let baseArgs = (this.config.bootArgs ?? DEFAULT_BOOT_ARGS) + entrypoint.kernelArgs;
+
+		// Add health agent kernel params for guest-side health probing
+		if (workload.health) {
+			baseArgs += buildHealthKernelArgs(workload);
+		}
+
 		const bootArgs = buildBootArgs(baseArgs, netnsHandle.guestIp, netnsHandle.tapIp) + entrypoint.initArgs;
 
 		await client.putBootSource({
@@ -581,6 +668,16 @@ export class FirecrackerRuntime implements Runtime {
 			guest_mac: netnsHandle.tapMac,
 		});
 
+		// Set up vsock for guest-side health reporting.
+		// In jailer mode, the uds_path is relative to the chroot.
+		// We store the host-absolute path for consumers.
+		let vsockUdsPath: string | undefined;
+		if (workload.health) {
+			const vsockRelative = "vsock.sock";
+			await client.putVsock({ guest_cid: GUEST_CID, uds_path: vsockRelative });
+			vsockUdsPath = join(jailPaths.chrootRoot, vsockRelative);
+		}
+
 		const managed: ManagedInstance = {
 			instanceId,
 			process,
@@ -589,13 +686,16 @@ export class FirecrackerRuntime implements Runtime {
 			workloadId,
 			running: false,
 			exposedPorts: (workload.network.expose ?? []).map((e) => e.guest),
+			vsockUdsPath,
 			netnsHandle,
 			jailPaths,
 			uid,
 		};
 		this.instances.set(instanceId, managed);
 
-		return { instanceId, running: false };
+		const meta: Record<string, string> = {};
+		if (vsockUdsPath) meta.vsockUdsPath = vsockUdsPath;
+		return { instanceId, running: false, meta };
 	}
 
 	private async snapshotJailed(

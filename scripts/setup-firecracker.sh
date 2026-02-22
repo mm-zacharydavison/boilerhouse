@@ -12,10 +12,12 @@ set -euo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 
-FC_VERSION="${FC_VERSION:-1.10.1}"
+FC_VERSION="${FC_VERSION:-1.14.1}"
 FC_ARCH="${FC_ARCH:-x86_64}"
 FC_DOWNLOAD_BASE="https://github.com/firecracker-microvm/firecracker/releases/download"
-KERNEL_URL="${KERNEL_URL:-https://s3.amazonaws.com/spec.ccfc.min/ci-artifacts/kernels/${FC_ARCH}/vmlinux-5.10.bin}"
+FC_CI_BUCKET="https://s3.amazonaws.com/spec.ccfc.min"
+# KERNEL_URL can be overridden; otherwise resolved from Firecracker CI artifacts.
+KERNEL_URL="${KERNEL_URL:-}"
 
 INSTALL_DIR="/usr/local/bin"
 KERNEL_DIR="/var/lib/boilerhouse"
@@ -129,15 +131,31 @@ echo ""
 echo "--- Downloading kernel ---"
 run_sudo mkdir -p "$KERNEL_DIR"
 
-if $DRY_RUN; then
-	echo "[dry-run] Would download kernel to ${KERNEL_DIR}/vmlinux"
-else
-	if [[ ! -f "${KERNEL_DIR}/vmlinux" ]]; then
-		echo "[run] Downloading kernel..."
-		sudo curl -fsSL "$KERNEL_URL" -o "${KERNEL_DIR}/vmlinux"
-	else
-		echo "[skip] Kernel already exists at ${KERNEL_DIR}/vmlinux"
+# Resolve kernel URL from Firecracker CI artifacts if not explicitly set.
+# The CI bucket organises kernels as: firecracker-ci/vMAJOR.MINOR/ARCH/vmlinux-VERSION
+if [[ -z "$KERNEL_URL" ]]; then
+	CI_VERSION="v${FC_VERSION%.*}"  # e.g. 1.14.1 -> v1.14
+	echo "[info] Resolving latest kernel from CI artifacts (${CI_VERSION}/${FC_ARCH})..."
+	KERNEL_KEY=$(curl -sf \
+		"http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/${CI_VERSION}/${FC_ARCH}/vmlinux-&list-type=2" \
+		| grep -oP "(?<=<Key>)(firecracker-ci/${CI_VERSION}/${FC_ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})(?=</Key>)" \
+		| sort -V | tail -1)
+
+	if [[ -z "$KERNEL_KEY" ]]; then
+		echo "Error: Could not resolve kernel from CI artifacts for ${CI_VERSION}/${FC_ARCH}"
+		exit 1
 	fi
+
+	KERNEL_URL="${FC_CI_BUCKET}/${KERNEL_KEY}"
+	KERNEL_VERSION=$(basename "$KERNEL_KEY" | sed 's/vmlinux-//')
+	echo "[info] Resolved kernel: vmlinux-${KERNEL_VERSION}"
+fi
+
+if $DRY_RUN; then
+	echo "[dry-run] Would download kernel from ${KERNEL_URL} to ${KERNEL_DIR}/vmlinux"
+else
+	echo "[run] Downloading kernel..."
+	sudo curl -fsSL "$KERNEL_URL" -o "${KERNEL_DIR}/vmlinux"
 fi
 
 echo ""

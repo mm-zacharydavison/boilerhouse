@@ -79,6 +79,7 @@ export async function injectInit(
 			{ src: config.initBinaryPath, name: "init" },
 			{ src: config.idleAgentPath, name: "idle-agent" },
 			{ src: config.overlayInitPath, name: "overlay-init.sh" },
+			{ src: config.healthAgentPath, name: "health-agent" },
 		];
 
 		for (const { src, name } of files) {

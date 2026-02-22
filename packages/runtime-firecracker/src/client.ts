@@ -8,6 +8,7 @@ import type {
 	VmUpdateRequest,
 	SnapshotCreateRequest,
 	SnapshotLoadRequest,
+	VsockRequest,
 	InstanceInfoResponse,
 	MachineConfigResponse,
 	FirecrackerErrorBody,
@@ -58,6 +59,10 @@ export class FirecrackerClient {
 
 	async putSnapshotLoad(body: SnapshotLoadRequest): Promise<void> {
 		await this.request("PUT", "/snapshot/load", body);
+	}
+
+	async putVsock(body: VsockRequest): Promise<void> {
+		await this.request("PUT", "/vsock", body);
 	}
 
 	async getInstanceInfo(): Promise<InstanceInfoResponse> {

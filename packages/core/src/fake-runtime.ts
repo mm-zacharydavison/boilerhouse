@@ -69,7 +69,7 @@ export class FakeRuntime implements Runtime {
 			ports,
 		};
 		this.instances.set(instanceId, instance);
-		return { instanceId, running: false };
+		return { instanceId, running: false, meta: { vsockUdsPath: `/tmp/fake-vsock-${instanceId}.sock` } };
 	}
 
 	async start(handle: InstanceHandle): Promise<void> {

@@ -28,15 +28,16 @@ action = "hibernate"
 
 [health]
 interval_seconds = 2
-unhealthy_threshold = 30
+unhealthy_threshold = 60
 
 [health.http_get]
-path = "/health"
+path = "/__openclaw__/canvas/"
 port = 18789
 
 [entrypoint]
+workdir = "/app"
 cmd = "node"
-args = ["dist/index.js"]
+args = ["openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
 
 [metadata]
 description = "OpenClaw autonomous AI agent"

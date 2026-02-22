@@ -15,8 +15,9 @@ CC_aarch64 := aarch64-linux-musl-gcc
 
 CFLAGS := -O2 -Wall -Wextra -Werror -static -std=c11
 
-SRCS_INIT       := src/main.c
-SRCS_IDLE_AGENT := idle-agent/main.c
+SRCS_INIT         := src/main.c
+SRCS_IDLE_AGENT   := idle-agent/main.c
+SRCS_HEALTH_AGENT := health-agent/main.c
 
 .PHONY: all x86_64 aarch64 clean check-cc-x86_64 check-cc-aarch64
 
@@ -24,7 +25,7 @@ all: x86_64
 
 # --- x86_64 ---
 
-x86_64: check-cc-x86_64 build/x86_64/init build/x86_64/idle-agent
+x86_64: check-cc-x86_64 build/x86_64/init build/x86_64/idle-agent build/x86_64/health-agent
 
 check-cc-x86_64:
 	@command -v $(CC_x86_64) >/dev/null 2>&1 || \
@@ -36,12 +37,15 @@ build/x86_64/init: $(SRCS_INIT) | build/x86_64
 build/x86_64/idle-agent: $(SRCS_IDLE_AGENT) | build/x86_64
 	$(CC_x86_64) $(CFLAGS) -o $@ $(SRCS_IDLE_AGENT)
 
+build/x86_64/health-agent: $(SRCS_HEALTH_AGENT) | build/x86_64
+	$(CC_x86_64) $(CFLAGS) -o $@ $(SRCS_HEALTH_AGENT)
+
 build/x86_64:
 	mkdir -p $@
 
 # --- aarch64 ---
 
-aarch64: check-cc-aarch64 build/aarch64/init build/aarch64/idle-agent
+aarch64: check-cc-aarch64 build/aarch64/init build/aarch64/idle-agent build/aarch64/health-agent
 
 check-cc-aarch64:
 	@command -v $(CC_aarch64) >/dev/null 2>&1 || \
@@ -52,6 +56,9 @@ build/aarch64/init: $(SRCS_INIT) | build/aarch64
 
 build/aarch64/idle-agent: $(SRCS_IDLE_AGENT) | build/aarch64
 	$(CC_aarch64) $(CFLAGS) -o $@ $(SRCS_IDLE_AGENT)
+
+build/aarch64/health-agent: $(SRCS_HEALTH_AGENT) | build/aarch64
+	$(CC_aarch64) $(CFLAGS) -o $@ $(SRCS_HEALTH_AGENT)
 
 build/aarch64:
 	mkdir -p $@

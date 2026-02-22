@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useApi, useWebSocket } from "../hooks";
 import { api, type ClaimResult, type BuildLogEntry } from "../api";
 import { LoadingState, ErrorState, PageHeader, InfoCard, BackLink, ActionButton, StatusIndicator } from "../components";
+import { JsonSyntax } from "../json-syntax";
 
 export function WorkloadDetail({
 	name,
@@ -18,6 +19,7 @@ export function WorkloadDetail({
 	const [claimError, setClaimError] = useState<string | null>(null);
 
 	const [buildLogs, setBuildLogs] = useState<BuildLogEntry[]>([]);
+	const [logCopied, setLogCopied] = useState(false);
 	const logContainerRef = useRef<HTMLDivElement>(null);
 
 	// Fetch logs for any workload that has been through the build pipeline
@@ -92,27 +94,64 @@ export function WorkloadDetail({
 					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
 						Build Log
 					</h3>
-					<div
-						ref={logContainerRef}
-						className="bg-surface-2 rounded-md p-4 max-h-80 overflow-y-auto"
-					>
-						{buildLogs.length === 0 ? (
-							<p className="text-xs font-mono text-muted">Waiting for build output...</p>
-						) : (
-							buildLogs.map((entry, i) => {
-								const isError = entry.text.startsWith("ERROR:");
-								return (
-									<div key={i} className="flex gap-2 text-xs font-mono leading-5">
-										<span className="text-muted shrink-0">
-											{new Date(entry.timestamp).toLocaleTimeString()}
-										</span>
-										<span className={isError ? "text-status-red" : "text-muted-light"}>
-											{entry.text}
-										</span>
-									</div>
-								);
-							})
+					<div className="bg-surface-2 rounded-md relative">
+						{buildLogs.length > 0 && (
+							<button
+								onClick={() => {
+									const text = buildLogs
+										.map((e) => `${new Date(e.timestamp).toISOString()} ${e.text}`)
+										.join("\n");
+									navigator.clipboard.writeText(text).then(() => {
+										setLogCopied(true);
+										setTimeout(() => setLogCopied(false), 2000);
+									});
+								}}
+								className="absolute top-2 right-5 flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-md border border-border bg-surface-3 text-muted hover:text-foreground hover:border-muted transition-colors"
+							>
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									className="w-3.5 h-3.5"
+								>
+									{logCopied ? (
+										<path d="M20 6 9 17l-5-5" />
+									) : (
+										<>
+											<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+											<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+										</>
+									)}
+								</svg>
+								{logCopied ? "copied" : "copy"}
+							</button>
 						)}
+						<div
+							ref={logContainerRef}
+							className="p-4 max-h-80 overflow-y-auto"
+						>
+							{buildLogs.length === 0 ? (
+								<p className="text-xs font-mono text-muted">Waiting for build output...</p>
+							) : (
+								buildLogs.map((entry, i) => {
+									const isError = entry.text.startsWith("ERROR:");
+									return (
+										<div key={i} className="flex gap-2 text-xs font-mono leading-5">
+											<span className="text-muted shrink-0">
+												{new Date(entry.timestamp).toLocaleTimeString()}
+											</span>
+											<span className={isError ? "text-status-red" : "text-muted-light"}>
+												{entry.text}
+											</span>
+										</div>
+									);
+								})
+							)}
+						</div>
 					</div>
 				</div>
 			)}
@@ -173,9 +212,7 @@ export function WorkloadDetail({
 					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
 						Configuration
 					</h3>
-					<pre className="bg-surface-2 rounded-md p-4 text-sm font-mono text-muted-light overflow-x-auto">
-						{JSON.stringify(data.config, null, 2)}
-					</pre>
+					<JsonSyntax data={data.config} />
 				</div>
 			)}
 		</div>

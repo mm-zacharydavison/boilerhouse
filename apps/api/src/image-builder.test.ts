@@ -221,6 +221,7 @@ describe("OciImageBuilder", () => {
 			initBinaryPath: "/opt/guest-init/init",
 			idleAgentPath: "/opt/guest-init/idle-agent",
 			overlayInitPath: "/opt/guest-init/overlay-init.sh",
+			healthAgentPath: "/opt/guest-init/health-agent",
 		};
 
 		test("injects init binaries when initConfig is provided", async () => {

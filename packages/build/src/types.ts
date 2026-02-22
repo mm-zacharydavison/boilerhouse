@@ -36,4 +36,6 @@ export interface InjectConfig {
 	idleAgentPath: string;
 	/** Copied to `/opt/boilerhouse/overlay-init.sh` inside the rootfs. */
 	overlayInitPath: string;
+	/** Copied to `/opt/boilerhouse/health-agent` inside the rootfs. */
+	healthAgentPath: string;
 }

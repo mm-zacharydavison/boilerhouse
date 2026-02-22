@@ -93,6 +93,19 @@ export interface SnapshotLoadRequest {
 	resume_vm?: boolean;
 }
 
+export interface VsockRequest {
+	/**
+	 * Guest CID for the vsock device.
+	 * @example 3
+	 */
+	guest_cid: number;
+	/**
+	 * Path to the Unix domain socket on the host.
+	 * @example "/tmp/instance/vsock.sock"
+	 */
+	uds_path: string;
+}
+
 // ── Response types ──────────────────────────────────────────────────────────
 
 export interface InstanceInfoResponse {

@@ -37,7 +37,7 @@ const dbPath = process.env.DB_PATH ?? "boilerhouse.db";
 const storagePath = process.env.STORAGE_PATH ?? "./data";
 const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
 const workloadsDir = process.env.WORKLOADS_DIR;
-const firecrackerBinary = process.env.FIRECRACKER_BIN ?? "/usr/bin/firecracker";
+const firecrackerBinary = process.env.FIRECRACKER_BIN ?? "/usr/local/bin/firecracker";
 const kernelPath = process.env.KERNEL_PATH ?? "/var/lib/boilerhouse/vmlinux";
 const snapshotDir = process.env.SNAPSHOT_DIR ?? join(storagePath, "snapshots");
 const instanceDir = process.env.INSTANCE_DIR ?? join(storagePath, "instances");
@@ -174,13 +174,17 @@ if (!useJailer && tapManager) {
 	};
 }
 
-if (useJailer) {
+// Both modes create network namespaces (jailer mode for all instances,
+// dev mode for restored instances). Configure netns recovery in both cases.
+{
 	const netnsManager = new NetnsManagerImpl();
-	const jailPreparer = new JailPreparer();
-
 	recoveryOptions.listNetns = () => netnsManager.list();
 	recoveryOptions.destroyNetns = (nsName) => netnsManager.destroyByName(nsName);
 	recoveryOptions.deriveNsName = (id) => deriveNetnsConfig(id).nsName;
+}
+
+if (useJailer) {
+	const jailPreparer = new JailPreparer();
 	recoveryOptions.listJails = async (chrootBaseDir) => {
 		const jailsDir = join(chrootBaseDir, "firecracker");
 		try {
@@ -213,6 +217,7 @@ const imageBuilder = new OciImageBuilder(imagesDir, {
 		initBinaryPath: join(guestInitDir, "build/x86_64/init"),
 		idleAgentPath: join(guestInitDir, "build/x86_64/idle-agent"),
 		overlayInitPath: join(guestInitDir, "overlay-init.sh"),
+		healthAgentPath: join(guestInitDir, "build/x86_64/health-agent"),
 	},
 });
 const buildLogStore = new BuildLogStore(db);

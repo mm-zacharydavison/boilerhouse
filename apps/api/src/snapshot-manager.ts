@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { statSync, readFileSync } from "node:fs";
 import { eq, and } from "drizzle-orm";
 import type {
 	Runtime,
@@ -12,10 +12,10 @@ import { generateInstanceId } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { snapshots, snapshotRefFrom } from "@boilerhouse/db";
 import { applySnapshotTransition } from "./transitions";
-import { pollHealth, createHttpCheck, createExecCheck } from "./health-check";
-import type { HealthConfig, HealthCheckFn } from "./health-check";
+import { pollHealth, createVsockCheck } from "./health-check";
+import type { HealthConfig, HealthCheckFn, VsockCheckHandle } from "./health-check";
 
-export type HealthChecker = (check: HealthCheckFn, config: HealthConfig) => Promise<void>;
+export type HealthChecker = (check: HealthCheckFn, config: HealthConfig, onLog?: (line: string) => void) => Promise<void>;
 
 export interface SnapshotManagerOptions {
 	/**
@@ -66,26 +66,31 @@ export class SnapshotManager {
 		log("Starting bootstrap VM...");
 		await this.runtime.start(handle);
 
+		let vsockHandle: VsockCheckHandle | undefined;
 		try {
-			// Poll health probe if the workload defines one
+			// Poll health probe if the workload defines one.
+			// Both http_get and exec probes run inside the guest VM and
+			// report back via vsock (like Docker HEALTHCHECK).
 			if (workload.health) {
 				const intervalMs = workload.health.interval_seconds * 1000;
-				let check: HealthCheckFn;
 
-				if (workload.health.http_get) {
-					const endpoint = await this.runtime.getEndpoint(handle);
-					const port = workload.health.http_get.port ?? endpoint.ports[0]!;
-					const url = `http://${endpoint.host}:${port}${workload.health.http_get.path}`;
-					log(`Health check: polling ${workload.health.http_get.path} on port ${port}...`);
-					check = createHttpCheck(url);
-				} else {
-					log(`Health check: exec [${workload.health.exec!.command.join(" ")}]...`);
-					check = createExecCheck(
-						this.runtime,
-						handle,
-						workload.health.exec!.command,
+				const vsockUdsPath = handle.meta?.vsockUdsPath;
+				if (!vsockUdsPath) {
+					throw new Error(
+						"health check requires vsock — handle.meta.vsockUdsPath is missing",
 					);
 				}
+
+				if (workload.health.http_get) {
+					const port = workload.health.http_get.port
+						?? (await this.runtime.getEndpoint(handle)).ports[0]!;
+					log(`Health check: http via guest agent [GET localhost:${port}${workload.health.http_get.path}]...`);
+				} else {
+					log(`Health check: exec via guest agent [${workload.health.exec!.command.join(" ")}]...`);
+				}
+
+				vsockHandle = createVsockCheck(vsockUdsPath, 52, log);
+				const check = vsockHandle.check;
 
 				const config: HealthConfig = {
 					interval: intervalMs,
@@ -97,7 +102,7 @@ export class SnapshotManager {
 				};
 
 				log(`Health check: timeout ${Math.round(config.timeoutMs / 1000)}s, interval ${Math.round(intervalMs / 1000)}s, threshold ${workload.health.unhealthy_threshold}`);
-				await this.healthChecker(check, config);
+				await this.healthChecker(check, config, log);
 				log("Health check passed.");
 			}
 
@@ -151,6 +156,23 @@ export class SnapshotManager {
 
 			return goldenRef;
 		} catch (err) {
+			// Dump the guest console log on failure for debugging
+			const consolePath = handle.meta?.consolePath;
+			if (consolePath) {
+				try {
+					const consoleOutput = readFileSync(consolePath, "utf-8");
+					const lines = consoleOutput.split("\n").filter(Boolean);
+					const tail = lines.slice(-100);
+					log("--- Guest console (last 100 lines) ---");
+					for (const line of tail) {
+						log(line);
+					}
+					log("--- End guest console ---");
+				} catch {
+					// Console log may not exist
+				}
+			}
+
 			// Clean up the bootstrap VM on any failure
 			try {
 				await this.runtime.destroy(handle);
@@ -158,6 +180,8 @@ export class SnapshotManager {
 				// Ignore cleanup errors
 			}
 			throw err;
+		} finally {
+			vsockHandle?.cleanup();
 		}
 	}
 

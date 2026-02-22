@@ -11,6 +11,8 @@ export const InstanceHandleSchema = Type.Object({
 	instanceId: InstanceIdSchema,
 	/** Whether the VM is currently running. */
 	running: Type.Boolean(),
+	/** Runtime-specific metadata exposed to consumers. */
+	meta: Type.Optional(Type.Record(Type.String(), Type.String())),
 });
 
 export const EndpointSchema = Type.Object({
@@ -32,6 +34,11 @@ export interface InstanceHandle {
 	instanceId: InstanceId;
 	/** Whether the VM is currently running. */
 	running: boolean;
+	/**
+	 * Runtime-specific metadata exposed to consumers.
+	 * @example { vsockUdsPath: "/var/run/fc/inst-abc/vsock.sock" }
+	 */
+	meta?: Record<string, string>;
 }
 
 export type Endpoint = Static<typeof EndpointSchema>;

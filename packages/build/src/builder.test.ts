@@ -50,14 +50,17 @@ describe.skipIf(!INTEGRATION)("builder", () => {
 		const initBin = join(workDir, "init");
 		const idleAgent = join(workDir, "idle-agent");
 		const overlayInit = join(workDir, "overlay-init.sh");
+		const healthAgent = join(workDir, "health-agent");
 		writeFileSync(initBin, "#!/bin/sh\n# init\n");
 		writeFileSync(idleAgent, "#!/bin/sh\n# idle-agent\n");
 		writeFileSync(overlayInit, "#!/bin/sh\n# overlay-init\n");
+		writeFileSync(healthAgent, "#!/bin/sh\n# health-agent\n");
 
 		injectConfig = {
 			initBinaryPath: initBin,
 			idleAgentPath: idleAgent,
 			overlayInitPath: overlayInit,
+			healthAgentPath: healthAgent,
 		};
 	});
 

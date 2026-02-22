@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { FirecrackerProcessError, JailerProcessError } from "./errors";
 
@@ -9,6 +9,8 @@ export interface FirecrackerProcess {
 	socketPath: string;
 	/** Path to the Firecracker log file. */
 	logPath: string;
+	/** Path to the guest serial console log file. */
+	consolePath: string;
 	/** Kill the Firecracker process. */
 	kill(): void;
 	/**
@@ -26,6 +28,12 @@ export interface SpawnOptions {
 	socketPath: string;
 	/** Path for Firecracker log output. */
 	logPath: string;
+	/**
+	 * Network namespace name. When set, Firecracker is spawned inside this
+	 * netns via `sudo ip netns exec`. The TAP device referenced in the
+	 * vmstate must exist inside this namespace.
+	 */
+	netnsName?: string;
 }
 
 const POLL_INTERVAL_MS = 50;
@@ -33,29 +41,39 @@ const DEFAULT_TIMEOUT_MS = 5000;
 
 /** Spawn a Firecracker VMM process and return a handle for managing it. */
 export function spawnFirecracker(opts: SpawnOptions): FirecrackerProcess {
-	const { binaryPath, socketPath, logPath } = opts;
+	const { binaryPath, socketPath, logPath, netnsName } = opts;
 
-	const proc = Bun.spawn(
-		[
-			binaryPath,
-			"--api-sock",
-			socketPath,
-			"--log-path",
-			logPath,
-			"--level",
-			"Warning",
-			"--boot-timer",
-		],
-		{
-			stdout: "ignore",
-			stderr: "ignore",
-		},
-	);
+	// Capture guest serial console output (Firecracker writes it to stdout)
+	const consolePath = logPath.replace(/\.log$/, ".console.log");
+	const consoleFd = openSync(consolePath, "w");
+
+	const fcArgs = [
+		binaryPath,
+		"--api-sock",
+		socketPath,
+		"--log-path",
+		logPath,
+		"--level",
+		"Warning",
+		"--boot-timer",
+	];
+
+	// When a netns is specified, wrap with `sudo ip netns exec <ns>` so
+	// Firecracker opens the TAP device inside the namespace.
+	const command = netnsName
+		? ["sudo", "ip", "netns", "exec", netnsName, ...fcArgs]
+		: fcArgs;
+
+	const proc = Bun.spawn(command, {
+		stdout: consoleFd,
+		stderr: "ignore",
+	});
 
 	return {
 		proc,
 		socketPath,
 		logPath,
+		consolePath,
 		kill() {
 			proc.kill();
 		},
