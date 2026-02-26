@@ -1,9 +1,9 @@
 [workload]
-name = "httpserver"
-version = "0.1.0"
+name = "e2e-httpserver"
+version = "1.0.0"
 
 [image]
-dockerfile = "httpserver/Dockerfile"
+ref = "docker.io/library/python:3-alpine"
 
 [resources]
 vcpus = 1
@@ -30,4 +30,4 @@ cmd = "/usr/local/bin/python3"
 args = ["-m", "http.server", "8080"]
 
 [metadata]
-description = "Python HTTP server for connectivity testing"
+description = "Python HTTP server for E2E port and health check testing"

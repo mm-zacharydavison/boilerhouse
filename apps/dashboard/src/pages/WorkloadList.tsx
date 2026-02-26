@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Plug, Moon, Trash2, UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Plug, Moon, Trash2, UserPlus, Loader2 } from "lucide-react";
 import { useApi } from "../hooks";
 import {
 	api,
@@ -302,10 +302,13 @@ function InstanceRow({
 	instance,
 	onAction,
 	onConnect,
+	busy,
 }: {
 	instance: InstanceSummary;
 	onAction: (id: string, action: "hibernate" | "destroy") => void;
 	onConnect: (id: string) => void;
+	/** When true, action buttons are replaced with a spinner. */
+	busy?: boolean;
 }) {
 	return (
 		<div className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
@@ -324,15 +327,19 @@ function InstanceRow({
 			<span className="flex-1" />
 
 			{instance.status !== "destroyed" && (
-				<div className="flex items-center gap-0.5">
-					{instance.status === "active" && (
-						<>
-							<IconButton icon={Plug} title="Connect" variant="info" onClick={() => onConnect(instance.instanceId)} />
-							<IconButton icon={Moon} title="Hibernate" variant="info" onClick={() => onAction(instance.instanceId, "hibernate")} />
-						</>
-					)}
-					<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onAction(instance.instanceId, "destroy")} />
-				</div>
+				busy ? (
+					<Loader2 size={13} className="text-muted animate-spin mr-1" />
+				) : (
+					<div className="flex items-center gap-0.5">
+						{instance.status === "active" && (
+							<>
+								<IconButton icon={Plug} title="Connect" variant="info" onClick={() => onConnect(instance.instanceId)} />
+								<IconButton icon={Moon} title="Hibernate" variant="info" onClick={() => onAction(instance.instanceId, "hibernate")} />
+							</>
+						)}
+						<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onAction(instance.instanceId, "destroy")} />
+					</div>
+				)
 			)}
 
 			<span style={{ width: DATE_W }} className="shrink-0 text-muted text-xs tabular-nums text-right">
@@ -351,6 +358,7 @@ function WorkloadGroup({
 	onAction,
 	onConnect,
 	navigate,
+	busyInstances,
 }: {
 	node: WorkloadTreeNode;
 	expanded: boolean;
@@ -358,6 +366,7 @@ function WorkloadGroup({
 	onAction: (id: string, action: "hibernate" | "destroy") => void;
 	onConnect: (id: string) => void;
 	navigate: (path: string) => void;
+	busyInstances: Set<string>;
 }) {
 	const { workload, golden, orphanInstances } = node;
 	const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -408,6 +417,7 @@ function WorkloadGroup({
 									instance={inst.instance}
 									onAction={onAction}
 									onConnect={onConnect}
+									busy={busyInstances.has(inst.instance.instanceId)}
 								/>
 							))}
 							{golden.tenantSnapshots.map((ts) => (
@@ -419,6 +429,7 @@ function WorkloadGroup({
 											instance={inst.instance}
 											onAction={onAction}
 											onConnect={onConnect}
+											busy={busyInstances.has(inst.instance.instanceId)}
 										/>
 									))}
 								</div>
@@ -431,6 +442,7 @@ function WorkloadGroup({
 							instance={inst.instance}
 							onAction={onAction}
 							onConnect={onConnect}
+							busy={busyInstances.has(inst.instance.instanceId)}
 						/>
 					))}
 				</div>
@@ -449,6 +461,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [initialized, setInitialized] = useState(false);
 	const [connectInstanceId, setConnectInstanceId] = useState<string | null>(null);
+	const [busyInstances, setBusyInstances] = useState<Set<string>>(new Set());
 
 	const loading = workloadsApi.loading || snapshotsApi.loading || instancesApi.loading;
 	const error = workloadsApi.error || snapshotsApi.error || instancesApi.error;
@@ -485,12 +498,19 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	}
 
 	async function handleAction(instanceId: string, action: "hibernate" | "destroy") {
+		setBusyInstances((prev) => new Set(prev).add(instanceId));
 		try {
 			if (action === "hibernate") await api.hibernateInstance(instanceId);
 			else await api.destroyInstance(instanceId);
 			refetchAll();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Action failed");
+		} finally {
+			setBusyInstances((prev) => {
+				const next = new Set(prev);
+				next.delete(instanceId);
+				return next;
+			});
 		}
 	}
 
@@ -510,6 +530,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 							onAction={handleAction}
 							onConnect={setConnectInstanceId}
 							navigate={navigate}
+							busyInstances={busyInstances}
 						/>
 					))}
 				</div>

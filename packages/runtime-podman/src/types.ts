@@ -12,4 +12,11 @@ export interface PodmanConfig {
 	 * @example "/run/podman/podman.sock"
 	 */
 	socketPath?: string;
+
+	/**
+	 * Base directory for resolving workload Dockerfile paths.
+	 * Required when workloads use `image.dockerfile` instead of `image.ref`.
+	 * @example "/home/user/boilerhouse/workloads"
+	 */
+	workloadsDir?: string;
 }

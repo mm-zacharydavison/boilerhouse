@@ -255,8 +255,9 @@ describe("TenantManager", () => {
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			const result = await tenantManager.claim(tenantId, workloadId);
 
-			expect(result.endpoint.host).toBeTruthy();
-			expect(result.endpoint.ports.length).toBeGreaterThan(0);
+			expect(result.endpoint).not.toBeNull();
+			expect(result.endpoint!.host).toBeTruthy();
+			expect(result.endpoint!.ports.length).toBeGreaterThan(0);
 		});
 
 		test("response includes latencyMs >= 0", async () => {

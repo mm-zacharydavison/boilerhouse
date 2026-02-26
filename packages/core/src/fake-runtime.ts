@@ -81,11 +81,13 @@ export class FakeRuntime implements Runtime {
 
 	async destroy(handle: InstanceHandle): Promise<void> {
 		await this.maybeDelay("destroy");
-		const instance = this.requireInstance(handle.instanceId);
-		instance.destroyed = true;
-		instance.running = false;
+		const instance = this.instances.get(handle.instanceId);
+		if (instance) {
+			instance.destroyed = true;
+			instance.running = false;
+			this.instances.delete(handle.instanceId);
+		}
 		handle.running = false;
-		this.instances.delete(handle.instanceId);
 	}
 
 	async snapshot(handle: InstanceHandle): Promise<SnapshotRef> {

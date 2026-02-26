@@ -1,5 +1,5 @@
 [workload]
-name = "e2e-podman"
+name = "e2e-minimal"
 version = "1.0.0"
 
 [image]
@@ -14,8 +14,12 @@ disk_gb = 1
 access = "none"
 
 [idle]
+timeout_seconds = 300
 action = "hibernate"
 
 [entrypoint]
 cmd = "/bin/sh"
 args = ["-c", "while true; do sleep 1; done"]
+
+[metadata]
+description = "Minimal Alpine container for E2E testing"

@@ -14,7 +14,7 @@ for (const rt of availableRuntimes()) {
 
 		test("3 tenants claim and release in parallel", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload
 			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
@@ -52,9 +52,9 @@ for (const rt of availableRuntimes()) {
 			const activeInstances = await activeRes.json();
 			expect(activeInstances.length).toBe(3);
 
-			// Step 4: Verify distinct endpoints (skip if no networking)
-			if (rt.capabilities.networking) {
-				const endpoints = claimResults.map((r) => r.body.endpoint);
+			// Step 4: Verify distinct endpoints (skip if no ports exposed)
+			const endpoints = claimResults.map((r) => r.body.endpoint);
+			if (endpoints[0]?.ports?.length > 0) {
 				const endpointKeys = endpoints.map(
 					(e: { host: string; ports: number[] }) => `${e.host}:${e.ports.join(",")}`,
 				);

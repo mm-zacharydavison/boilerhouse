@@ -305,6 +305,31 @@ describe("PodmanClient", () => {
 		expect(receivedBody?.toString()).toBe("fake-archive-data");
 	});
 
+	test("restoreContainer() includes publishPorts when provided", async () => {
+		setupMock((req) => {
+			expect(req.url).toContain("publishPorts=");
+			// "8080 9090" URL-encoded
+			expect(req.url).toContain(encodeURIComponent("8080 9090"));
+			return { status: 200, body: { Id: "restored-456" } };
+		});
+
+		const id = await client.restoreContainer(
+			Buffer.from("archive"),
+			"new-ctr",
+			["8080", "9090"],
+		);
+		expect(id).toBe("restored-456");
+	});
+
+	test("restoreContainer() omits publishPorts when not provided", async () => {
+		setupMock((req) => {
+			expect(req.url).not.toContain("publishPorts");
+			return { status: 200, body: { Id: "restored-789" } };
+		});
+
+		await client.restoreContainer(Buffer.from("archive"), "new-ctr");
+	});
+
 	test("restoreContainer() throws on failure", async () => {
 		setupMock(() => ({
 			status: 500,
@@ -329,6 +354,57 @@ describe("PodmanClient", () => {
 
 		const id = await client.execCreate("container-id", ["echo", "hello"]);
 		expect(id).toBe("exec-session-123");
+	});
+
+	test("buildImage() sends tar context and tag", async () => {
+		const fakeTar = Buffer.from("fake-tar-context");
+
+		setupMock((req, body) => {
+			expect(req.method).toBe("POST");
+			expect(req.url).toContain("/libpod/build");
+			expect(req.url).toContain("t=myimage%3Alatest");
+			expect(req.url).toContain("dockerfile=Dockerfile");
+			expect(req.url).toContain("rm=true");
+			expect(req.headers["content-type"]).toBe("application/x-tar");
+			expect(body.toString()).toBe("fake-tar-context");
+			return {
+				status: 200,
+				rawBody: Buffer.from(
+					'{"stream":"Step 1/2 : FROM alpine"}\n{"stream":"Successfully built abc123"}\n',
+				),
+			};
+		});
+
+		await client.buildImage(fakeTar, "myimage:latest");
+	});
+
+	test("buildImage() with custom dockerfile path", async () => {
+		setupMock((req) => {
+			expect(req.url).toContain("dockerfile=custom%2FDockerfile");
+			return {
+				status: 200,
+				rawBody: Buffer.from('{"stream":"done"}\n'),
+			};
+		});
+
+		await client.buildImage(
+			Buffer.from("tar"),
+			"test:1.0",
+			"custom/Dockerfile",
+		);
+	});
+
+	test("buildImage() throws on build error in stream", async () => {
+		setupMock(() => ({
+			status: 200,
+			rawBody: Buffer.from(
+				'{"stream":"Step 1/2"}\n{"error":"COPY failed: file not found"}\n',
+			),
+		}));
+
+		await expect(
+			client.buildImage(Buffer.from("tar"), "bad:latest"),
+		).rejects.toThrow("COPY failed");
 	});
 
 	test("connection error throws PodmanRuntimeError", async () => {

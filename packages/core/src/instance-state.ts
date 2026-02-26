@@ -50,7 +50,7 @@ export const INSTANCE_EVENTS = [
 // ── Machine ─────────────────────────────────────────────────────────────────
 
 const transitions: TransitionMap<InstanceStatus, InstanceEvent> = {
-	starting: { started: "active" },
+	starting: { started: "active", destroy: "destroying" },
 	active: { hibernate: "hibernated", destroy: "destroying" },
 	hibernated: { restore: "starting", destroy: "destroying" },
 	destroying: { destroyed: "destroyed" },

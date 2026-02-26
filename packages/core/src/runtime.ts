@@ -17,8 +17,8 @@ export const InstanceHandleSchema = Type.Object({
 
 export const EndpointSchema = Type.Object({
 	host: Type.String({ minLength: 1 }),
-	/** Guest ports exposed by the workload. */
-	ports: Type.Array(Type.Integer({ exclusiveMinimum: 0 }), { minItems: 1 }),
+	/** Host-mapped ports exposed by the workload. Empty for no-network containers. */
+	ports: Type.Array(Type.Integer({ exclusiveMinimum: 0 })),
 });
 
 // ── Types ────────────────────────────────────────────────────────────────────

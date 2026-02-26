@@ -9,35 +9,53 @@ to provide instant, fork-style tenant provisioning from golden snapshots.
 
 - [Bun](https://bun.sh) >= 1.3
 - [Podman](https://podman.io) >= 5.0
+- [crun](https://github.com/containers/crun) (OCI runtime with CRIU support)
 - [CRIU](https://criu.org) >= 4.0
 
 ## Setup
 
 ### 1. Install system dependencies
 
+The setup script installs podman, crun, and CRIU, then configures podman to use crun:
+
+```bash
+sudo scripts/setup-podman.sh
+```
+
+Or install manually:
+
 #### Ubuntu / Debian
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y podman criu
+sudo apt-get install -y podman crun criu
 ```
 
 #### Fedora / RHEL
 
 ```bash
-sudo dnf install -y podman criu
+sudo dnf install -y podman crun criu
 ```
 
 ### 2. Verify installation
 
 ```bash
 podman --version          # should print >= 5.0
-podman info --format '{{.Host.CriuEnabled}}'  # should print "true"
+crun --version            # should be installed
+podman info --format '{{.Host.OCIRuntime.Name}}'  # should print "crun"
+podman info --format '{{.Host.CriuEnabled}}'      # should print "true"
+```
+
+If the OCI runtime is `runc` instead of `crun`, add to `/etc/containers/containers.conf`:
+```ini
+[engine]
+runtime = "crun"
 ```
 
 If CRIU shows as disabled, check that:
 - The `criu` binary is installed and on `$PATH`
 - You're running podman as root (rootful mode) — rootless podman does not support CRIU
+- The OCI runtime is `crun`, not `runc` (`runc` has poor CRIU support)
 
 ### 3. Start the rootful podman daemon
 

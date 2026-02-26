@@ -1,9 +1,9 @@
 [workload]
-name = "openclaw"
-version = "0.1.0"
+name = "e2e-openclaw"
+version = "1.0.0"
 
 [image]
-dockerfile = "openclaw/Dockerfile"
+ref = "docker.io/library/python:3-alpine"
 
 [resources]
 vcpus = 2
@@ -19,9 +19,6 @@ allowlist = [
 ]
 expose = [{ guest = 18789, host_range = [30000, 30099] }]
 
-[filesystem]
-overlay_dirs = ["/root/.openclaw"]
-
 [idle]
 timeout_seconds = 600
 action = "hibernate"
@@ -31,14 +28,12 @@ interval_seconds = 2
 unhealthy_threshold = 60
 
 [health.http_get]
-path = "/__openclaw__/canvas/"
+path = "/"
 port = 18789
 
 [entrypoint]
-workdir = "/app"
-cmd = "node"
-args = ["openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"]
+cmd = "/usr/local/bin/python3"
+args = ["-m", "http.server", "18789"]
 
 [metadata]
-description = "OpenClaw autonomous AI agent"
-homepage = "https://github.com/openclaw/openclaw"
+description = "OpenClaw stand-in for E2E restricted network testing"

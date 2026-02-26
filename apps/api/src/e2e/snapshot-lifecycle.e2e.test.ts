@@ -14,7 +14,7 @@ for (const rt of availableRuntimes()) {
 
 		test.skipIf(!rt.capabilities.snapshot)("release hibernates, re-claim restores from snapshot", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload (idle.action = "hibernate" in fixture)
 			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
@@ -74,9 +74,9 @@ for (const rt of availableRuntimes()) {
 			const endpoint2Res = await api(server, "GET", `/api/v1/instances/${newInstanceId}/endpoint`);
 			expect(endpoint2Res.status).toBe(200);
 
-			// Step 9: Verify reachable (skip if no networking)
-			if (rt.capabilities.networking) {
-				const endpoint2Body = await endpoint2Res.json();
+			// Step 9: Verify reachable (only for real runtimes with ports)
+			const endpoint2Body = await endpoint2Res.json();
+			if (rt.capabilities.networking && endpoint2Body.endpoint?.ports?.length > 0) {
 				const { host, ports } = endpoint2Body.endpoint;
 				const resp = await fetch(`http://${host}:${ports[0]}`);
 				expect(resp.ok).toBe(true);

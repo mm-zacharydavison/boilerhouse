@@ -15,7 +15,7 @@ for (const rt of availableRuntimes()) {
 		test("failed instance creation leaves no orphans, system recovers", async () => {
 			server = await startE2EServer(rt.name);
 			const brokenToml = await readFixture(rt.brokenWorkloadFixture);
-			const workingToml = await readFixture(rt.workloadFixture);
+			const workingToml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// For fake runtime, inject failure on "start" operation
 			if (rt.name === "fake" && server.fakeFailOn) {

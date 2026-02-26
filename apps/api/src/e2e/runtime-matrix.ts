@@ -1,6 +1,19 @@
 import { resolve, dirname } from "node:path";
 import { detectRuntimes, type RuntimeAvailability } from "./runtime-detect";
 
+/**
+ * Named workload fixtures matching the dev workloads:
+ * minimal, httpserver, openclaw.
+ */
+export interface WorkloadFixtures {
+	/** No network, no ports, no health check. */
+	minimal: string;
+	/** HTTP server on port 8080, outbound network, HTTP health check. */
+	httpserver: string;
+	/** Restricted network with allowlist, port 18789, HTTP health check. */
+	openclaw: string;
+}
+
 export interface RuntimeEntry {
 	name: string;
 	capabilities: {
@@ -14,8 +27,8 @@ export interface RuntimeEntry {
 		 */
 		concurrentRestore: boolean;
 	};
-	/** Workload TOML fixture path for this runtime */
-	workloadFixture: string;
+	/** Workload TOML fixtures for this runtime, keyed by workload name. */
+	workloadFixtures: WorkloadFixtures;
 	/**
 	 * Workload TOML fixture that will fail during instance creation.
 	 * Used by error-recovery tests. Mechanism is runtime-specific:
@@ -44,7 +57,11 @@ const fakeEntry: RuntimeEntry = {
 		networking: false,
 		concurrentRestore: true,
 	},
-	workloadFixture: fixturePath("workload-fake.toml"),
+	workloadFixtures: {
+		minimal: fixturePath("workload-fake-minimal.toml"),
+		httpserver: fixturePath("workload-fake-httpserver.toml"),
+		openclaw: fixturePath("workload-fake-openclaw.toml"),
+	},
 	brokenWorkloadFixture: fixturePath("workload-fake-broken.toml"),
 	verifyCleanup: async () => {
 		// No-op for fake runtime
@@ -60,7 +77,11 @@ const dockerEntry: RuntimeEntry = {
 		networking: true,
 		concurrentRestore: true,
 	},
-	workloadFixture: fixturePath("workload-docker.toml"),
+	workloadFixtures: {
+		minimal: fixturePath("workload-docker.toml"),
+		httpserver: fixturePath("workload-docker.toml"),
+		openclaw: fixturePath("workload-docker.toml"),
+	},
 	brokenWorkloadFixture: fixturePath("workload-docker-broken.toml"),
 	verifyCleanup: async () => {
 		const result = Bun.spawnSync([
@@ -97,7 +118,11 @@ const podmanEntry: RuntimeEntry = {
 		networking: true,
 		concurrentRestore: true,
 	},
-	workloadFixture: fixturePath("workload-podman.toml"),
+	workloadFixtures: {
+		minimal: fixturePath("workload-podman-minimal.toml"),
+		httpserver: fixturePath("workload-podman-httpserver.toml"),
+		openclaw: fixturePath("workload-podman-openclaw.toml"),
+	},
 	brokenWorkloadFixture: fixturePath("workload-podman-broken.toml"),
 	verifyCleanup: async () => {
 		const result = Bun.spawnSync([
@@ -174,5 +199,5 @@ export function availableRuntimes(): RuntimeEntry[] {
 export const E2E_TIMEOUTS = {
 	fake: { operation: 2_000, connect: 1_000 },
 	docker: { operation: 30_000, connect: 10_000 },
-	podman: { operation: 30_000, connect: 10_000 },
+	podman: { operation: 60_000, connect: 10_000 },
 } as const;

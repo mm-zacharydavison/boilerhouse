@@ -1,3 +1,6 @@
+import { resolve, dirname, basename, join } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import type { InstanceId } from "@boilerhouse/core";
 import { generateSnapshotId, generateWorkloadId, generateNodeId } from "@boilerhouse/core";
 import type { SnapshotRef, SnapshotPaths, SnapshotMetadata } from "@boilerhouse/core";
@@ -20,10 +23,12 @@ interface ManagedContainer {
 export class PodmanRuntime implements Runtime {
 	private readonly containers = new Map<string, ManagedContainer>();
 	private readonly snapshotDir: string;
+	private readonly workloadsDir: string | undefined;
 	private readonly client: PodmanClient;
 
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
+		this.workloadsDir = config.workloadsDir;
 		this.client = new PodmanClient({
 			socketPath: config.socketPath ?? DEFAULT_SOCKET_PATH,
 		});
@@ -39,16 +44,7 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	async create(workload: Workload, instanceId: InstanceId): Promise<InstanceHandle> {
-		const imageRef = workload.image.ref;
-		if (!imageRef) {
-			throw new PodmanRuntimeError("Workload must have image.ref set");
-		}
-
-		// Pull image if not already present
-		const exists = await this.client.imageExists(imageRef);
-		if (!exists) {
-			await this.client.pullImage(imageRef);
-		}
+		const imageRef = await this.ensureImage(workload);
 
 		// Build container create spec
 		const spec: ContainerCreateSpec = {
@@ -65,22 +61,22 @@ export class PodmanRuntime implements Runtime {
 			},
 		};
 
-		// Network mode
+		// Network mode — "none" means no network namespace at all (no port mappings possible)
 		if (workload.network.access === "none") {
 			spec.netns = { nsmode: "none" };
-		}
-
-		// Port mappings
-		const exposePorts = workload.network.expose;
-		if (exposePorts && exposePorts.length > 0) {
-			spec.portmappings = exposePorts.map((mapping) => ({
-				container_port: mapping.guest,
-				host_port: 0,
-				protocol: "tcp",
-			}));
 		} else {
-			// Default: expose port 8080
-			spec.portmappings = [{ container_port: 8080, host_port: 0, protocol: "tcp" }];
+			// Port mappings only make sense when a network namespace exists
+			const exposePorts = workload.network.expose;
+			if (exposePorts && exposePorts.length > 0) {
+				spec.portmappings = exposePorts.map((mapping) => ({
+					container_port: mapping.guest,
+					host_port: 0,
+					protocol: "tcp",
+				}));
+			} else {
+				// Default: expose port 8080
+				spec.portmappings = [{ container_port: 8080, host_port: 0, protocol: "tcp" }];
+			}
 		}
 
 		// Entrypoint overrides
@@ -133,17 +129,30 @@ export class PodmanRuntime implements Runtime {
 		const snapshotId = generateSnapshotId();
 
 		const archiveDir = `${this.snapshotDir}/${snapshotId}`;
-		await Bun.$`mkdir -p ${archiveDir}`.quiet();
+		try {
+			await Bun.$`mkdir -p ${archiveDir}`.quiet();
+		} catch {
+			throw new PodmanRuntimeError(
+				`Cannot create snapshot directory ${archiveDir} — check that ${this.snapshotDir} exists and is writable`,
+			);
+		}
 
 		const archivePath = `${archiveDir}/checkpoint.tar.gz`;
 
 		// Checkpoint streams the archive as the response body
 		const archiveBuffer = await this.client.checkpointContainer(handle.instanceId);
-		await Bun.write(archivePath, archiveBuffer);
 
 		// Container is stopped after checkpoint
 		container.running = false;
 		handle.running = false;
+
+		// Rewrite the archive to zero out baked-in host ports.
+		// Without this, restoring the same snapshot twice would fail because
+		// both containers try to bind the same host port.
+		const { archive: rewrittenArchive, containerPorts } =
+			await rewriteCheckpointPorts(archiveBuffer);
+
+		await Bun.write(archivePath, rewrittenArchive);
 
 		const info = await this.client.info();
 		const architecture = await this.getArchitecture();
@@ -156,7 +165,7 @@ export class PodmanRuntime implements Runtime {
 		const runtimeMeta: SnapshotMetadata = {
 			runtimeVersion: info.version.Version,
 			architecture,
-			exposedPorts: container.ports.length > 0 ? container.ports : undefined,
+			exposedPorts: containerPorts.length > 0 ? containerPorts : undefined,
 		};
 
 		return {
@@ -170,11 +179,18 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	async restore(ref: SnapshotRef, instanceId: InstanceId): Promise<InstanceHandle> {
-		// Read archive from disk and POST to the API
+		// The archive was already rewritten at snapshot time to have hostPort=0,
+		// which prevents "address already in use" conflicts on restore.
+		// We also pass publishPorts so podman sets up fresh port forwarding.
 		const archiveData = await Bun.file(ref.paths.vmstate).arrayBuffer();
 		const archive = Buffer.from(archiveData);
 
-		await this.client.restoreContainer(archive, instanceId);
+		// Build publishPorts specs from the snapshot's exposed container ports.
+		// Just the container port number — podman picks a random host port.
+		const containerPorts = ref.runtimeMeta?.exposedPorts;
+		const publishPorts = containerPorts?.map((p) => String(p));
+
+		await this.client.restoreContainer(archive, instanceId, publishPorts);
 
 		const ports = await this.resolveHostPorts(instanceId);
 
@@ -204,9 +220,7 @@ export class PodmanRuntime implements Runtime {
 		}
 
 		if (ports.length === 0) {
-			throw new PodmanRuntimeError(
-				`No published ports for container ${handle.instanceId}`,
-			);
+			return { host: "127.0.0.1", ports: [] };
 		}
 
 		return { host: "127.0.0.1", ports };
@@ -217,6 +231,76 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	// ── Private helpers ──────────────────────────────────────────────────────
+
+	/**
+	 * Ensure the workload's image is available locally.
+	 *
+	 * - If `image.ref` is set, pull from registry if not cached.
+	 * - If `image.dockerfile` is set, build from the Dockerfile (requires
+	 *   `workloadsDir` in config). The built image is tagged as
+	 *   `boilerhouse/<name>:<version>`.
+	 *
+	 * Returns the image reference to use for container creation.
+	 */
+	private async ensureImage(workload: Workload): Promise<string> {
+		if (workload.image.ref) {
+			const exists = await this.client.imageExists(workload.image.ref);
+			if (!exists) {
+				await this.client.pullImage(workload.image.ref);
+			}
+			return workload.image.ref;
+		}
+
+		if (workload.image.dockerfile) {
+			if (!this.workloadsDir) {
+				throw new PodmanRuntimeError(
+					"Workload uses image.dockerfile but PodmanConfig.workloadsDir is not set",
+				);
+			}
+
+			const tag = `boilerhouse/${workload.workload.name}:${workload.workload.version}`;
+
+			// Skip build if image already exists
+			const exists = await this.client.imageExists(tag);
+			if (exists) {
+				return tag;
+			}
+
+			const dockerfilePath = resolve(this.workloadsDir, workload.image.dockerfile);
+			const contextDir = dirname(dockerfilePath);
+			const dockerfileName = basename(dockerfilePath);
+
+			// Create a tar archive of the build context
+			const proc = Bun.spawn(["tar", "-cf", "-", "-C", contextDir, "."], {
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+
+			const [tarData, tarErr] = await Promise.all([
+				new Response(proc.stdout).arrayBuffer(),
+				new Response(proc.stderr).text(),
+			]);
+			const exitCode = await proc.exited;
+
+			if (exitCode !== 0) {
+				throw new PodmanRuntimeError(
+					`Failed to create build context tar: ${tarErr.trim()}`,
+				);
+			}
+
+			await this.client.buildImage(
+				Buffer.from(tarData),
+				tag,
+				dockerfileName,
+			);
+
+			return tag;
+		}
+
+		throw new PodmanRuntimeError(
+			"Workload must have either image.ref or image.dockerfile set",
+		);
+	}
 
 	private requireContainer(instanceId: InstanceId): ManagedContainer {
 		const container = this.containers.get(instanceId);
@@ -257,5 +341,85 @@ export class PodmanRuntime implements Runtime {
 		const stdout = await new Response(proc.stdout).text();
 		await proc.exited;
 		return stdout.trim() || "unknown";
+	}
+}
+
+// ── Checkpoint archive rewriting ────────────────────────────────────────────
+
+/** Port mapping entry as stored in a podman checkpoint's `config.dump`. */
+interface CheckpointPortMapping {
+	container_port: number;
+	host_port: number;
+	host_ip?: string;
+	range?: number;
+	protocol?: string;
+}
+
+/**
+ * Rewrites a CRIU checkpoint tar.gz archive to zero out baked-in host ports
+ * in `config.dump`. This forces podman to assign fresh random host ports on
+ * each restore, preventing "address already in use" conflicts.
+ *
+ * Also extracts the container ports from the archive so they can be stored
+ * in snapshot metadata.
+ *
+ * @returns The modified archive and the container ports found in config.dump.
+ */
+export async function rewriteCheckpointPorts(
+	archive: Buffer,
+): Promise<{ archive: Buffer; containerPorts: number[] }> {
+	const tmpDir = mkdtempSync(join(tmpdir(), "bh-checkpoint-rewrite-"));
+	try {
+		const archivePath = join(tmpDir, "checkpoint.tar.gz");
+		const extractDir = join(tmpDir, "extracted");
+
+		await Bun.write(archivePath, archive);
+		await Bun.$`mkdir -p ${extractDir}`.quiet();
+
+		// Detect if archive is gzip-compressed (magic bytes 0x1f 0x8b)
+		const isGzip = archive.length >= 2 && archive[0] === 0x1f && archive[1] === 0x8b;
+		const tarFlags = isGzip ? "-xzf" : "-xf";
+
+		// --no-same-owner / --no-same-permissions: the checkpoint archive is
+		// created by rootful podman and may contain root-owned entries that
+		// fail to extract as a regular user.
+		await Bun.$`tar ${tarFlags} ${archivePath} -C ${extractDir} --no-same-owner --no-same-permissions`.quiet();
+
+		// Read and modify config.dump
+		const configPath = join(extractDir, "config.dump");
+		const configFile = Bun.file(configPath);
+
+		if (!(await configFile.exists())) {
+			// No config.dump means no port mappings to rewrite
+			return { archive, containerPorts: [] };
+		}
+
+		const config = (await configFile.json()) as Record<string, unknown>;
+		const portMappings = config.newPortMappings as CheckpointPortMapping[] | undefined;
+
+		if (!portMappings || portMappings.length === 0) {
+			return { archive, containerPorts: [] };
+		}
+
+		// Extract container ports, then zero out host ports
+		const containerPorts: number[] = [];
+		for (const mapping of portMappings) {
+			if (mapping.container_port > 0) {
+				containerPorts.push(mapping.container_port);
+			}
+			mapping.host_port = 0;
+		}
+
+		await Bun.write(configPath, JSON.stringify(config));
+
+		// Re-archive in the same format as the original
+		const repackFlags = isGzip ? "-czf" : "-cf";
+		const modifiedPath = join(tmpDir, "modified.tar.gz");
+		await Bun.$`tar ${repackFlags} ${modifiedPath} -C ${extractDir} .`.quiet();
+
+		const modifiedData = await Bun.file(modifiedPath).arrayBuffer();
+		return { archive: Buffer.from(modifiedData), containerPorts };
+	} finally {
+		await Bun.$`rm -rf ${tmpDir}`.quiet().nothrow();
 	}
 }

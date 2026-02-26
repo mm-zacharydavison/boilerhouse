@@ -108,16 +108,17 @@ describe("FakeRuntime", () => {
 		expect(await runtime.available()).toBe(true);
 	});
 
-	test("operations on a destroyed instance throw", async () => {
+	test("operations on a destroyed instance throw (except destroy, which is idempotent)", async () => {
 		const runtime = new FakeRuntime();
 		const handle = await runtime.create(minimalWorkload(), generateInstanceId());
 		await runtime.start(handle);
 		await runtime.destroy(handle);
 
 		await expect(runtime.start(handle)).rejects.toThrow(/destroyed/i);
-		await expect(runtime.destroy(handle)).rejects.toThrow(/destroyed/i);
 		await expect(runtime.snapshot(handle)).rejects.toThrow(/destroyed/i);
 		await expect(runtime.getEndpoint(handle)).rejects.toThrow(/destroyed/i);
+		// destroy is idempotent — no-op on already-destroyed instances
+		await expect(runtime.destroy(handle)).resolves.toBeUndefined();
 	});
 
 	test("configurable latency adds delay to operations", async () => {

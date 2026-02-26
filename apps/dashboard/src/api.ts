@@ -120,7 +120,7 @@ export interface NodeDetail extends NodeSummary {
 export interface InstanceEndpoint {
 	instanceId: string;
 	status: string;
-	endpoint: { host: string; port: number };
+	endpoint: { host: string; ports: number[] };
 }
 
 export interface SnapshotSummary {

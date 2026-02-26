@@ -32,6 +32,10 @@ describe("instance state machine", () => {
 		test("hibernated → destroying (via 'destroy' event)", () => {
 			expect(transition("hibernated", "destroy")).toBe("destroying");
 		});
+
+		test("starting → destroying (via 'destroy' event)", () => {
+			expect(transition("starting", "destroy")).toBe("destroying");
+		});
 	});
 
 	describe("invalid transitions", () => {

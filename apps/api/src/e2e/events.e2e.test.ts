@@ -23,7 +23,7 @@ for (const rt of availableRuntimes()) {
 
 		test("WebSocket receives domain events during claim/release", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Open WebSocket connection
 			const wsUrl = server.baseUrl.replace("http://", "ws://") + "/ws";

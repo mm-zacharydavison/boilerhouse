@@ -230,11 +230,20 @@ export class PodmanClient {
 	/**
 	 * Restore a container from a checkpoint archive.
 	 * Returns the new container ID.
+	 *
+	 * @param publishPorts - Container port specs for fresh host port allocation.
+	 *   Podman assigns a random available host port for each.
+	 *   @example `["8080", "9090"]`
 	 */
-	async restoreContainer(archive: Buffer, name: string): Promise<string> {
-		const path =
-			`/libpod/containers/restore` +
+	async restoreContainer(archive: Buffer, name: string, publishPorts?: string[]): Promise<string> {
+		let path =
+			`/libpod/containers/${encodeURIComponent(name)}/restore` +
 			`?import=true&name=${encodeURIComponent(name)}`;
+
+		if (publishPorts && publishPorts.length > 0) {
+			path += `&publishPorts=${encodeURIComponent(publishPorts.join(" "))}`;
+		}
+
 		const res = await this.request("POST", path, archive);
 		if (res.status !== 200) {
 			const msg =
@@ -298,6 +307,53 @@ export class PodmanClient {
 			stdout: stdout.trim(),
 			stderr: stderr.trim(),
 		};
+	}
+
+	/**
+	 * Build an image from a tar build context.
+	 *
+	 * The context tar must include the Dockerfile. The response streams
+	 * JSON build output; we wait for completion and check for errors.
+	 *
+	 * @param contextTar - tar archive of the build context
+	 * @param tag - image tag to apply (e.g. "boilerhouse/httpserver:0.1.0")
+	 * @param dockerfile - path to Dockerfile within the context
+	 */
+	async buildImage(
+		contextTar: Buffer,
+		tag: string,
+		dockerfile = "Dockerfile",
+	): Promise<void> {
+		const params = new URLSearchParams({
+			dockerfile,
+			t: tag,
+			rm: "true",
+			forcerm: "true",
+		});
+
+		const raw = await this.requestRaw(
+			"POST",
+			`/libpod/build?${params.toString()}`,
+			contextTar,
+		);
+
+		// The build API streams newline-delimited JSON objects.
+		// Check the last object for an error field.
+		const text = raw.toString("utf-8").trim();
+		const lines = text.split("\n").filter(Boolean);
+		for (const line of lines) {
+			try {
+				const obj = JSON.parse(line) as Record<string, unknown>;
+				if (obj.error) {
+					throw new PodmanRuntimeError(
+						`Image build failed: ${String(obj.error)}`,
+					);
+				}
+			} catch (e) {
+				if (e instanceof PodmanRuntimeError) throw e;
+				// Non-JSON lines are normal build output, ignore
+			}
+		}
 	}
 
 	// ── Internal helpers ─────────────────────────────────────────────────────

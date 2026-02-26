@@ -34,7 +34,9 @@ export const errorHandler = new Elysia({ name: "error-handler" }).onError(
 			return { error: "Not found" };
 		}
 
+		console.error("Unhandled API error:", error);
 		set.status = 500;
-		return { error: "Internal server error" };
+		const message = error instanceof Error ? error.message : "Internal server error";
+		return { error: message };
 	},
 );

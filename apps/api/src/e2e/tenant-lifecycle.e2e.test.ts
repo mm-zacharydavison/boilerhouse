@@ -17,7 +17,7 @@ for (const rt of availableRuntimes()) {
 
 		test("full claim/release cycle with snapshot restore", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload
 			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
@@ -53,8 +53,8 @@ for (const rt of availableRuntimes()) {
 			expect(tenantBody.instance).toBeDefined();
 			expect(tenantBody.instance.status).toBe("active");
 
-			// Step 5: Verify instance reachable (skip if no networking)
-			if (rt.capabilities.networking) {
+			// Step 5: Verify instance reachable (only for real runtimes with ports)
+			if (rt.capabilities.networking && claim1Body.endpoint?.ports?.length > 0) {
 				const { host, ports } = claim1Body.endpoint;
 				const resp = await fetch(`http://${host}:${ports[0]}`);
 				expect(resp.ok).toBe(true);

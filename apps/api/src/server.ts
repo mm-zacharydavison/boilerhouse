@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
 import type { Runtime, RuntimeType, Workload } from "@boilerhouse/core";
@@ -27,6 +28,10 @@ const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
 const workloadsDir = process.env.WORKLOADS_DIR;
 const podmanSocket = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
 
+// Ensure data directories exist
+mkdirSync(snapshotDir, { recursive: true });
+mkdirSync(storagePath, { recursive: true });
+
 const db = initDatabase(dbPath);
 const existingNode = db.select().from(nodes).get();
 const nodeId = existingNode ? existingNode.nodeId : generateNodeId();
@@ -46,7 +51,11 @@ if (!existingNode) {
 
 let runtime: Runtime;
 if (runtimeType === "podman") {
-	runtime = new PodmanRuntime({ snapshotDir, socketPath: podmanSocket });
+	runtime = new PodmanRuntime({
+		snapshotDir,
+		socketPath: podmanSocket,
+		workloadsDir: workloadsDir ? workloadsDir : undefined,
+	});
 } else {
 	runtime = new FakeRuntime();
 }

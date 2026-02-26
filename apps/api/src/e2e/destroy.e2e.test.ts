@@ -14,7 +14,7 @@ for (const rt of availableRuntimes()) {
 
 		test("destroy active instance, verify cannot operate on it", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload and claim tenant
 			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);

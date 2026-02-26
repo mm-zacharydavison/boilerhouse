@@ -14,7 +14,7 @@ for (const rt of availableRuntimes()) {
 
 		test("two different tenants can claim the same workload sequentially", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixture);
+			const toml = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Register workload
 			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);

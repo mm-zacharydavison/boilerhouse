@@ -1,6 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import type {
 	InstanceId,
+	InstanceHandle,
 	WorkloadId,
 	NodeId,
 	TenantId,
@@ -23,7 +24,7 @@ export type ClaimSource = "existing" | "snapshot" | "cold+data" | "golden";
 export interface ClaimResult {
 	tenantId: TenantId;
 	instanceId: InstanceId;
-	endpoint: Endpoint;
+	endpoint: Endpoint | null;
 	source: ClaimSource;
 	latencyMs: number;
 }
@@ -72,7 +73,7 @@ export class TenantManager {
 
 		if (existingInstance) {
 			const handle = instanceHandleFrom(existingInstance.instanceId, existingInstance.status);
-			const endpoint = await this.instanceManager.getEndpoint(handle);
+			const endpoint = await this.safeGetEndpoint(handle);
 
 			return {
 				tenantId,
@@ -188,7 +189,7 @@ export class TenantManager {
 		this.upsertTenant(tenantId, workloadId, handle.instanceId);
 		this.updateInstanceClaimed(handle.instanceId);
 
-		const endpoint = await this.instanceManager.getEndpoint(handle);
+		const endpoint = await this.safeGetEndpoint(handle);
 
 		this.logClaim(tenantId, handle.instanceId, workloadId, source);
 		this.startIdleWatch(handle.instanceId, workloadId);
@@ -200,6 +201,13 @@ export class TenantManager {
 			source,
 			latencyMs: performance.now() - start,
 		};
+	}
+
+	/** Returns the endpoint, or null for containers with no exposed ports. */
+	private async safeGetEndpoint(handle: InstanceHandle): Promise<Endpoint | null> {
+		const endpoint = await this.instanceManager.getEndpoint(handle);
+		if (endpoint.ports.length === 0) return null;
+		return endpoint;
 	}
 
 	private getSnapshotRef(snapshotId: SnapshotId): SnapshotRef | null {
