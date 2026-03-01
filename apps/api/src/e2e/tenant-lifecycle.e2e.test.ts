@@ -17,10 +17,10 @@ for (const rt of availableRuntimes()) {
 
 		test("full claim/release cycle with snapshot restore", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixtures.httpserver);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(registerRes.status).toBe(201);
 			const registerBody = await registerRes.json();
 			const workloadName = registerBody.name;

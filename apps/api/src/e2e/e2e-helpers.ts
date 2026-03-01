@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
-import type { Runtime, TenantId } from "@boilerhouse/core";
+import { FakeRuntime, generateNodeId, resolveWorkloadConfig } from "@boilerhouse/core";
+import type { Runtime, TenantId, Workload, WorkloadConfig } from "@boilerhouse/core";
 import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -214,7 +214,6 @@ export async function api(
 
 	if (body !== undefined) {
 		if (typeof body === "string") {
-			// TOML or other text bodies
 			headers["Content-Type"] = "text/plain";
 			reqBody = body;
 		} else {
@@ -231,10 +230,12 @@ export async function api(
 }
 
 /**
- * Reads a workload fixture file and returns its TOML content.
+ * Imports a workload fixture `.ts` file and resolves it to a canonical
+ * {@link Workload} object ready for JSON serialization to the API.
  */
-export async function readFixture(path: string): Promise<string> {
-	return Bun.file(path).text();
+export async function readFixture(path: string): Promise<Workload> {
+	const mod = await import(path);
+	return resolveWorkloadConfig(mod.default as WorkloadConfig);
 }
 
 /**

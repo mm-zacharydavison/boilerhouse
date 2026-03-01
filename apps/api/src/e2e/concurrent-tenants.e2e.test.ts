@@ -14,10 +14,10 @@ for (const rt of availableRuntimes()) {
 
 		test("3 tenants claim and release in parallel", async () => {
 			server = await startE2EServer(rt.name);
-			const toml = await readFixture(rt.workloadFixtures.httpserver);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
 
 			// Step 1: Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(registerRes.status).toBe(201);
 			const { name: workloadName } = await registerRes.json();
 

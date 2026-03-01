@@ -1,6 +1,26 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { parse as parseTOML } from "smol-toml";
+
+// ── SecretRef ────────────────────────────────────────────────────────────────
+
+const SECRET_BRAND = Symbol("SecretRef");
+
+export interface SecretRef {
+	[SECRET_BRAND]: true;
+	name: string;
+}
+
+/**
+ * Marks a header value as a secret reference, resolved at request time.
+ * @example secret("ANTHROPIC_API_KEY") → serialized as "${global-secret:ANTHROPIC_API_KEY}"
+ */
+export function secret(name: string): SecretRef {
+	return { [SECRET_BRAND]: true, name };
+}
+
+export function isSecretRef(value: unknown): value is SecretRef {
+	return typeof value === "object" && value !== null && SECRET_BRAND in value;
+}
 
 // ── Sub-schemas ──────────────────────────────────────────────────────────────
 
@@ -161,22 +181,15 @@ export class WorkloadParseError extends Error {
 	}
 }
 
-// ── Parser ───────────────────────────────────────────────────────────────────
+// ── Validators ──────────────────────────────────────────────────────────────
 
 /**
- * Parses a workload TOML string and returns a validated {@link Workload}.
- * Throws {@link WorkloadParseError} for any validation failures.
+ * Validates an unknown JSON body against the {@link WorkloadSchema}.
+ * Applies defaults and runs custom validation checks.
+ * Throws {@link WorkloadParseError} on any validation failures.
  */
-export function parseWorkload(toml: string): Workload {
-	let raw: Record<string, unknown>;
-	try {
-		raw = parseTOML(toml) as Record<string, unknown>;
-	} catch (e) {
-		throw new WorkloadParseError(
-			`Invalid TOML: ${e instanceof Error ? e.message : String(e)}`,
-		);
-	}
-
+export function validateWorkload(body: unknown): Workload {
+	const raw = body as Record<string, unknown>;
 	Value.Default(WorkloadSchema, raw);
 	checkImageMutualExclusivity(raw);
 	checkHealthProbeMutualExclusivity(raw);
@@ -243,6 +256,135 @@ function checkCredentialConstraints(raw: Record<string, unknown>): void {
 		}
 	}
 }
+
+// ── TypeScript config API ────────────────────────────────────────────────────
+
+/** Header value in a WorkloadConfig — either a literal string or a secret reference. */
+type HeaderValue = string | SecretRef;
+
+/** Credential rule in user-facing config — header values accept SecretRef. */
+interface WorkloadConfigCredentialRule {
+	domain: string;
+	headers: Record<string, HeaderValue>;
+}
+
+/**
+ * User-facing workload configuration shape. Compared to the canonical
+ * {@link Workload} stored in the DB:
+ * - `name` and `version` are top-level (no `workload` wrapper)
+ * - Credential header values accept `SecretRef` (serialized on resolve)
+ * - Optional fields may be omitted entirely (defaults applied on resolve)
+ */
+export interface WorkloadConfig {
+	name: string;
+	version: string;
+	image: { ref?: string; dockerfile?: string };
+	resources: { vcpus: number; memory_mb: number; disk_gb?: number };
+	network?: {
+		/** @default "none" */
+		access?: NetworkAccess;
+		allowlist?: string[];
+		expose?: Array<{ guest: number; host_range: [number, number] }>;
+		credentials?: WorkloadConfigCredentialRule[];
+	};
+	filesystem?: {
+		overlay_dirs?: string[];
+		bind_mounts?: Array<{ host: string; guest: string; readonly?: boolean }>;
+	};
+	idle?: {
+		watch_dirs?: string[];
+		timeout_seconds?: number;
+		/** @default "hibernate" */
+		action?: IdleAction;
+	};
+	health?: {
+		interval_seconds: number;
+		unhealthy_threshold: number;
+		/** @default 60 */
+		check_timeout_seconds?: number;
+		http_get?: { path: string; port?: number };
+		exec?: { command: string[] };
+	};
+	entrypoint?: {
+		cmd: string;
+		args?: string[];
+		env?: Record<string, string>;
+		workdir?: string;
+	};
+	metadata?: Record<string, unknown>;
+}
+
+/**
+ * Identity function that provides type checking for workload config files.
+ * @example
+ * ```ts
+ * export default defineWorkload({ name: "my-app", ... });
+ * ```
+ */
+export function defineWorkload(config: WorkloadConfig): WorkloadConfig {
+	return config;
+}
+
+/**
+ * Converts a user-facing {@link WorkloadConfig} into the canonical
+ * {@link Workload} shape stored in the database.
+ *
+ * - Wraps `name`/`version` into `{ workload: { name, version } }`
+ * - Serializes {@link SecretRef} values to `"${global-secret:NAME}"` strings
+ * - Applies defaults and validates against {@link WorkloadSchema}
+ * - Throws {@link WorkloadParseError} on validation failures
+ */
+export function resolveWorkloadConfig(config: WorkloadConfig): Workload {
+	const raw: Record<string, unknown> = {
+		workload: { name: config.name, version: config.version },
+		image: config.image,
+		resources: config.resources,
+	};
+
+	if (config.network) {
+		const network: Record<string, unknown> = { ...config.network };
+
+		// Serialize SecretRef values in credentials
+		if (config.network.credentials) {
+			network.credentials = config.network.credentials.map((cred) => ({
+				domain: cred.domain,
+				headers: Object.fromEntries(
+					Object.entries(cred.headers).map(([key, val]) => [
+						key,
+						isSecretRef(val) ? `\${global-secret:${val.name}}` : val,
+					]),
+				),
+			}));
+		}
+
+		raw.network = network;
+	}
+
+	if (config.filesystem) raw.filesystem = config.filesystem;
+	if (config.idle) raw.idle = config.idle;
+	if (config.health) raw.health = config.health;
+	if (config.entrypoint) raw.entrypoint = config.entrypoint;
+	if (config.metadata) raw.metadata = config.metadata;
+
+	Value.Default(WorkloadSchema, raw);
+	checkImageMutualExclusivity(raw);
+	checkHealthProbeMutualExclusivity(raw);
+	checkCredentialConstraints(raw);
+
+	if (!Value.Check(WorkloadSchema, raw)) {
+		const errors = [...Value.Errors(WorkloadSchema, raw)];
+		const messages = errors.map(
+			(err) => `${err.path}: ${err.message}`,
+		);
+		throw new WorkloadParseError(
+			`Invalid workload definition:\n${messages.join("\n")}`,
+		);
+	}
+
+	return raw as Workload;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function checkImageMutualExclusivity(raw: Record<string, unknown>): void {
 	const image = raw.image as Record<string, unknown> | undefined;

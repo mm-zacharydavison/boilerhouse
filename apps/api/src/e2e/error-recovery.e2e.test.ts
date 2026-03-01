@@ -14,8 +14,8 @@ for (const rt of availableRuntimes()) {
 
 		test("failed instance creation leaves no orphans, system recovers", async () => {
 			server = await startE2EServer(rt.name);
-			const brokenToml = await readFixture(rt.brokenWorkloadFixture);
-			const workingToml = await readFixture(rt.workloadFixtures.httpserver);
+			const brokenWorkload = await readFixture(rt.brokenWorkloadFixture);
+			const workingFixture = await readFixture(rt.workloadFixtures.httpserver);
 
 			// For fake runtime, inject failure on "start" operation
 			if (rt.name === "fake" && server.fakeFailOn) {
@@ -23,7 +23,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 1: Register broken workload (parsing succeeds, failure at instance create)
-			const brokenRegRes = await api(server, "POST", "/api/v1/workloads", brokenToml);
+			const brokenRegRes = await api(server, "POST", "/api/v1/workloads", brokenWorkload);
 			// Workload registers with status "creating", golden creation fails in background
 			expect(brokenRegRes.status).toBe(201);
 
@@ -65,7 +65,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 6: Register a working workload and claim — system recovered
-			const workingRegRes = await api(server, "POST", "/api/v1/workloads", workingToml);
+			const workingRegRes = await api(server, "POST", "/api/v1/workloads", workingFixture);
 			expect(workingRegRes.status).toBe(201);
 			const workingBody = await workingRegRes.json();
 

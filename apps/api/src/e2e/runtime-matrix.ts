@@ -27,10 +27,10 @@ export interface RuntimeEntry {
 		 */
 		concurrentRestore: boolean;
 	};
-	/** Workload TOML fixtures for this runtime, keyed by workload name. */
+	/** Workload fixture paths for this runtime, keyed by workload name. */
 	workloadFixtures: WorkloadFixtures;
 	/**
-	 * Workload TOML fixture that will fail during instance creation.
+	 * Workload fixture that will fail during instance creation.
 	 * Used by error-recovery tests. Mechanism is runtime-specific:
 	 * - fake: server started with failOn config
 	 * - docker: workload references a nonexistent image
@@ -58,11 +58,11 @@ const fakeEntry: RuntimeEntry = {
 		concurrentRestore: true,
 	},
 	workloadFixtures: {
-		minimal: fixturePath("workload-fake-minimal.toml"),
-		httpserver: fixturePath("workload-fake-httpserver.toml"),
-		openclaw: fixturePath("workload-fake-openclaw.toml"),
+		minimal: fixturePath("workload-fake-minimal.workload.ts"),
+		httpserver: fixturePath("workload-fake-httpserver.workload.ts"),
+		openclaw: fixturePath("workload-fake-openclaw.workload.ts"),
 	},
-	brokenWorkloadFixture: fixturePath("workload-fake-broken.toml"),
+	brokenWorkloadFixture: fixturePath("workload-fake-broken.workload.ts"),
 	verifyCleanup: async () => {
 		// No-op for fake runtime
 	},
@@ -78,11 +78,11 @@ const dockerEntry: RuntimeEntry = {
 		concurrentRestore: true,
 	},
 	workloadFixtures: {
-		minimal: fixturePath("workload-docker.toml"),
-		httpserver: fixturePath("workload-docker.toml"),
-		openclaw: fixturePath("workload-docker.toml"),
+		minimal: fixturePath("workload-docker.workload.ts"),
+		httpserver: fixturePath("workload-docker.workload.ts"),
+		openclaw: fixturePath("workload-docker.workload.ts"),
 	},
-	brokenWorkloadFixture: fixturePath("workload-docker-broken.toml"),
+	brokenWorkloadFixture: fixturePath("workload-docker-broken.workload.ts"),
 	verifyCleanup: async () => {
 		const result = Bun.spawnSync([
 			"docker",
@@ -119,11 +119,11 @@ const podmanEntry: RuntimeEntry = {
 		concurrentRestore: true,
 	},
 	workloadFixtures: {
-		minimal: fixturePath("workload-podman-minimal.toml"),
-		httpserver: fixturePath("workload-podman-httpserver.toml"),
-		openclaw: fixturePath("workload-podman-openclaw.toml"),
+		minimal: fixturePath("workload-podman-minimal.workload.ts"),
+		httpserver: fixturePath("workload-podman-httpserver.workload.ts"),
+		openclaw: fixturePath("workload-podman-openclaw.workload.ts"),
 	},
-	brokenWorkloadFixture: fixturePath("workload-podman-broken.toml"),
+	brokenWorkloadFixture: fixturePath("workload-podman-broken.workload.ts"),
 	verifyCleanup: async () => {
 		const result = Bun.spawnSync([
 			"podman",

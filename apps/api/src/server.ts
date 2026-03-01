@@ -90,7 +90,7 @@ if (runtimeType === "podman") {
 
 // Load workload definitions from disk if configured
 if (workloadsDir) {
-	const result = loadWorkloadsFromDir(db, workloadsDir);
+	const result = await loadWorkloadsFromDir(db, workloadsDir);
 	log.info(
 		{ loaded: result.loaded, updated: result.updated, unchanged: result.unchanged, errors: result.errors.length },
 		"Workloads loaded from disk",

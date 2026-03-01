@@ -1,8 +1,8 @@
 import { Glob } from "bun";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
 import { eq, and } from "drizzle-orm";
-import { parseWorkload, generateWorkloadId } from "@boilerhouse/core";
+import { resolveWorkloadConfig, generateWorkloadId } from "@boilerhouse/core";
+import type { WorkloadConfig } from "@boilerhouse/core";
 import type { DrizzleDb } from "./database";
 import { workloads } from "./schema";
 
@@ -18,19 +18,21 @@ export interface WorkloadLoaderResult {
 }
 
 /**
- * Scan a directory for `*.toml` files, parse each as a workload definition,
- * and upsert into the database.
+ * Scan a directory for `*.workload.ts` workload definition files, dynamically import
+ * each, resolve through {@link resolveWorkloadConfig}, and upsert into the
+ * database.
  *
  * Matches on `(name, version)`. If the config has changed, updates it.
- * If it already matches, skips. Parse errors are collected without aborting.
+ * If it already matches, skips. Import/validation errors are collected without
+ * aborting.
  *
  * @param db - Drizzle database instance
  * @param dir - Path to the workloads directory
  */
-export function loadWorkloadsFromDir(
+export async function loadWorkloadsFromDir(
 	db: DrizzleDb,
 	dir: string,
-): WorkloadLoaderResult {
+): Promise<WorkloadLoaderResult> {
 	const result: WorkloadLoaderResult = {
 		loaded: 0,
 		updated: 0,
@@ -38,14 +40,18 @@ export function loadWorkloadsFromDir(
 		errors: [],
 	};
 
-	const glob = new Glob("**/*.toml");
+	const glob = new Glob("**/*.workload.ts");
 	const files = Array.from(glob.scanSync({ cwd: dir }));
 
 	for (const file of files) {
+
 		const fullPath = join(dir, file);
-		let content: string;
+
+		let mod: { default?: WorkloadConfig };
 		try {
-			content = readFileSync(fullPath, "utf-8");
+			// Cache-bust with mtime so re-imports pick up file changes
+			const mtime = Bun.file(fullPath).lastModified;
+			mod = await import(`${fullPath}?v=${mtime}`);
 		} catch (err) {
 			result.errors.push({
 				file,
@@ -54,9 +60,17 @@ export function loadWorkloadsFromDir(
 			continue;
 		}
 
+		if (!mod.default) {
+			result.errors.push({
+				file,
+				error: "Module has no default export",
+			});
+			continue;
+		}
+
 		let workload;
 		try {
-			workload = parseWorkload(content);
+			workload = resolveWorkloadConfig(mod.default);
 		} catch (err) {
 			result.errors.push({
 				file,

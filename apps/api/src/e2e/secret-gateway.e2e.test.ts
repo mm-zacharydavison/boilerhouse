@@ -27,14 +27,12 @@ for (const entry of runtimes) {
 			server = await startE2EServer(entry.name);
 
 			// Register openclaw workload (has network.credentials with global-secret)
-			const toml = await readFixture(entry.workloadFixtures.openclaw);
-			const res = await api(server, "POST", "/api/v1/workloads", toml);
+			const fixture = await readFixture(entry.workloadFixtures.openclaw);
+			const res = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(res.status).toBe(201);
 
-			// Derive workload name from TOML content (not file path)
-			workloadName = toml.includes("e2e-fake-openclaw")
-				? "e2e-fake-openclaw"
-				: "e2e-openclaw";
+			const registerBody = await res.json();
+			workloadName = registerBody.name;
 
 			await waitForWorkloadReady(server, workloadName, timeouts.operation);
 		}, 120_000);

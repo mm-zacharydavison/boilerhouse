@@ -10,7 +10,6 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@sinclair/typebox": "^0.34.48",
-		"smol-toml": "^1.6.0"
+		"@sinclair/typebox": "^0.34.48"
 	}
 }

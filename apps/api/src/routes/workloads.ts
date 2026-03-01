@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { eq, count, and, not } from "drizzle-orm";
-import { parseWorkload, generateWorkloadId } from "@boilerhouse/core";
+import { validateWorkload, generateWorkloadId } from "@boilerhouse/core";
 import { workloads, instances, snapshots } from "@boilerhouse/db";
 import type { RouteDeps } from "./deps";
 
@@ -9,11 +9,17 @@ export function workloadRoutes(deps: RouteDeps) {
 
 	return new Elysia({ name: "workloads" })
 		.post("/workloads", async ({ request, set }) => {
-			const toml = await request.text();
+			let body: unknown;
+			try {
+				body = await request.json();
+			} catch {
+				set.status = 400;
+				return { error: "Invalid JSON" };
+			}
 
 			let workload;
 			try {
-				workload = parseWorkload(toml);
+				workload = validateWorkload(body);
 			} catch (err) {
 				set.status = 400;
 				const message =

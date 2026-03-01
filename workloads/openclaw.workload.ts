@@ -1,0 +1,43 @@
+import { defineWorkload, secret } from "@boilerhouse/core";
+
+export default defineWorkload({
+	name: "openclaw",
+	version: "0.1.0",
+	image: { ref: "localhost/openclaw:latest" },
+	resources: { vcpus: 2, memory_mb: 2048, disk_gb: 10 },
+	network: {
+		access: "restricted",
+		allowlist: [
+			"api.anthropic.com",
+			"api.openai.com",
+			"registry.npmjs.org",
+		],
+		expose: [{ guest: 18789, host_range: [30000, 30099] }],
+		credentials: [{
+			domain: "api.anthropic.com",
+			headers: { "x-api-key": secret("ANTHROPIC_API_KEY") },
+		}],
+	},
+	filesystem: { overlay_dirs: ["/home/node/.openclaw"] },
+	idle: { timeout_seconds: 600, action: "hibernate" },
+	health: {
+		interval_seconds: 2,
+		unhealthy_threshold: 60,
+		http_get: { path: "/__openclaw/control-ui-config.json", port: 18789 },
+	},
+	entrypoint: {
+		workdir: "/app",
+		cmd: "node",
+		args: ["--disable-warning=ExperimentalWarning", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"],
+		env: {
+			OPENCLAW_GATEWAY_TOKEN: "73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470",
+			ANTHROPIC_BASE_URL: "http://api.anthropic.com",
+			ANTHROPIC_API_KEY: "sk-ant-proxy-managed",
+		},
+	},
+	metadata: {
+		description: "OpenClaw autonomous AI agent",
+		homepage: "https://github.com/openclaw/openclaw",
+		connect_url: "/?token=73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470",
+	},
+});

@@ -47,9 +47,15 @@ export {
 	type HttpGetProbe,
 	type ExecProbe,
 	type CredentialRule,
+	type WorkloadConfig,
+	type SecretRef,
 	WorkloadSchema,
-	parseWorkload,
+	validateWorkload,
 	WorkloadParseError,
+	defineWorkload,
+	resolveWorkloadConfig,
+	secret,
+	isSecretRef,
 } from "./workload";
 
 export {

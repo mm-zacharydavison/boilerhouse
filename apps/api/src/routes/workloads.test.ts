@@ -4,18 +4,13 @@ import type { Workload } from "@boilerhouse/core";
 import { workloads, snapshots } from "@boilerhouse/db";
 import { createTestApp, apiRequest } from "../test-helpers";
 
-const VALID_TOML = `
-[workload]
-name = "my-app"
-version = "1.0.0"
-
-[image]
-ref = "ghcr.io/test:latest"
-
-[resources]
-vcpus = 1
-memory_mb = 512
-`;
+const VALID_WORKLOAD: Workload = {
+	workload: { name: "my-app", version: "1.0.0" },
+	image: { ref: "ghcr.io/test:latest" },
+	resources: { vcpus: 1, memory_mb: 512, disk_gb: 2 },
+	network: { access: "none" },
+	idle: { action: "hibernate" },
+};
 
 const MINIMAL_WORKLOAD: Workload = {
 	workload: { name: "existing", version: "1.0.0" },
@@ -26,13 +21,13 @@ const MINIMAL_WORKLOAD: Workload = {
 };
 
 describe("POST /api/v1/workloads", () => {
-	test("creates a workload from valid TOML", async () => {
+	test("creates a workload from valid JSON", async () => {
 		const { app } = createTestApp();
 
 		const res = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: VALID_TOML,
-			headers: { "content-type": "text/plain" },
+			body: JSON.stringify(VALID_WORKLOAD),
+			headers: { "content-type": "application/json" },
 		});
 
 		expect(res.status).toBe(201);
@@ -47,8 +42,8 @@ describe("POST /api/v1/workloads", () => {
 
 		const res = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: VALID_TOML,
-			headers: { "content-type": "text/plain" },
+			body: JSON.stringify(VALID_WORKLOAD),
+			headers: { "content-type": "application/json" },
 		});
 
 		expect(res.status).toBe(201);
@@ -63,13 +58,13 @@ describe("POST /api/v1/workloads", () => {
 		expect(snapshotRows[0]!.type).toBe("golden");
 	});
 
-	test("returns 400 for invalid TOML", async () => {
+	test("returns 400 for invalid JSON", async () => {
 		const { app } = createTestApp();
 
 		const res = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: "not valid toml {{{{",
-			headers: { "content-type": "text/plain" },
+			body: "not valid json {{{{",
+			headers: { "content-type": "application/json" },
 		});
 
 		expect(res.status).toBe(400);
@@ -77,13 +72,13 @@ describe("POST /api/v1/workloads", () => {
 		expect(body.error).toBeDefined();
 	});
 
-	test("returns 400 for TOML missing required fields", async () => {
+	test("returns 400 for JSON missing required fields", async () => {
 		const { app } = createTestApp();
 
 		const res = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: `[workload]\nname = "foo"\nversion = "1.0.0"`,
-			headers: { "content-type": "text/plain" },
+			body: JSON.stringify({ workload: { name: "foo", version: "1.0.0" } }),
+			headers: { "content-type": "application/json" },
 		});
 
 		expect(res.status).toBe(400);
@@ -95,16 +90,16 @@ describe("POST /api/v1/workloads", () => {
 		// First insert
 		const res1 = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: VALID_TOML,
-			headers: { "content-type": "text/plain" },
+			body: JSON.stringify(VALID_WORKLOAD),
+			headers: { "content-type": "application/json" },
 		});
 		expect(res1.status).toBe(201);
 
 		// Duplicate
 		const res2 = await apiRequest(app, "/api/v1/workloads", {
 			method: "POST",
-			body: VALID_TOML,
-			headers: { "content-type": "text/plain" },
+			body: JSON.stringify(VALID_WORKLOAD),
+			headers: { "content-type": "application/json" },
 		});
 		expect(res2.status).toBe(409);
 	});

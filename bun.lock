@@ -42,7 +42,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
-        "smol-toml": "^1.6.0",
       },
     },
     "packages/db": {
@@ -71,6 +70,13 @@
         "@boilerhouse/core": "workspace:*",
       },
     },
+    "workloads": {
+      "name": "@boilerhouse/workloads",
+      "version": "0.0.1",
+      "dependencies": {
+        "@boilerhouse/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@babel/runtime": ["@babel/runtime@7.28.6", "", {}, "sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA=="],
@@ -86,6 +92,8 @@
     "@boilerhouse/logger": ["@boilerhouse/logger@workspace:packages/logger"],
 
     "@boilerhouse/runtime-podman": ["@boilerhouse/runtime-podman@workspace:packages/runtime-podman"],
+
+    "@boilerhouse/workloads": ["@boilerhouse/workloads@workspace:workloads"],
 
     "@borewit/text-codec": ["@borewit/text-codec@0.2.1", "", {}, "sha512-k7vvKPbf7J2fZ5klGRD9AeKfUvojuZIQ3BT5u7Jfv+puwXkUBUT5PVyMDfJZpy30CBDXGMgw7fguK/lpOMBvgw=="],
 
@@ -338,8 +346,6 @@
     "scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 
     "secure-json-parse": ["secure-json-parse@4.1.0", "", {}, "sha512-l4KnYfEyqYJxDwlNVyRfO2E4NTHfMKAWdUuA8J0yve2Dz/E/PdBepY03RvyJpssIpRFwJoCD55wA+mEDs6ByWA=="],
-
-    "smol-toml": ["smol-toml@1.6.0", "", {}, "sha512-4zemZi0HvTnYwLfrpk/CF9LOd9Lt87kAt50GnqhMpyF9U3poDAP2+iukq2bZsO/ufegbYehBkqINbsWxj4l4cw=="],
 
     "sonic-boom": ["sonic-boom@4.2.1", "", { "dependencies": { "atomic-sleep": "^1.0.0" } }, "sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q=="],
 

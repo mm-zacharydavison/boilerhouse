@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { WorkloadParseError, InvalidTransitionError } from "@boilerhouse/core";
+import { InvalidTransitionError } from "@boilerhouse/core";
 import { NoGoldenSnapshotError } from "../tenant-manager";
 import { SnapshotNotFoundError } from "../instance-manager";
 
@@ -7,11 +7,6 @@ export const errorHandler = new Elysia({ name: "error-handler" }).onError(
 	({ error, set }) => {
 		if (error instanceof InvalidTransitionError) {
 			set.status = 409;
-			return { error: error.message };
-		}
-
-		if (error instanceof WorkloadParseError) {
-			set.status = 400;
 			return { error: error.message };
 		}
 

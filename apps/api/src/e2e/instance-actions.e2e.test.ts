@@ -27,9 +27,9 @@ for (const rt of availableRuntimes()) {
 		 * the workloadName and instanceId for further action testing.
 		 */
 		async function setupActiveInstance(tenantId: string) {
-			const toml = await readFixture(rt.workloadFixtures.httpserver);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
 
-			const registerRes = await api(server, "POST", "/api/v1/workloads", toml);
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(registerRes.status).toBe(201);
 			const { name: workloadName } = await registerRes.json();
 
