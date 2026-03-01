@@ -5,6 +5,7 @@ import type {
 	InstanceId,
 	WorkloadId,
 	NodeId,
+	TenantId,
 	SnapshotRef,
 	Workload,
 } from "@boilerhouse/core";
@@ -14,6 +15,7 @@ import { snapshots, snapshotRefFrom } from "@boilerhouse/db";
 import { applySnapshotTransition } from "./transitions";
 import { pollHealth, createExecCheck, createHttpCheck } from "./health-check";
 import type { HealthConfig, HealthCheckFn } from "./health-check";
+import type { ProxyRegistrar } from "./proxy-registrar";
 
 export type HealthChecker = (check: HealthCheckFn, config: HealthConfig, onLog?: (line: string) => void) => Promise<void>;
 
@@ -29,11 +31,16 @@ export interface SnapshotManagerOptions {
 	 * @default 120000
 	 */
 	defaultHealthTimeoutMs?: number;
+	/**
+	 * Proxy registrar for golden boot containers that need network access.
+	 */
+	proxyRegistrar?: ProxyRegistrar;
 }
 
 export class SnapshotManager {
 	private readonly healthChecker: HealthChecker;
 	private readonly defaultHealthTimeoutMs: number;
+	private readonly proxyRegistrar?: ProxyRegistrar;
 
 	constructor(
 		private readonly runtime: Runtime,
@@ -43,6 +50,7 @@ export class SnapshotManager {
 	) {
 		this.healthChecker = options?.healthChecker ?? pollHealth;
 		this.defaultHealthTimeoutMs = options?.defaultHealthTimeoutMs ?? 120_000;
+		this.proxyRegistrar = options?.proxyRegistrar;
 	}
 
 	/**
@@ -65,6 +73,15 @@ export class SnapshotManager {
 
 		log("Starting bootstrap instance...");
 		await this.runtime.start(handle);
+
+		// Register in proxy so the bootstrap container can reach the network
+		if (this.proxyRegistrar && this.runtime.getContainerIp && workload.network.access !== "none") {
+			const ip = await this.runtime.getContainerIp(handle);
+			if (ip) {
+				this.proxyRegistrar.registerInstance(ip, workload, "" as TenantId);
+				log(`Proxy route registered for ${ip}`);
+			}
+		}
 
 		try {
 			// Poll health probe if the workload defines one.
@@ -146,6 +163,9 @@ export class SnapshotManager {
 
 			applySnapshotTransition(this.db, goldenRef.id, "creating", "created");
 
+			// Deregister proxy route before destroying
+			await this.deregisterBootstrapProxy(handle);
+
 			log("Destroying bootstrap instance...");
 			// Destroy the bootstrap instance
 			await this.runtime.destroy(handle);
@@ -154,6 +174,7 @@ export class SnapshotManager {
 		} catch (err) {
 			// Clean up the bootstrap instance on any failure
 			try {
+				await this.deregisterBootstrapProxy(handle);
 				await this.runtime.destroy(handle);
 			} catch {
 				// Ignore cleanup errors
@@ -189,6 +210,14 @@ export class SnapshotManager {
 	/** Fast boolean check for whether a golden snapshot exists. */
 	goldenExists(workloadId: WorkloadId, nodeId: NodeId): boolean {
 		return this.getGolden(workloadId, nodeId) !== null;
+	}
+
+	private async deregisterBootstrapProxy(handle: { instanceId: InstanceId }): Promise<void> {
+		if (!this.proxyRegistrar || !this.runtime.getContainerIp) return;
+		const ip = await this.runtime.getContainerIp(handle as any);
+		if (ip) {
+			this.proxyRegistrar.deregisterInstance(ip);
+		}
 	}
 
 	/** Computes total size of snapshot files. */

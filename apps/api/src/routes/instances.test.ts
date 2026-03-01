@@ -135,6 +135,66 @@ describe("POST /api/v1/instances/:id/hibernate", () => {
 	});
 });
 
+describe("POST /api/v1/instances/:id/exec", () => {
+	test("executes a command in an active instance", async () => {
+		const ctx = createTestApp();
+		const workloadId = seedWorkload(ctx);
+
+		const handle = await ctx.instanceManager.create(workloadId, MINIMAL_WORKLOAD);
+
+		const res = await apiRequest(
+			ctx.app,
+			`/api/v1/instances/${handle.instanceId}/exec`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ command: ["echo", "hello"] }),
+			},
+		);
+		const body = await res.json();
+
+		expect(res.status).toBe(200);
+		expect(body.exitCode).toBe(0);
+		expect(body.stdout).toBeDefined();
+		expect(body.stderr).toBeDefined();
+	});
+
+	test("returns 404 for nonexistent instance", async () => {
+		const ctx = createTestApp();
+		const res = await apiRequest(
+			ctx.app,
+			"/api/v1/instances/nonexistent/exec",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ command: ["echo"] }),
+			},
+		);
+
+		expect(res.status).toBe(404);
+	});
+
+	test("returns 409 for non-active instance", async () => {
+		const ctx = createTestApp();
+		const workloadId = seedWorkload(ctx);
+
+		const handle = await ctx.instanceManager.create(workloadId, MINIMAL_WORKLOAD);
+		await ctx.instanceManager.destroy(handle.instanceId);
+
+		const res = await apiRequest(
+			ctx.app,
+			`/api/v1/instances/${handle.instanceId}/exec`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ command: ["echo"] }),
+			},
+		);
+
+		expect(res.status).toBe(409);
+	});
+});
+
 describe("POST /api/v1/instances/:id/destroy", () => {
 	test("destroys an active instance", async () => {
 		const ctx = createTestApp();

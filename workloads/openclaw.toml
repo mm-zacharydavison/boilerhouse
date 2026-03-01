@@ -41,7 +41,14 @@ args = ["--disable-warning=ExperimentalWarning", "openclaw.mjs", "gateway", "--a
 
 [entrypoint.env]
 OPENCLAW_GATEWAY_TOKEN = "73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470"
-ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
+ANTHROPIC_BASE_URL = "http://api.anthropic.com"
+ANTHROPIC_API_KEY = "sk-ant-proxy-managed"
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "${global-secret:ANTHROPIC_API_KEY}"
 
 [metadata]
 description = "OpenClaw autonomous AI agent"

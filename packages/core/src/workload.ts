@@ -21,6 +21,18 @@ const NetworkAccessSchema = Type.Union([
 	Type.Literal("restricted"),
 ], { default: "none" });
 
+const CredentialRuleSchema = Type.Object({
+	/** Domain this credential rule applies to (e.g. "api.anthropic.com"). */
+	domain: Type.String({ minLength: 1 }),
+	/**
+	 * Headers to inject into outbound requests to this domain.
+	 * Values may contain `${global-secret:NAME}` or `${tenant-secret:NAME}`
+	 * references resolved at request time.
+	 * @example { "x-api-key": "${global-secret:ANTHROPIC_API_KEY}" }
+	 */
+	headers: Type.Record(Type.String(), Type.String()),
+});
+
 const IdleActionSchema = Type.Union([
 	Type.Literal("hibernate"),
 	Type.Literal("destroy"),
@@ -72,6 +84,12 @@ export const WorkloadSchema = Type.Object({
 		access: NetworkAccessSchema,
 		allowlist: Type.Optional(Type.Array(Type.String())),
 		expose: Type.Optional(Type.Array(PortExposeSchema)),
+		/**
+		 * Credential rules for outbound HTTP requests.
+		 * The proxy injects specified headers when the container makes
+		 * requests to the matching domain.
+		 */
+		credentials: Type.Optional(Type.Array(CredentialRuleSchema)),
 	}, { default: { access: "none" } }),
 	filesystem: Type.Optional(
 		Type.Object({
@@ -132,6 +150,7 @@ export type PortExpose = Static<typeof PortExposeSchema>;
 export type BindMount = Static<typeof BindMountSchema>;
 export type HttpGetProbe = Static<typeof HttpGetProbeSchema>;
 export type ExecProbe = Static<typeof ExecProbeSchema>;
+export type CredentialRule = Static<typeof CredentialRuleSchema>;
 
 // ── Error class ──────────────────────────────────────────────────────────────
 
@@ -161,6 +180,7 @@ export function parseWorkload(toml: string): Workload {
 	Value.Default(WorkloadSchema, raw);
 	checkImageMutualExclusivity(raw);
 	checkHealthProbeMutualExclusivity(raw);
+	checkCredentialConstraints(raw);
 
 	if (!Value.Check(WorkloadSchema, raw)) {
 		const errors = [...Value.Errors(WorkloadSchema, raw)];
@@ -193,6 +213,34 @@ function checkHealthProbeMutualExclusivity(raw: Record<string, unknown>): void {
 		throw new WorkloadParseError(
 			"health section requires either 'http_get' or 'exec'",
 		);
+	}
+}
+
+function checkCredentialConstraints(raw: Record<string, unknown>): void {
+	const network = raw.network as Record<string, unknown> | undefined;
+	if (!network) return;
+
+	const credentials = network.credentials as Array<Record<string, unknown>> | undefined;
+	if (!credentials || credentials.length === 0) return;
+
+	const access = (network.access ?? "none") as string;
+
+	if (access === "none") {
+		throw new WorkloadParseError(
+			"network.credentials cannot be used when network.access is 'none'",
+		);
+	}
+
+	if (access === "restricted") {
+		const allowlist = (network.allowlist ?? []) as string[];
+		for (const rule of credentials) {
+			const domain = rule.domain as string;
+			if (!allowlist.includes(domain)) {
+				throw new WorkloadParseError(
+					`Credential domain '${domain}' is not in the network allowlist`,
+				);
+			}
+		}
 	}
 }
 

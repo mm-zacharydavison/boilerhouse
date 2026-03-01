@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateInstanceId } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
-import { PodmanRuntime, hasEstablishedConnections, resolveEnvVars } from "./runtime";
+import { PodmanRuntime, hasEstablishedConnections } from "./runtime";
+import { resolveTemplates } from "./templates";
 
 /**
  * Creates a mock HTTP server on a temporary Unix socket.
@@ -159,6 +160,147 @@ describe("PodmanRuntime", () => {
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
+	test("create() injects HTTP_PROXY when proxyAddress is set", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-proxy" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+			proxyAddress: "http://host.containers.internal:38080",
+		});
+
+		const workload: Workload = {
+			...BASE_WORKLOAD,
+			network: { access: "outbound" },
+		};
+
+		await runtime.create(workload, generateInstanceId());
+
+		expect((createBody?.env as Record<string, string>)?.HTTP_PROXY).toBe(
+			"http://host.containers.internal:38080",
+		);
+		expect((createBody?.env as Record<string, string>)?.http_proxy).toBe(
+			"http://host.containers.internal:38080",
+		);
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() does not inject HTTP_PROXY when proxyAddress is absent", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-noproxy" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+		});
+
+		const workload: Workload = {
+			...BASE_WORKLOAD,
+			network: { access: "outbound" },
+		};
+
+		await runtime.create(workload, generateInstanceId());
+
+		expect(createBody?.env).toBeUndefined();
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() does not inject HTTP_PROXY for network.access = 'none'", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-nonet" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+			proxyAddress: "http://host.containers.internal:38080",
+		});
+
+		await runtime.create(BASE_WORKLOAD, generateInstanceId());
+
+		expect(createBody?.env).toBeUndefined();
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() does not override user-specified HTTP_PROXY", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-usrproxy" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+			proxyAddress: "http://host.containers.internal:38080",
+		});
+
+		const workload: Workload = {
+			...BASE_WORKLOAD,
+			network: { access: "outbound" },
+			entrypoint: {
+				cmd: "node",
+				env: { HTTP_PROXY: "http://custom-proxy:9999" },
+			},
+		};
+
+		await runtime.create(workload, generateInstanceId());
+
+		expect((createBody?.env as Record<string, string>)?.HTTP_PROXY).toBe(
+			"http://custom-proxy:9999",
+		);
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
 	test("create() does not include mounts when no overlay_dirs", async () => {
 		let createBody: Record<string, unknown> | undefined;
 
@@ -188,7 +330,7 @@ describe("PodmanRuntime", () => {
 	});
 });
 
-describe("resolveEnvVars", () => {
+describe("resolveTemplates", () => {
 	const originalEnv = { ...process.env };
 
 	afterEach(() => {
@@ -203,31 +345,31 @@ describe("resolveEnvVars", () => {
 
 	test("substitutes ${VAR} with host process.env value", () => {
 		process.env.MY_SECRET = "hunter2";
-		const result = resolveEnvVars({ API_KEY: "${MY_SECRET}" });
+		const result = resolveTemplates({ API_KEY: "${MY_SECRET}" });
 		expect(result).toEqual({ API_KEY: "hunter2" });
 	});
 
 	test("replaces unset variables with empty string", () => {
 		delete process.env.DOES_NOT_EXIST;
-		const result = resolveEnvVars({ TOKEN: "${DOES_NOT_EXIST}" });
+		const result = resolveTemplates({ TOKEN: "${DOES_NOT_EXIST}" });
 		expect(result).toEqual({ TOKEN: "" });
 	});
 
 	test("passes through literal values unchanged", () => {
-		const result = resolveEnvVars({ FIXED: "some-literal-value" });
+		const result = resolveTemplates({ FIXED: "some-literal-value" });
 		expect(result).toEqual({ FIXED: "some-literal-value" });
 	});
 
 	test("handles mixed literal and variable values", () => {
 		process.env.HOST = "localhost";
-		const result = resolveEnvVars({ URL: "http://${HOST}:8080/api" });
+		const result = resolveTemplates({ URL: "http://${HOST}:8080/api" });
 		expect(result).toEqual({ URL: "http://localhost:8080/api" });
 	});
 
 	test("handles multiple variables in same value", () => {
 		process.env.USER_A = "alice";
 		process.env.USER_B = "bob";
-		const result = resolveEnvVars({ USERS: "${USER_A},${USER_B}" });
+		const result = resolveTemplates({ USERS: "${USER_A},${USER_B}" });
 		expect(result).toEqual({ USERS: "alice,bob" });
 	});
 });

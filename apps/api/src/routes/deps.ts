@@ -8,6 +8,7 @@ import type { EventBus } from "../event-bus";
 import type { ResourceLimiter } from "../resource-limits";
 import type { GoldenCreator } from "../golden-creator";
 import type { BootstrapLogStore } from "../bootstrap-log-store";
+import type { SecretStore } from "../secret-store";
 
 export interface RouteDeps {
 	db: DrizzleDb;
@@ -21,5 +22,6 @@ export interface RouteDeps {
 	goldenCreator: GoldenCreator;
 	bootstrapLogStore: BootstrapLogStore;
 	resourceLimiter?: ResourceLimiter;
+	secretStore?: SecretStore;
 	log?: Logger;
 }

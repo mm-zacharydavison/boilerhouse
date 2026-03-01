@@ -155,6 +155,13 @@ export class FakeRuntime implements Runtime {
 		return Array.from(this.instances.keys()) as InstanceId[];
 	}
 
+	private nextIpOctet = 2;
+
+	async getContainerIp(handle: InstanceHandle): Promise<string | null> {
+		this.requireInstance(handle.instanceId);
+		return `10.88.0.${this.nextIpOctet++}`;
+	}
+
 	async available(): Promise<boolean> {
 		return true;
 	}

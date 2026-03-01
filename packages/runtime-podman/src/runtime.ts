@@ -10,20 +10,9 @@ import type { PodmanConfig } from "./types";
 import { PodmanRuntimeError } from "./errors";
 import { PodmanClient } from "./client";
 import type { ContainerCreateSpec } from "./client";
+import { resolveTemplates, assertNoSecretRefs } from "./templates";
 
 const DEFAULT_SOCKET_PATH = "/run/boilerhouse/podman.sock";
-
-/**
- * Resolves `${VAR}` references in env values from the host process environment.
- * Unresolved references are replaced with an empty string.
- */
-export function resolveEnvVars(env: Record<string, string>): Record<string, string> {
-	const resolved: Record<string, string> = {};
-	for (const [key, value] of Object.entries(env)) {
-		resolved[key] = value.replace(/\$\{(\w+)\}/g, (_, name: string) => process.env[name] ?? "");
-	}
-	return resolved;
-}
 
 interface ManagedContainer {
 	instanceId: InstanceId;
@@ -36,11 +25,13 @@ export class PodmanRuntime implements Runtime {
 	private readonly containers = new Map<string, ManagedContainer>();
 	private readonly snapshotDir: string;
 	private readonly workloadsDir: string | undefined;
+	private readonly proxyAddress: string | undefined;
 	private readonly client: PodmanClient;
 
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
 		this.workloadsDir = config.workloadsDir;
+		this.proxyAddress = config.proxyAddress;
 		this.client = new PodmanClient({
 			socketPath: config.socketPath ?? DEFAULT_SOCKET_PATH,
 		});
@@ -113,11 +104,20 @@ export class PodmanRuntime implements Runtime {
 				spec.command = workload.entrypoint.args;
 			}
 			if (workload.entrypoint.env) {
-				spec.env = resolveEnvVars(workload.entrypoint.env);
+				const resolved = resolveTemplates(workload.entrypoint.env);
+				assertNoSecretRefs(resolved);
+				spec.env = resolved;
 			}
 			if (workload.entrypoint.workdir) {
 				spec.work_dir = workload.entrypoint.workdir;
 			}
+		}
+
+		// Inject HTTP_PROXY for containers with network access
+		if (this.proxyAddress && workload.network.access !== "none") {
+			spec.env ??= {};
+			spec.env.HTTP_PROXY ??= this.proxyAddress;
+			spec.env.http_proxy ??= this.proxyAddress;
 		}
 
 		await this.client.createContainer(spec);
@@ -257,6 +257,22 @@ export class PodmanRuntime implements Runtime {
 
 	async list(): Promise<InstanceId[]> {
 		return Array.from(this.containers.keys()) as InstanceId[];
+	}
+
+	async getContainerIp(handle: InstanceHandle): Promise<string | null> {
+		try {
+			const inspect = await this.client.inspectContainer(handle.instanceId);
+			const networks = (inspect.NetworkSettings as Record<string, unknown>)
+				?.Networks as Record<string, { IPAddress?: string }> | undefined;
+			if (!networks) return null;
+
+			for (const net of Object.values(networks)) {
+				if (net.IPAddress) return net.IPAddress;
+			}
+			return null;
+		} catch {
+			return null;
+		}
 	}
 
 	// ── Private helpers ──────────────────────────────────────────────────────

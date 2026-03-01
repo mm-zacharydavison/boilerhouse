@@ -25,6 +25,9 @@ export {
 	type ActivityLogInsert,
 	type BuildLogRow,
 	type BuildLogInsert,
+	tenantSecrets,
+	type TenantSecretRow,
+	type TenantSecretInsert,
 } from "./schema";
 
 export {

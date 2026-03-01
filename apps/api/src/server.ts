@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
-import type { Runtime, RuntimeType, Workload } from "@boilerhouse/core";
+import type { Runtime, RuntimeType, Workload, TenantId } from "@boilerhouse/core";
 import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { initDatabase, ActivityLog, loadWorkloadsFromDir } from "@boilerhouse/db";
 import { workloads as workloadsTable, tenants } from "@boilerhouse/db";
@@ -19,6 +19,9 @@ import { createApp } from "./app";
 import { recoverState } from "./recovery";
 import { ResourceLimiter } from "./resource-limits";
 import { applyWorkloadTransition, forceWorkloadStatus } from "./transitions";
+import { SecretStore } from "./secret-store";
+import { ForwardProxy } from "./proxy/proxy";
+import { ProxyRegistrar } from "./proxy-registrar";
 
 const log = createLogger("server");
 
@@ -52,18 +55,38 @@ if (!existingNode) {
 		.run();
 }
 
+const activityLog = new ActivityLog(db);
+const eventBus = new EventBus();
+
+// Optional: secret gateway (proxy + encrypted secret store)
+const secretKey = process.env.BOILERHOUSE_SECRET_KEY;
+let secretStore: SecretStore | undefined;
+let proxyRegistrar: ProxyRegistrar | undefined;
+let forwardProxy: ForwardProxy | undefined;
+
+if (secretKey) {
+	secretStore = new SecretStore(db, secretKey);
+	forwardProxy = new ForwardProxy({
+		port: 0,
+		secretResolver: (tenantId, template) =>
+			secretStore!.resolveSecretRefs(tenantId as TenantId, template),
+	});
+	await forwardProxy.start();
+	proxyRegistrar = new ProxyRegistrar(forwardProxy, secretStore);
+	log.info({ proxyPort: forwardProxy.port }, "Secret gateway proxy started");
+}
+
 let runtime: Runtime;
 if (runtimeType === "podman") {
 	runtime = new PodmanRuntime({
 		snapshotDir,
 		socketPath: podmanSocket,
 		workloadsDir: workloadsDir ? workloadsDir : undefined,
+		proxyAddress: forwardProxy ? `http://host.containers.internal:${forwardProxy.port}` : undefined,
 	});
 } else {
 	runtime = new FakeRuntime();
 }
-const activityLog = new ActivityLog(db);
-const eventBus = new EventBus();
 
 // Load workload definitions from disk if configured
 if (workloadsDir) {
@@ -80,8 +103,11 @@ if (workloadsDir) {
 const instanceManager = new InstanceManager(
 	runtime, db, activityLog, nodeId, eventBus,
 	createLogger("InstanceManager"),
+	proxyRegistrar,
 );
-const snapshotManager = new SnapshotManager(runtime, db, nodeId);
+const snapshotManager = new SnapshotManager(runtime, db, nodeId, {
+	proxyRegistrar,
+});
 const tenantDataStore = new TenantDataStore(storagePath, db);
 const idleMonitor = new IdleMonitor({ defaultPollIntervalMs: 5000 });
 const tenantManager = new TenantManager(
@@ -172,6 +198,7 @@ const app = createApp({
 	goldenCreator,
 	bootstrapLogStore,
 	resourceLimiter,
+	secretStore,
 	log: createLogger("routes"),
 });
 

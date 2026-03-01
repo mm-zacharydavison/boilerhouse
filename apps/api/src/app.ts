@@ -8,6 +8,7 @@ import { tenantRoutes } from "./routes/tenants";
 import { nodeRoutes } from "./routes/nodes";
 import { snapshotRoutes } from "./routes/snapshots";
 import { activityRoutes } from "./routes/activity";
+import { secretRoutes } from "./routes/secrets";
 import { wsPlugin } from "./routes/ws";
 
 export function createApp(deps: RouteDeps) {
@@ -21,7 +22,8 @@ export function createApp(deps: RouteDeps) {
 				.use(tenantRoutes(deps))
 				.use(nodeRoutes(deps))
 				.use(snapshotRoutes(deps))
-				.use(activityRoutes(deps)),
+				.use(activityRoutes(deps))
+				.use(secretRoutes(deps)),
 		)
 		.use(wsPlugin(deps));
 }

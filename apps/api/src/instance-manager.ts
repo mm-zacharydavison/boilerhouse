@@ -12,7 +12,7 @@ import type {
 } from "@boilerhouse/core";
 import { generateInstanceId, canTransition, InvalidTransitionError } from "@boilerhouse/core";
 import type { DrizzleDb, ActivityLog } from "@boilerhouse/db";
-import { instances, snapshots, tenants } from "@boilerhouse/db";
+import { instances, snapshots, tenants, workloads } from "@boilerhouse/db";
 import {
 	applyInstanceTransition,
 	applySnapshotTransition,
@@ -20,6 +20,7 @@ import {
 } from "./transitions";
 import type { Logger } from "@boilerhouse/logger";
 import type { EventBus } from "./event-bus";
+import type { ProxyRegistrar } from "./proxy-registrar";
 
 /** Derives an InstanceHandle from a DB row's status. */
 export function instanceHandleFrom(instanceId: InstanceId, status: string): InstanceHandle {
@@ -41,11 +42,13 @@ export class InstanceManager {
 		private readonly nodeId: NodeId,
 		private readonly eventBus?: EventBus,
 		private readonly log?: Logger,
+		private readonly proxyRegistrar?: ProxyRegistrar,
 	) {}
 
 	async create(
 		workloadId: WorkloadId,
 		workload: Workload,
+		tenantId?: TenantId,
 	): Promise<InstanceHandle> {
 		const instanceId = generateInstanceId();
 
@@ -63,6 +66,8 @@ export class InstanceManager {
 		try {
 			const handle = await this.runtime.create(workload, instanceId);
 			await this.runtime.start(handle);
+
+			await this.registerProxy(handle, workload, tenantId);
 
 			applyInstanceTransition(this.db, instanceId, "starting", "started");
 
@@ -93,6 +98,8 @@ export class InstanceManager {
 		if (!row) return;
 
 		const handle = instanceHandleFrom(instanceId, row.status);
+
+		await this.deregisterProxy(handle);
 
 		applyInstanceTransition(this.db, instanceId, row.status, "destroy");
 
@@ -152,6 +159,8 @@ export class InstanceManager {
 		}
 
 		const handle = instanceHandleFrom(instanceId, row.status);
+
+		await this.deregisterProxy(handle);
 
 		let ref: SnapshotRef;
 		try {
@@ -293,6 +302,17 @@ export class InstanceManager {
 			throw err;
 		}
 
+		// Register the restored container in the proxy
+		const workloadRow = this.db
+			.select({ config: workloads.config })
+			.from(workloads)
+			.where(eq(workloads.workloadId, snapshotRow.workloadId))
+			.get();
+
+		if (workloadRow) {
+			await this.registerProxy(handle, workloadRow.config as Workload, tenantId);
+		}
+
 		applyInstanceTransition(this.db, instanceId, "starting", "started");
 
 		this.log?.info(
@@ -317,5 +337,41 @@ export class InstanceManager {
 
 	async getEndpoint(handle: InstanceHandle): Promise<Endpoint> {
 		return this.runtime.getEndpoint(handle);
+	}
+
+	// ── Proxy helpers ──────────────────────────────────────────────────────
+
+	private async registerProxy(
+		handle: InstanceHandle,
+		workload: Workload,
+		tenantId?: TenantId,
+	): Promise<void> {
+		if (!this.proxyRegistrar || workload.network.access === "none") return;
+		if (!this.runtime.getContainerIp) return;
+
+		const ip = await this.runtime.getContainerIp(handle);
+		if (!ip) return;
+
+		this.proxyRegistrar.registerInstance(
+			ip,
+			workload,
+			tenantId ?? ("" as TenantId),
+		);
+	}
+
+	private async deregisterProxy(handle: InstanceHandle): Promise<void> {
+		if (!this.proxyRegistrar) return;
+		if (!this.runtime.getContainerIp) return;
+
+		let ip: string | null;
+		try {
+			ip = await this.runtime.getContainerIp(handle);
+		} catch {
+			// Container already gone — nothing to deregister
+			return;
+		}
+		if (!ip) return;
+
+		this.proxyRegistrar.deregisterInstance(ip);
 	}
 }

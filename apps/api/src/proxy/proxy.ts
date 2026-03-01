@@ -1,9 +1,26 @@
 import type { Socket, TCPSocketListener } from "bun";
 import { matchesDomain } from "./matcher";
 
+export interface CredentialRule {
+	domain: string;
+	headers: Record<string, string>;
+}
+
+export interface InstanceRoute {
+	allowlist: string[];
+	credentials?: CredentialRule[];
+	tenantId?: string;
+}
+
 interface ForwardProxyConfig {
 	/** Port to listen on. Use 0 for an ephemeral port. */
 	port: number;
+	/**
+	 * Resolves `${global-secret:NAME}` and `${tenant-secret:NAME}` templates
+	 * in credential header values.
+	 * Called at request time with the tenant ID and the raw template string.
+	 */
+	secretResolver?: (tenantId: string, template: string) => string;
 }
 
 interface SocketState {
@@ -23,10 +40,15 @@ interface UpstreamState {
  * HTTP requests are forwarded if the Host header matches the allowlist.
  * HTTPS CONNECT tunnels are permitted if the target host matches.
  * Unknown source IPs are fail-closed (403).
+ *
+ * When credential rules are configured for a domain, the proxy:
+ * - Injects resolved headers into HTTP requests before forwarding
+ * - Connects to upstream over TLS (port 443) for credentialed domains
+ * - Rejects CONNECT tunnels for credentialed domains (secrets would bypass injection)
  */
 export class ForwardProxy {
 	private readonly config: ForwardProxyConfig;
-	private readonly routingTable = new Map<string, string[]>();
+	private readonly routingTable = new Map<string, InstanceRoute>();
 	private server: TCPSocketListener<SocketState> | null = null;
 
 	/** The actual port the proxy is listening on (useful when config.port is 0). */
@@ -69,9 +91,9 @@ export class ForwardProxy {
 		this.server = null;
 	}
 
-	/** Register a source IP with its allowed domain list. */
-	addInstance(sourceIp: string, allowlist: string[]): void {
-		this.routingTable.set(sourceIp, allowlist);
+	/** Register a source IP with its routing configuration. */
+	addInstance(sourceIp: string, route: InstanceRoute): void {
+		this.routingTable.set(sourceIp, route);
 	}
 
 	/** Remove a source IP from the routing table. */
@@ -98,10 +120,10 @@ export class ForwardProxy {
 		const requestLine = lines[0]!;
 		const [method, target] = requestLine.split(" ");
 
-		// Look up source IP allowlist
+		// Look up source IP route
 		const sourceIp = socket.remoteAddress;
-		const allowlist = this.routingTable.get(sourceIp);
-		if (!allowlist) {
+		const route = this.routingTable.get(sourceIp);
+		if (!route) {
 			socket.write(
 				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: unknown source IP\r\n",
 			);
@@ -110,22 +132,33 @@ export class ForwardProxy {
 		}
 
 		if (method === "CONNECT") {
-			this.handleConnect(socket, target!, allowlist);
+			this.handleConnect(socket, target!, route);
 		} else {
-			this.handleHttp(socket, buf, headerEnd, target!, lines, allowlist);
+			this.handleHttp(socket, buf, headerEnd, target!, lines, route);
 		}
 	}
 
 	private handleConnect(
 		socket: Socket<SocketState>,
 		target: string,
-		allowlist: string[],
+		route: InstanceRoute,
 	): void {
 		const host = target.split(":")[0]!;
 
-		if (!matchesDomain(host, allowlist)) {
+		if (!matchesDomain(host, route.allowlist)) {
 			socket.write(
 				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: domain not allowed\r\n",
+			);
+			socket.end();
+			return;
+		}
+
+		// Reject CONNECT for credentialed domains — the proxy must see the
+		// plaintext HTTP to inject headers, so CONNECT tunnels are not allowed.
+		const credRule = this.findCredentialRule(host, route);
+		if (credRule) {
+			socket.write(
+				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: CONNECT not allowed for credential-injected domains\r\n",
 			);
 			socket.end();
 			return;
@@ -167,7 +200,7 @@ export class ForwardProxy {
 		headerEnd: number,
 		target: string,
 		headerLines: string[],
-		allowlist: string[],
+		route: InstanceRoute,
 	): void {
 		// Extract host from Host header or URL
 		let host: string | undefined;
@@ -187,7 +220,7 @@ export class ForwardProxy {
 			}
 		}
 
-		if (!host || !matchesDomain(host, allowlist)) {
+		if (!host || !matchesDomain(host, route.allowlist)) {
 			socket.write(
 				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: domain not allowed\r\n",
 			);
@@ -195,14 +228,20 @@ export class ForwardProxy {
 			return;
 		}
 
+		// Check if this domain has credential rules
+		const credRule = this.findCredentialRule(host, route);
+
 		let upstreamHost: string;
 		let upstreamPort: number;
 		let path: string;
+		let useTls = false;
+		let hasExplicitPort = false;
 
 		try {
 			const url = new URL(target);
 			upstreamHost = url.hostname;
-			upstreamPort = url.port ? parseInt(url.port, 10) : 80;
+			hasExplicitPort = url.port !== "";
+			upstreamPort = hasExplicitPort ? parseInt(url.port, 10) : 80;
 			path = url.pathname + url.search;
 		} catch {
 			socket.write(
@@ -212,44 +251,114 @@ export class ForwardProxy {
 			return;
 		}
 
+		// For credentialed domains without an explicit port, upgrade to TLS on 443
+		if (credRule && !hasExplicitPort) {
+			useTls = true;
+			upstreamPort = 443;
+		}
+
 		// Rewrite the request line to use a relative path
 		const method = headerLines[0]!.split(" ")[0];
 		const version = headerLines[0]!.split(" ")[2];
 		const rewrittenRequestLine = `${method} ${path} ${version}`;
-		const rewrittenHeaders = [
+		let rewrittenHeaders = [
 			rewrittenRequestLine,
 			...headerLines.slice(1),
 		];
-		const rewrittenHead = rewrittenHeaders.join("\r\n") + "\r\n\r\n";
 
+		// Inject credential headers, replacing any existing ones from the client
+		if (credRule && this.config.secretResolver && route.tenantId) {
+			const injectedNames = new Set(
+				Object.keys(credRule.headers).map((h) => h.toLowerCase()),
+			);
+
+			// Strip client-sent headers that we're about to inject
+			rewrittenHeaders = rewrittenHeaders.filter((line, i) => {
+				if (i === 0) return true; // keep request line
+				const colonIdx = line.indexOf(":");
+				if (colonIdx === -1) return true;
+				return !injectedNames.has(line.slice(0, colonIdx).trim().toLowerCase());
+			});
+
+			for (const [headerName, headerTemplate] of Object.entries(credRule.headers)) {
+				const resolvedValue = this.config.secretResolver(
+					route.tenantId,
+					headerTemplate,
+				);
+				rewrittenHeaders.push(`${headerName}: ${resolvedValue}`);
+			}
+		}
+
+		const rewrittenHead = rewrittenHeaders.join("\r\n") + "\r\n\r\n";
 		const body = fullData.subarray(headerEnd + 4);
 		const payload = Buffer.concat([Buffer.from(rewrittenHead), body]);
 
-		Bun.connect<Record<string, never>>({
-			hostname: upstreamHost,
-			port: upstreamPort,
-			socket: {
-				open: (upstream) => {
-					upstream.write(payload);
+		if (useTls) {
+			Bun.connect<Record<string, never>>({
+				hostname: upstreamHost,
+				port: upstreamPort,
+				tls: true,
+				socket: {
+					open: (upstream) => {
+						upstream.write(payload);
+					},
+					data: (_upstream, chunk) => {
+						socket.write(chunk);
+					},
+					close: () => {
+						socket.end();
+					},
+					error: () => {
+						socket.write(
+							"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream TLS connection failed\r\n",
+						);
+						socket.end();
+					},
 				},
-				data: (_upstream, chunk) => {
-					socket.write(chunk);
+			}).catch(() => {
+				socket.write(
+					"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream TLS connection failed\r\n",
+				);
+				socket.end();
+			});
+		} else {
+			Bun.connect<Record<string, never>>({
+				hostname: upstreamHost,
+				port: upstreamPort,
+				socket: {
+					open: (upstream) => {
+						upstream.write(payload);
+					},
+					data: (_upstream, chunk) => {
+						socket.write(chunk);
+					},
+					close: () => {
+						socket.end();
+					},
+					error: () => {
+						socket.write(
+							"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream connection failed\r\n",
+						);
+						socket.end();
+					},
 				},
-				close: () => {
-					socket.end();
-				},
-				error: () => {
-					socket.write(
-						"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream connection failed\r\n",
-					);
-					socket.end();
-				},
-			},
-		}).catch(() => {
-			socket.write(
-				"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream connection failed\r\n",
-			);
-			socket.end();
-		});
+			}).catch(() => {
+				socket.write(
+					"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nUpstream connection failed\r\n",
+				);
+				socket.end();
+			});
+		}
+	}
+
+	private findCredentialRule(
+		host: string,
+		route: InstanceRoute,
+	): CredentialRule | undefined {
+		if (!route.credentials) return undefined;
+		const lower = host.toLowerCase();
+		return route.credentials.find(
+			(r) => r.domain.toLowerCase() === lower,
+		);
 	}
 }

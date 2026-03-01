@@ -30,3 +30,9 @@ unhealthy_threshold = 60
 [health.http_get]
 path = "/"
 port = 18789
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "${global-secret:ANTHROPIC_API_KEY}"

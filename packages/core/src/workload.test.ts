@@ -398,4 +398,150 @@ memory_mb = 512
 		expect(workload.image.dockerfile).toBe("./Dockerfile");
 		expect(workload.image.ref).toBeUndefined();
 	});
+
+	// ── network.credentials ──────────────────────────────────────────────
+
+	test("parses [[network.credentials]] with domain + headers", () => {
+		const toml = `
+[workload]
+name = "my-service"
+version = "1.0.0"
+
+[image]
+ref = "ghcr.io/org/my-service:latest"
+
+[resources]
+vcpus = 2
+memory_mb = 512
+
+[network]
+access = "restricted"
+allowlist = ["api.anthropic.com"]
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "\${global-secret:ANTHROPIC_API_KEY}"
+`;
+		const workload = parseWorkload(toml);
+		expect(workload.network.credentials).toHaveLength(1);
+		expect(workload.network.credentials![0]!.domain).toBe("api.anthropic.com");
+		expect(workload.network.credentials![0]!.headers).toEqual({
+			"x-api-key": "${global-secret:ANTHROPIC_API_KEY}",
+		});
+	});
+
+	test("parses multiple credential entries", () => {
+		const toml = `
+[workload]
+name = "my-service"
+version = "1.0.0"
+
+[image]
+ref = "ghcr.io/org/my-service:latest"
+
+[resources]
+vcpus = 2
+memory_mb = 512
+
+[network]
+access = "outbound"
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "\${global-secret:ANTHROPIC_API_KEY}"
+
+[[network.credentials]]
+domain = "api.openai.com"
+
+[network.credentials.headers]
+Authorization = "Bearer \${global-secret:OPENAI_API_KEY}"
+`;
+		const workload = parseWorkload(toml);
+		expect(workload.network.credentials).toHaveLength(2);
+		expect(workload.network.credentials![0]!.domain).toBe("api.anthropic.com");
+		expect(workload.network.credentials![1]!.domain).toBe("api.openai.com");
+	});
+
+	test("rejects credentials when network.access = 'none'", () => {
+		const toml = `
+[workload]
+name = "my-service"
+version = "1.0.0"
+
+[image]
+ref = "ghcr.io/org/my-service:latest"
+
+[resources]
+vcpus = 2
+memory_mb = 512
+
+[network]
+access = "none"
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "\${global-secret:KEY}"
+`;
+		expect(() => parseWorkload(toml)).toThrow(WorkloadParseError);
+		expect(() => parseWorkload(toml)).toThrow(/credentials.*none/i);
+	});
+
+	test("rejects credential domain not in allowlist (restricted access)", () => {
+		const toml = `
+[workload]
+name = "my-service"
+version = "1.0.0"
+
+[image]
+ref = "ghcr.io/org/my-service:latest"
+
+[resources]
+vcpus = 2
+memory_mb = 512
+
+[network]
+access = "restricted"
+allowlist = ["api.openai.com"]
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "\${global-secret:KEY}"
+`;
+		expect(() => parseWorkload(toml)).toThrow(WorkloadParseError);
+		expect(() => parseWorkload(toml)).toThrow(/allowlist/i);
+	});
+
+	test("accepts credentials with outbound access (no allowlist needed)", () => {
+		const toml = `
+[workload]
+name = "my-service"
+version = "1.0.0"
+
+[image]
+ref = "ghcr.io/org/my-service:latest"
+
+[resources]
+vcpus = 2
+memory_mb = 512
+
+[network]
+access = "outbound"
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "\${global-secret:KEY}"
+`;
+		const workload = parseWorkload(toml);
+		expect(workload.network.credentials).toHaveLength(1);
+	});
 });

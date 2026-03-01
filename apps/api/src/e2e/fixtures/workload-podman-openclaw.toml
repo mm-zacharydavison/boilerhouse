@@ -35,5 +35,14 @@ port = 18789
 cmd = "/usr/local/bin/python3"
 args = ["-m", "http.server", "18789"]
 
+[entrypoint.env]
+ANTHROPIC_BASE_URL = "http://api.anthropic.com"
+
+[[network.credentials]]
+domain = "api.anthropic.com"
+
+[network.credentials.headers]
+x-api-key = "${global-secret:ANTHROPIC_API_KEY}"
+
 [metadata]
 description = "OpenClaw stand-in for E2E restricted network testing"

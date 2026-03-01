@@ -46,6 +46,7 @@ export {
 	type BindMount,
 	type HttpGetProbe,
 	type ExecProbe,
+	type CredentialRule,
 	WorkloadSchema,
 	parseWorkload,
 	WorkloadParseError,

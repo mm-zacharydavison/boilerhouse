@@ -119,6 +119,37 @@ export function instanceRoutes(deps: RouteDeps) {
 				snapshotId: ref.id,
 			};
 		})
+		.post("/instances/:id/exec", async ({ params, body, set }) => {
+			const instanceId = params.id as InstanceId;
+			const row = db
+				.select()
+				.from(instances)
+				.where(eq(instances.instanceId, instanceId))
+				.get();
+
+			if (!row) {
+				set.status = 404;
+				return { error: `Instance '${params.id}' not found` };
+			}
+
+			if (row.status !== "active") {
+				set.status = 409;
+				return { error: `Instance '${params.id}' is ${row.status}, must be active` };
+			}
+
+			const handle = instanceHandleFrom(instanceId, row.status);
+			const result = await deps.runtime.exec(handle, body.command);
+
+			return {
+				exitCode: result.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+			};
+		}, {
+			body: t.Object({
+				command: t.Array(t.String(), { minItems: 1 }),
+			}),
+		})
 		.post("/instances/:id/destroy", async ({ params, set }) => {
 			const instanceId = params.id as InstanceId;
 			const row = db

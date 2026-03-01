@@ -8,6 +8,16 @@ set -euo pipefail
 SOCKET_PATH="${PODMAN_SOCKET:-/run/boilerhouse/podman.sock}"
 PODMAN_API="http://d/v5.0.0/libpod"
 BH_API="http://127.0.0.1:${PORT:-3000}/api/v1"
+KILL_ALL=false
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --kill-all) KILL_ALL=true; shift ;;
+    --dry-run)  DRY_RUN=true; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
 
 # --- Preflight checks ---
 
@@ -34,6 +44,46 @@ CONTAINERS=$(curl -sf --unix-socket "$SOCKET_PATH" "$PODMAN_API/containers/json?
 COUNT=$(echo "$CONTAINERS" | jq 'length')
 if [ "$COUNT" -eq 0 ]; then
   echo "No running containers."
+  exit 0
+fi
+
+# --- Kill all containers ---
+
+kill_all_containers() {
+  local ids
+  ids=$(echo "$CONTAINERS" | jq -r '.[].Id')
+
+  echo "Stopping $COUNT container(s)..."
+  export CONTAINER_HOST="unix://$SOCKET_PATH"
+
+  local failed=0
+  while IFS= read -r cid; do
+    local short="${cid:0:12}"
+    if [ "$DRY_RUN" = true ]; then
+      echo "  [dry-run] Would stop and remove $short"
+    else
+      if podman stop -t 10 "$cid" &>/dev/null; then
+        podman rm "$cid" &>/dev/null 2>&1 || true
+        echo "  Stopped $short"
+      else
+        echo "  Failed to stop $short" >&2
+        failed=$((failed + 1))
+      fi
+    fi
+  done <<< "$ids"
+
+  if [ "$DRY_RUN" = true ]; then
+    echo "Dry run complete. No containers were stopped."
+  elif [ "$failed" -eq 0 ]; then
+    echo "All containers stopped."
+  else
+    echo "$failed container(s) failed to stop." >&2
+    exit 1
+  fi
+}
+
+if [ "$KILL_ALL" = true ]; then
+  kill_all_containers
   exit 0
 fi
 
@@ -68,12 +118,18 @@ LINES=$(echo "$CONTAINERS" | jq -r --argjson tenants "$TENANT_MAP" '
 pick_container() {
   if command -v fzf &>/dev/null; then
     local header formatted
-    header=$(printf "%-20s %-20s %-28s %s" "WORKLOAD" "TENANT" "IMAGE" "PORTS")
+    header=$(printf "%-20s %-20s %-28s %s\n%s" "WORKLOAD" "TENANT" "IMAGE" "PORTS" "ctrl-k: kill all")
     formatted=$(echo "$LINES" | while IFS=$'\t' read -r full_id workload tenant image ports; do
       printf "%-20s %-20s %-28s %s\n" "$workload" "$tenant" "$image" "$ports"
     done)
-    local selected
-    selected=$(echo "$formatted" | fzf --header="$header" --reverse --no-sort) || return 1
+    local selected exit_code
+    selected=$(echo "$formatted" | fzf --header="$header" --reverse --no-sort \
+      --bind "ctrl-k:become(echo __KILL_ALL__)") || exit_code=$?
+    if [ "$selected" = "__KILL_ALL__" ]; then
+      echo "__KILL_ALL__"
+      return 0
+    fi
+    [ "${exit_code:-0}" -ne 0 ] && return 1
     # fzf selection index matches LINES order — find the matching line
     local selected_line
     selected_line=$(echo "$formatted" | grep -nxF "$selected" | head -1 | cut -d: -f1)
@@ -92,8 +148,12 @@ pick_container() {
       printf "  %d) %s\n" "$((i + 1))" "${display_labels[$i]}"
     done
     echo ""
-    read -rp "Select container [1-${#full_ids[@]}]: " choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#full_ids[@]}" ]; then
+    echo "  k) Kill all containers ($COUNT)"
+    echo ""
+    read -rp "Select container [1-${#full_ids[@]}, k=kill all]: " choice
+    if [ "$choice" = "k" ] || [ "$choice" = "K" ]; then
+      echo "__KILL_ALL__"
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#full_ids[@]}" ]; then
       echo "${full_ids[$((choice - 1))]}"
     else
       return 1
@@ -108,33 +168,65 @@ if [ -z "$CONTAINER_ID" ]; then
   exit 0
 fi
 
+if [ "$CONTAINER_ID" = "__KILL_ALL__" ]; then
+  read -rp "Stop all $COUNT container(s)? [y/N] " confirm
+  if [[ "$confirm" =~ ^[yY]$ ]]; then
+    kill_all_containers
+  else
+    echo "Cancelled."
+  fi
+  exit 0
+fi
+
 # Resolve a human-readable label for the selected container
-CONTAINER_LABEL=$(echo "$LINES" | while IFS=$'\t' read -r full_id workload tenant image ports; do
+CONTAINER_WORKLOAD=""
+CONTAINER_LABEL=""
+while IFS=$'\t' read -r full_id workload tenant image ports; do
   if [ "$full_id" = "$CONTAINER_ID" ]; then
+    CONTAINER_WORKLOAD="$workload"
     if [ "$workload" != "-" ]; then
-      echo "$workload"
+      CONTAINER_LABEL="$workload"
     else
-      echo "${full_id:0:12}"
+      CONTAINER_LABEL="${full_id:0:12}"
     fi
     break
   fi
-done)
+done <<< "$LINES"
 
 # --- Select action ---
 
 pick_action() {
+  local actions="Tail logs\nShell (exec)"
+  local action_count=2
+
+  if [ "$CONTAINER_WORKLOAD" = "openclaw" ]; then
+    actions="$actions\n─── openclaw ───\nApprove device claims"
+    action_count=3
+  fi
+
   if command -v fzf &>/dev/null; then
-    printf "Tail logs\nShell (exec)\n" | fzf --reverse --no-sort --header="Action for $CONTAINER_LABEL"
+    printf "$actions\n" | fzf --reverse --no-sort --header="Action for $CONTAINER_LABEL"
   else
     echo ""
     echo "Actions for $CONTAINER_LABEL:"
     echo "  1) Tail logs"
     echo "  2) Shell (exec)"
+    if [ "$CONTAINER_WORKLOAD" = "openclaw" ]; then
+      echo "  ─── openclaw ───"
+      echo "  3) Approve device claims"
+    fi
     echo ""
-    read -rp "Select action [1-2]: " choice
+    read -rp "Select action [1-${action_count}]: " choice
     case "$choice" in
       1) echo "Tail logs" ;;
       2) echo "Shell (exec)" ;;
+      3)
+        if [ "$CONTAINER_WORKLOAD" = "openclaw" ]; then
+          echo "Approve device claims"
+        else
+          return 1
+        fi
+        ;;
       *) return 1 ;;
     esac
   fi
@@ -153,6 +245,10 @@ case "$ACTION" in
   "Shell"*)
     echo "Opening shell in $CONTAINER_LABEL..."
     exec podman exec -it "$CONTAINER_ID" /bin/sh
+    ;;
+  "Approve device claims"*)
+    echo "Approving device claims for $CONTAINER_LABEL..."
+    exec podman exec -it "$CONTAINER_ID" node openclaw.mjs devices approve
     ;;
   *)
     echo "No action selected."

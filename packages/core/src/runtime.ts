@@ -73,6 +73,13 @@ export interface Runtime {
 	/** List all instance IDs currently known to the runtime. */
 	list(): Promise<InstanceId[]>;
 
+	/**
+	 * Get the container's IP address in the runtime network.
+	 * Returns null if the runtime doesn't support container networking
+	 * or the container has no IP assigned.
+	 */
+	getContainerIp?(handle: InstanceHandle): Promise<string | null>;
+
 	/** Check if the runtime is available on this host. */
 	available(): Promise<boolean>;
 }

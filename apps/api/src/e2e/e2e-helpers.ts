@@ -1,5 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
-import type { Runtime } from "@boilerhouse/core";
+import type { Runtime, TenantId } from "@boilerhouse/core";
 import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,9 @@ import { EventBus } from "../event-bus";
 import { GoldenCreator } from "../golden-creator";
 import { BootstrapLogStore } from "../bootstrap-log-store";
 import { ResourceLimiter } from "../resource-limits";
+import { SecretStore } from "../secret-store";
+import { ForwardProxy } from "../proxy/proxy";
+import { ProxyRegistrar } from "../proxy-registrar";
 import { createApp } from "../app";
 import { E2E_TIMEOUTS } from "./runtime-matrix";
 
@@ -41,6 +45,10 @@ export interface E2EServer {
 	 * Add operation names to make the runtime throw.
 	 */
 	fakeFailOn?: Set<RuntimeOperation>;
+	/** Secret store for managing tenant secrets. Present when secret gateway is enabled. */
+	secretStore?: SecretStore;
+	/** Proxy address for containers. Present when secret gateway is enabled. */
+	proxyAddress?: string;
 }
 
 /**
@@ -65,6 +73,18 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		})
 		.run();
 
+	// Secret gateway setup
+	const secretKey = randomBytes(32).toString("hex");
+	const secretStore = new SecretStore(db, secretKey);
+	const forwardProxy = new ForwardProxy({
+		port: 0,
+		secretResolver: (tenantId, template) =>
+			secretStore.resolveSecretRefs(tenantId as TenantId, template),
+	});
+	await forwardProxy.start();
+	const proxyRegistrar = new ProxyRegistrar(forwardProxy, secretStore);
+	const proxyAddress = `http://host.containers.internal:${forwardProxy.port}`;
+
 	let runtime: Runtime;
 	let fakeFailOn: Set<RuntimeOperation> | undefined;
 	let snapshotDir: string | undefined;
@@ -75,7 +95,7 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 	} else if (runtimeName === "podman") {
 		snapshotDir = mkdtempSync(join(tmpdir(), "bh-e2e-snap-"));
 		const socketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
-		runtime = new PodmanRuntime({ snapshotDir, socketPath });
+		runtime = new PodmanRuntime({ snapshotDir, socketPath, proxyAddress });
 	} else {
 		throw new Error(`Runtime '${runtimeName}' not implemented for E2E`);
 	}
@@ -88,10 +108,12 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		nodeId,
 		eventBus,
 		log,
+		proxyRegistrar,
 	);
-	const snapshotManager = new SnapshotManager(runtime, db, nodeId,
-		runtimeName === "fake" ? { healthChecker: async () => {} } : undefined,
-	);
+	const snapshotManager = new SnapshotManager(runtime, db, nodeId, {
+		...(runtimeName === "fake" ? { healthChecker: async () => {} } : {}),
+		proxyRegistrar,
+	});
 	const tenantDataStore = new TenantDataStore("/tmp/boilerhouse-e2e", db);
 	const tenantManager = new TenantManager(
 		instanceManager,
@@ -121,6 +143,7 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		goldenCreator,
 		bootstrapLogStore,
 		resourceLimiter,
+		secretStore,
 		log,
 	});
 
@@ -132,9 +155,12 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		baseUrl,
 		db,
 		fakeFailOn,
+		secretStore,
+		proxyAddress,
 		cleanup: async () => {
 			server.stop();
 			resourceLimiter.dispose();
+			await forwardProxy.stop();
 			// Destroy any remaining containers for real runtimes
 			if (runtimeName !== "fake") {
 				const remaining = await runtime.list();

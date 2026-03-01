@@ -167,6 +167,26 @@ export const activityLog = sqliteTable(
 	],
 );
 
+// ── tenant_secrets ──────────────────────────────────────────────────────────
+
+export const tenantSecrets = sqliteTable(
+	"tenant_secrets",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		tenantId: text("tenant_id").notNull().$type<TenantId>(),
+		name: text("name").notNull(),
+		encryptedValue: text("encrypted_value").notNull(),
+		iv: text("iv").notNull(),
+		authTag: text("auth_tag").notNull(),
+		createdAt: timestamp("created_at").notNull(),
+		updatedAt: timestamp("updated_at").notNull(),
+	},
+	(table) => [
+		unique("tenant_secrets_tenant_name_uniq").on(table.tenantId, table.name),
+		index("tenant_secrets_tenant_id_idx").on(table.tenantId),
+	],
+);
+
 // ── build_logs ──────────────────────────────────────────────────────────────
 
 export const buildLogs = sqliteTable(
@@ -207,6 +227,9 @@ export type ActivityLogInsert = typeof activityLog.$inferInsert;
 export type BuildLogRow = typeof buildLogs.$inferSelect;
 export type BuildLogInsert = typeof buildLogs.$inferInsert;
 
+export type TenantSecretRow = typeof tenantSecrets.$inferSelect;
+export type TenantSecretInsert = typeof tenantSecrets.$inferInsert;
+
 // ── Schema bundle (for drizzle() calls) ──────────────────────────────────────
 
 export const schema = {
@@ -217,4 +240,5 @@ export const schema = {
 	tenants,
 	activityLog,
 	buildLogs,
+	tenantSecrets,
 };
