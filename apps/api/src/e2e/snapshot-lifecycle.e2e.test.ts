@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -7,23 +7,25 @@ for (const rt of availableRuntimes()) {
 
 	describe(`[${rt.name}] snapshot lifecycle`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
+
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
+			expect(registerRes.status).toBe(201);
+			const registerBody = await registerRes.json();
+			workloadName = registerBody.name;
+
+			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
+
+		afterAll(async () => {
 			if (server) await server.cleanup();
 		});
 
 		test.skipIf(!rt.capabilities.snapshot)("release hibernates, re-claim restores from snapshot", async () => {
-			server = await startE2EServer(rt.name);
-			const fixture = await readFixture(rt.workloadFixtures.httpserver);
-
-			// Step 1: Register workload (idle.action = "hibernate" in fixture)
-			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
-			expect(registerRes.status).toBe(201);
-			const registerBody = await registerRes.json();
-			const workloadName = registerBody.name;
-
-			await waitForWorkloadReady(server, workloadName);
-
 			// Step 2: Verify golden snapshot exists
 			const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
 			expect(snapshotsRes.status).toBe(200);

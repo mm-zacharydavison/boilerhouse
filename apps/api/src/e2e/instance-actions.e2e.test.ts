@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, setDefaultTimeout } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import {
 	startE2EServer,
@@ -13,28 +13,33 @@ for (const rt of availableRuntimes()) {
 		E2E_TIMEOUTS[rt.name as keyof typeof E2E_TIMEOUTS] ?? E2E_TIMEOUTS.fake;
 
 	describe(`[${rt.name}] instance actions (dashboard)`, () => {
-		// Podman container cleanup in afterEach can exceed the default 5s hook timeout
+		// Podman container cleanup in afterAll can exceed the default 5s hook timeout
 		setDefaultTimeout(timeouts.operation);
 
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
-			if (server) await server.cleanup();
-		});
-
-		/**
-		 * Helper: register a workload, wait for ready, claim a tenant, return
-		 * the workloadName and instanceId for further action testing.
-		 */
-		async function setupActiveInstance(tenantId: string) {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
 			const fixture = await readFixture(rt.workloadFixtures.httpserver);
 
 			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(registerRes.status).toBe(201);
-			const { name: workloadName } = await registerRes.json();
+			const body = await registerRes.json();
+			workloadName = body.name;
 
 			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
 
+		afterAll(async () => {
+			if (server) await server.cleanup();
+		});
+
+		/**
+		 * Helper: claim a tenant and return the instanceId.
+		 * Relies on the workload already being registered and ready in beforeAll.
+		 */
+		async function setupActiveInstance(tenantId: string) {
 			const claimRes = await api(
 				server,
 				"POST",
@@ -63,7 +68,6 @@ for (const rt of availableRuntimes()) {
 		test.skipIf(!rt.capabilities.snapshot)(
 			"hibernate active instance directly",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-hib-1");
 
 				// Hibernate
@@ -108,7 +112,6 @@ for (const rt of availableRuntimes()) {
 				);
 				expect(tenantSnap).toBeDefined();
 			},
-			timeouts.operation,
 		);
 
 		// ── Destroy ──────────────────────────────────────────────────────
@@ -116,7 +119,6 @@ for (const rt of availableRuntimes()) {
 		test(
 			"destroy active instance directly",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-dest-1");
 
 				// Destroy
@@ -150,13 +152,11 @@ for (const rt of availableRuntimes()) {
 				const isRunning = await rt.isInstanceRunning(instanceId);
 				expect(isRunning).toBe(false);
 			},
-			timeouts.operation,
 		);
 
 		test.skipIf(!rt.capabilities.snapshot)(
 			"destroy hibernated instance",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-dest-hib-1");
 
 				// First hibernate
@@ -185,7 +185,6 @@ for (const rt of availableRuntimes()) {
 				expect(instanceRes.status).toBe(200);
 				expect((await instanceRes.json()).status).toBe("destroyed");
 			},
-			timeouts.operation,
 		);
 
 		// ── Invalid transitions (409) ────────────────────────────────────
@@ -193,7 +192,6 @@ for (const rt of availableRuntimes()) {
 		test.skipIf(!rt.capabilities.snapshot)(
 			"hibernate already-hibernated instance returns 409",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-hib-dup-1");
 
 				// First hibernate succeeds
@@ -212,13 +210,11 @@ for (const rt of availableRuntimes()) {
 				);
 				expect(hib2.status).toBe(409);
 			},
-			timeouts.operation,
 		);
 
 		test(
 			"destroy already-destroyed instance returns 409",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-dest-dup-1");
 
 				// First destroy succeeds
@@ -237,7 +233,6 @@ for (const rt of availableRuntimes()) {
 				);
 				expect(dest2.status).toBe(409);
 			},
-			timeouts.operation,
 		);
 
 		// ── Endpoint ─────────────────────────────────────────────────────
@@ -245,7 +240,6 @@ for (const rt of availableRuntimes()) {
 		test(
 			"get endpoint for active instance",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-ep-1");
 
 				const epRes = await api(
@@ -268,13 +262,11 @@ for (const rt of availableRuntimes()) {
 					expect(resp.ok).toBe(true);
 				}
 			},
-			timeouts.operation,
 		);
 
 		test(
 			"get endpoint for destroyed instance returns 409",
 			async () => {
-				server = await startE2EServer(rt.name);
 				const { instanceId } = await setupActiveInstance("e2e-ep-dead-1");
 
 				// Destroy first
@@ -293,7 +285,6 @@ for (const rt of availableRuntimes()) {
 				);
 				expect(epRes.status).toBe(409);
 			},
-			timeouts.operation,
 		);
 	});
 }

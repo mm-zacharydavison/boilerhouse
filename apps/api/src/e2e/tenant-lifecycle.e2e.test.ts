@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { TenantId } from "@boilerhouse/core";
 import { activityLog } from "@boilerhouse/db";
@@ -10,23 +10,25 @@ for (const rt of availableRuntimes()) {
 
 	describe(`[${rt.name}] tenant lifecycle`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
+
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
+			expect(registerRes.status).toBe(201);
+			const registerBody = await registerRes.json();
+			workloadName = registerBody.name;
+
+			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
+
+		afterAll(async () => {
 			if (server) await server.cleanup();
 		});
 
 		test("full claim/release cycle with snapshot restore", async () => {
-			server = await startE2EServer(rt.name);
-			const fixture = await readFixture(rt.workloadFixtures.httpserver);
-
-			// Step 1: Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
-			expect(registerRes.status).toBe(201);
-			const registerBody = await registerRes.json();
-			const workloadName = registerBody.name;
-
-			await waitForWorkloadReady(server, workloadName);
-
 			// Step 2: Verify golden snapshot exists
 			const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
 			expect(snapshotsRes.status).toBe(200);

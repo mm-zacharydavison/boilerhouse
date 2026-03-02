@@ -1,19 +1,19 @@
-import { resolve, dirname, basename, join } from "node:path";
-import { mkdtempSync, mkdirSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { InstanceId } from "@boilerhouse/core";
 import { generateSnapshotId, generateWorkloadId, generateNodeId } from "@boilerhouse/core";
 import type { SnapshotRef, SnapshotPaths, SnapshotMetadata } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import type { Runtime, InstanceHandle, Endpoint, ExecResult } from "@boilerhouse/core";
 import type { PodmanConfig } from "./types";
+import type { ContainerBackend } from "./backend";
 import { PodmanRuntimeError } from "./errors";
-import { PodmanClient } from "./client";
 import type { ContainerCreateSpec } from "./client";
 import { resolveTemplates, assertNoSecretRefs } from "./templates";
-import { computeArchiveHmac, verifyArchiveHmac } from "./hmac";
+import { DaemonBackend } from "./daemon-backend";
 
-const DEFAULT_SOCKET_PATH = "/run/boilerhouse/podman.sock";
+const DEFAULT_SOCKET = "/run/boilerhouse/runtime.sock";
 
 interface ManagedContainer {
 	instanceId: InstanceId;
@@ -25,37 +25,35 @@ interface ManagedContainer {
 export class PodmanRuntime implements Runtime {
 	private readonly containers = new Map<string, ManagedContainer>();
 	private readonly snapshotDir: string;
-	private readonly workloadsDir: string | undefined;
 	private readonly proxyAddress: string | undefined;
-	private readonly hmacKey: string | undefined;
-	private readonly client: PodmanClient;
+	private readonly backend: ContainerBackend;
 
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
-		this.workloadsDir = config.workloadsDir;
 		this.proxyAddress = config.proxyAddress;
-		this.hmacKey = config.hmacKey;
-		this.client = new PodmanClient({
-			socketPath: config.socketPath ?? DEFAULT_SOCKET_PATH,
-		});
+		this.backend = new DaemonBackend({ socketPath: config.socketPath ?? DEFAULT_SOCKET });
 	}
 
 	async available(): Promise<boolean> {
 		try {
-			const info = await this.client.info();
-			return info.host.criuEnabled;
+			const info = await this.backend.info();
+			return info.criuEnabled;
 		} catch {
 			return false;
 		}
 	}
 
 	async create(workload: Workload, instanceId: InstanceId): Promise<InstanceHandle> {
-		const imageRef = await this.ensureImage(workload);
+		const imageRef = await this.backend.ensureImage(
+			workload.image,
+			workload.workload,
+		);
 
 		// Build container create spec
 		const spec: ContainerCreateSpec = {
 			name: instanceId,
 			image: imageRef,
+			privileged: false,
 			labels: {
 				"boilerhouse.workload": workload.workload.name,
 				"boilerhouse.version": workload.workload.version,
@@ -142,7 +140,7 @@ export class PodmanRuntime implements Runtime {
 			);
 		}
 
-		await this.client.createContainer(spec);
+		await this.backend.createContainer(spec);
 
 		this.containers.set(instanceId, {
 			instanceId,
@@ -154,7 +152,7 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	async start(handle: InstanceHandle): Promise<void> {
-		await this.client.startContainer(handle.instanceId);
+		await this.backend.startContainer(handle.instanceId);
 
 		const container = this.requireContainer(handle.instanceId);
 		container.running = true;
@@ -166,7 +164,7 @@ export class PodmanRuntime implements Runtime {
 
 	async destroy(handle: InstanceHandle): Promise<void> {
 		// Force remove — idempotent (ignores 404)
-		await this.client.removeContainer(handle.instanceId, true);
+		await this.backend.removeContainer(handle.instanceId);
 		this.containers.delete(handle.instanceId);
 		handle.running = false;
 	}
@@ -184,45 +182,27 @@ export class PodmanRuntime implements Runtime {
 			);
 		}
 
-		const archivePath = `${archiveDir}/checkpoint.tar.gz`;
-
 		// Wait for all established TCP connections to close before CRIU checkpoint.
 		// CRIU cannot restore TCP connections when the container's IP changes on restore.
 		await this.waitForTcpDrain(handle.instanceId);
 
-		// Checkpoint streams the archive as the response body
-		const archiveBuffer = await this.client.checkpointContainer(handle.instanceId);
+		const result = await this.backend.checkpoint(handle.instanceId, archiveDir);
 
 		// Container is stopped after checkpoint
 		container.running = false;
 		handle.running = false;
 
-		// Rewrite the archive to zero out baked-in host ports.
-		// Without this, restoring the same snapshot twice would fail because
-		// both containers try to bind the same host port.
-		const { archive: rewrittenArchive, containerPorts } =
-			await rewriteCheckpointPorts(archiveBuffer);
-
-		await Bun.write(archivePath, rewrittenArchive);
-		chmodSync(archivePath, 0o600);
-
-		// Compute HMAC over the stored archive if a key is configured
-		const archiveHmac = this.hmacKey
-			? computeArchiveHmac(rewrittenArchive, this.hmacKey)
-			: undefined;
-
-		const info = await this.client.info();
-		const architecture = await this.getArchitecture();
+		const info = await this.backend.info();
 
 		const paths: SnapshotPaths = {
-			memory: archivePath,
-			vmstate: archivePath,
+			memory: result.archivePath,
+			vmstate: result.archivePath,
 		};
 
 		const runtimeMeta: SnapshotMetadata = {
-			runtimeVersion: info.version.Version,
-			architecture,
-			exposedPorts: containerPorts.length > 0 ? containerPorts : undefined,
+			runtimeVersion: info.version,
+			architecture: info.architecture,
+			exposedPorts: result.exposedPorts.length > 0 ? result.exposedPorts : undefined,
 		};
 
 		return {
@@ -232,33 +212,22 @@ export class PodmanRuntime implements Runtime {
 			workloadId: generateWorkloadId(),
 			nodeId: generateNodeId(),
 			runtimeMeta,
-			archiveHmac,
+			archiveHmac: result.hmac,
 		};
 	}
 
 	async restore(ref: SnapshotRef, instanceId: InstanceId): Promise<InstanceHandle> {
-		// The archive was already rewritten at snapshot time to have hostPort=0,
-		// which prevents "address already in use" conflicts on restore.
-		// We also pass publishPorts so podman sets up fresh port forwarding.
-		const archiveData = await Bun.file(ref.paths.vmstate).arrayBuffer();
-		const archive = Buffer.from(archiveData);
-
-		// Verify archive integrity when HMAC key is configured
-		if (this.hmacKey) {
-			if (!ref.archiveHmac) {
-				throw new PodmanRuntimeError(
-					"Archive HMAC is missing but an HMAC key is configured — refusing to restore unsigned archive",
-				);
-			}
-			verifyArchiveHmac(archive, this.hmacKey, ref.archiveHmac);
-		}
-
 		// Build publishPorts specs from the snapshot's exposed container ports.
 		// Just the container port number — podman picks a random host port.
 		const containerPorts = ref.runtimeMeta?.exposedPorts;
 		const publishPorts = containerPorts?.map((p) => String(p));
 
-		await this.client.restoreContainer(archive, instanceId, publishPorts);
+		await this.backend.restore(
+			ref.paths.vmstate,
+			ref.archiveHmac,
+			instanceId,
+			publishPorts,
+		);
 
 		const ports = await this.resolveHostPorts(instanceId);
 
@@ -272,8 +241,7 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	async exec(handle: InstanceHandle, command: string[]): Promise<ExecResult> {
-		const execId = await this.client.execCreate(handle.instanceId, command);
-		return this.client.execStart(execId);
+		return this.backend.exec(handle.instanceId, command);
 	}
 
 	async getEndpoint(handle: InstanceHandle): Promise<Endpoint> {
@@ -300,7 +268,7 @@ export class PodmanRuntime implements Runtime {
 
 	async getContainerIp(handle: InstanceHandle): Promise<string | null> {
 		try {
-			const inspect = await this.client.inspectContainer(handle.instanceId);
+			const inspect = await this.backend.inspectContainer(handle.instanceId);
 			const networks = (inspect.NetworkSettings as Record<string, unknown>)
 				?.Networks as Record<string, { IPAddress?: string }> | undefined;
 			if (!networks) return null;
@@ -315,76 +283,6 @@ export class PodmanRuntime implements Runtime {
 	}
 
 	// ── Private helpers ──────────────────────────────────────────────────────
-
-	/**
-	 * Ensure the workload's image is available locally.
-	 *
-	 * - If `image.ref` is set, pull from registry if not cached.
-	 * - If `image.dockerfile` is set, build from the Dockerfile (requires
-	 *   `workloadsDir` in config). The built image is tagged as
-	 *   `boilerhouse/<name>:<version>`.
-	 *
-	 * Returns the image reference to use for container creation.
-	 */
-	private async ensureImage(workload: Workload): Promise<string> {
-		if (workload.image.ref) {
-			const exists = await this.client.imageExists(workload.image.ref);
-			if (!exists) {
-				await this.client.pullImage(workload.image.ref);
-			}
-			return workload.image.ref;
-		}
-
-		if (workload.image.dockerfile) {
-			if (!this.workloadsDir) {
-				throw new PodmanRuntimeError(
-					"Workload uses image.dockerfile but PodmanConfig.workloadsDir is not set",
-				);
-			}
-
-			const tag = `boilerhouse/${workload.workload.name}:${workload.workload.version}`;
-
-			// Skip build if image already exists
-			const exists = await this.client.imageExists(tag);
-			if (exists) {
-				return tag;
-			}
-
-			const dockerfilePath = resolve(this.workloadsDir, workload.image.dockerfile);
-			const contextDir = dirname(dockerfilePath);
-			const dockerfileName = basename(dockerfilePath);
-
-			// Create a tar archive of the build context
-			const proc = Bun.spawn(["tar", "-cf", "-", "-C", contextDir, "."], {
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-
-			const [tarData, tarErr] = await Promise.all([
-				new Response(proc.stdout).arrayBuffer(),
-				new Response(proc.stderr).text(),
-			]);
-			const exitCode = await proc.exited;
-
-			if (exitCode !== 0) {
-				throw new PodmanRuntimeError(
-					`Failed to create build context tar: ${tarErr.trim()}`,
-				);
-			}
-
-			await this.client.buildImage(
-				Buffer.from(tarData),
-				tag,
-				dockerfileName,
-			);
-
-			return tag;
-		}
-
-		throw new PodmanRuntimeError(
-			"Workload must have either image.ref or image.dockerfile set",
-		);
-	}
 
 	/**
 	 * Wait for all established TCP connections inside the container to close.
@@ -414,10 +312,9 @@ export class PodmanRuntime implements Runtime {
 		while (Date.now() < deadline) {
 			let result: { exitCode: number; stdout: string };
 			try {
-				const execId = await this.client.execCreate(instanceId, [
+				result = await this.backend.exec(instanceId, [
 					"cat", "/proc/net/tcp",
 				]);
-				result = await this.client.execStart(execId);
 			} catch {
 				// Exec failed entirely (container stopped, no network namespace, etc.)
 				return;
@@ -454,7 +351,7 @@ export class PodmanRuntime implements Runtime {
 	 */
 	private async resolveHostPorts(instanceId: string): Promise<number[]> {
 		try {
-			const inspect = await this.client.inspectContainer(instanceId);
+			const inspect = await this.backend.inspectContainer(instanceId);
 			const portsMap = inspect.NetworkSettings?.Ports;
 			if (!portsMap) return [];
 
@@ -472,13 +369,6 @@ export class PodmanRuntime implements Runtime {
 		} catch {
 			return [];
 		}
-	}
-
-	private async getArchitecture(): Promise<string> {
-		const proc = Bun.spawn(["uname", "-m"], { stdout: "pipe" });
-		const stdout = await new Response(proc.stdout).text();
-		await proc.exited;
-		return stdout.trim() || "unknown";
 	}
 }
 

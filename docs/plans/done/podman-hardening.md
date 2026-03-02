@@ -91,27 +91,14 @@ group- or world-readable, tenant secrets are exposed to any local process on the
 
 **Risk addressed:** M1 — race between socket creation and permission assignment.
 
-**Problem:** The current `ExecStartPost` in `boilerhouse-podman.service` runs:
-```sh
-chmod 660 /run/boilerhouse/podman.sock
-chgrp %i /run/boilerhouse/podman.sock
-```
-Between when Podman creates the socket and when `chmod 660` runs, the socket has whatever
-permissions Podman assigns (depends on the process umask). On permissive systems this could
-be `0666`, making the socket briefly world-accessible.
+**Problem:** Between when Podman creates the socket and when permissions are set, the socket
+has whatever permissions Podman assigns (depends on the process umask). On permissive systems
+this could be `0666`, making the socket briefly world-accessible.
 
-**Fix:** Set `UMask=0117` in the `[Service]` section. With this umask, Podman creates the
-socket at `0660` natively (`0666 & ~0117 = 0660`). The `ExecStartPost` only needs to
-`chgrp`, which is a single atomic syscall — no window.
-
-```ini
-[Service]
-UMask=0117
-ExecStartPost=/bin/sh -c 'until [ -S /run/boilerhouse/podman.sock ]; do sleep 0.1; done; chgrp %i /run/boilerhouse/podman.sock'
-```
-
-Apply the same fix to `scripts/start-podman-daemon.sh` by setting `umask 0117` before
-starting the daemon.
+**Fix:** Set `UMask=0117` in `deploy/boilerhoused.service`. With this umask, both the podman
+socket and runtime socket are created with restrictive permissions natively. The podman socket
+is now root-only (0600) since `boilerhoused` manages podman as a child process. Only the
+runtime socket needs group access (0660).
 
 ---
 
@@ -137,7 +124,7 @@ This does not restrict CRIU's intended operations but caps what an exploit could
 
 ---
 
-### 6 — Privilege-separating proxy daemon (`boilerhouse-runtimed`)
+### 6 — Privilege-separating proxy daemon (`boilerhoused`) ✅ Implemented
 
 **Risk addressed:** C1 — the API server has full access to the raw Podman socket (a root API
 with no per-operation restrictions). Any code in the API server process — including transitive
@@ -163,9 +150,9 @@ to the proxy's restricted socket instead.
 ```
 API Server (unprivileged)
   └─ /run/boilerhouse/runtime.sock  (660, boilerhouse group)
-       └─ boilerhouse-runtimed (root, minimal capabilities)
-            └─ /run/boilerhouse/podman.sock  (600, root-only)
-                 └─ podman system service (root)
+       └─ boilerhoused (root, minimal capabilities)
+            └─ podman system service (child process)
+                 └─ /run/boilerhouse/podman.sock  (600, root-only)
 ```
 
 The proxy exposes only the operations the API server actually needs:
@@ -187,14 +174,11 @@ The proxy maintains its own container registry (in-memory or small SQLite). On `
 records the new container ID. `checkpoint` and `restore` refuse to operate on unknown IDs.
 This is ownership enforcement at the privilege boundary, not only in the application layer.
 
-**Implementation scope:** The proxy is a small Bun service (~300–500 lines). It speaks a
-narrow JSON-over-Unix-socket protocol to the API server, and translates to Libpod API calls
-internally. `PodmanClient` in the API server is replaced by a `RuntimedClient` that speaks
-the proxy protocol.
-
-**Deferral:** This item requires the most implementation effort and fundamentally changes
-the deployment topology. It is appropriate to tackle once the system is approaching
-production. Items 1–5 should be completed first.
+**Implementation:** `apps/boilerhoused/` contains the daemon. It manages the `podman system
+service` as a child process (no separate systemd unit needed). The runtime package provides
+`ContainerBackend` interface with `DirectBackend` (direct podman) and `DaemonBackend`
+(HTTP-over-Unix-socket to daemon). `PodmanRuntime` selects backend via `config.daemonSocket`.
+Deployment: `deploy/boilerhoused.service`, `scripts/start-boilerhoused.sh`.
 
 ---
 
@@ -207,7 +191,7 @@ production. Items 1–5 should be completed first.
 | 3 | Snapshot dir/file permissions           | Trivial | H1 — memory dump leaks  |
 | 4 | Systemd `UMask=0117` TOCTOU fix         | Trivial | M1 — socket race        |
 | 5 | Systemd capability bounding set         | Small   | M4 — unrestricted root  |
-| 6 | Proxy daemon (`boilerhouse-runtimed`)   | Medium  | C1 — full root socket   |
+| 6 | Proxy daemon (`boilerhoused`)            | Medium  | C1 — full root socket   |
 
 Items 2–4 are one-liners or single-file changes with no schema impact. Item 1 requires a DB
-migration. Item 6 is a new component and should be planned separately.
+migration. All items are now implemented.

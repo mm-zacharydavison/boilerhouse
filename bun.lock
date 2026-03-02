@@ -22,6 +22,14 @@
         "elysia": "^1.4.25",
       },
     },
+    "apps/boilerhoused": {
+      "name": "@boilerhouse/boilerhoused",
+      "version": "0.0.1",
+      "dependencies": {
+        "@boilerhouse/logger": "workspace:*",
+        "@boilerhouse/runtime-podman": "workspace:*",
+      },
+    },
     "apps/dashboard": {
       "name": "@boilerhouse/dashboard",
       "version": "0.0.1",
@@ -82,6 +90,8 @@
     "@babel/runtime": ["@babel/runtime@7.28.6", "", {}, "sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA=="],
 
     "@boilerhouse/api": ["@boilerhouse/api@workspace:apps/api"],
+
+    "@boilerhouse/boilerhoused": ["@boilerhouse/boilerhoused@workspace:apps/boilerhoused"],
 
     "@boilerhouse/core": ["@boilerhouse/core@workspace:packages/core"],
 

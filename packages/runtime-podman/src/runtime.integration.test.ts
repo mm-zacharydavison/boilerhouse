@@ -2,22 +2,22 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { generateInstanceId } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import { PodmanRuntime } from "./runtime";
-import { PodmanClient } from "./client";
+import { DaemonBackend } from "./daemon-backend";
 import { mkdtempSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const DEFAULT_SOCKET = "/run/boilerhouse/podman.sock";
-const PODMAN_SOCKET = process.env.PODMAN_SOCKET ?? DEFAULT_SOCKET;
+const DEFAULT_DAEMON_SOCKET = "/run/boilerhouse/runtime.sock";
+const DAEMON_SOCKET = process.env.DAEMON_SOCKET ?? DEFAULT_DAEMON_SOCKET;
 
-// Skip entire suite if the podman API socket is not available.
+// Skip entire suite if the daemon socket is not available.
 // existsSync alone is not enough — stale socket files from crashed daemons
 // cause tests to hang instead of skipping. Probe with a real HTTP request.
 const podmanAvailable = (() => {
 	try {
-		if (!existsSync(PODMAN_SOCKET)) return false;
+		if (!existsSync(DAEMON_SOCKET)) return false;
 		const result = Bun.spawnSync(
-			["curl", "--unix-socket", PODMAN_SOCKET, "--max-time", "2", "-sf", "http://localhost/_ping"],
+			["curl", "--unix-socket", DAEMON_SOCKET, "--max-time", "2", "-sf", "http://localhost/healthz"],
 			{ stdout: "pipe", stderr: "ignore" },
 		);
 		return result.exitCode === 0;
@@ -55,15 +55,15 @@ const TEST_WORKLOAD_WITH_PORT: Workload = {
 	},
 };
 
-// Track containers for cleanup via the API socket
+// Track containers for cleanup via the daemon
 const containersToCleanup: string[] = [];
-const cleanupClient = podmanAvailable
-	? new PodmanClient({ socketPath: PODMAN_SOCKET })
+const cleanupBackend = podmanAvailable
+	? new DaemonBackend({ socketPath: DAEMON_SOCKET })
 	: undefined;
 
 afterEach(async () => {
 	for (const id of containersToCleanup) {
-		await cleanupClient?.removeContainer(id, true).catch(() => {});
+		await cleanupBackend?.removeContainer(id).catch(() => {});
 	}
 	containersToCleanup.length = 0;
 });
@@ -72,10 +72,10 @@ function trackInstance(id: string): void {
 	containersToCleanup.push(id);
 }
 
-describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
+describe.skipIf(!podmanAvailable)("PodmanRuntime (daemon)", () => {
 	test("available() returns true when podman and CRIU are present", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 
 		const result = await runtime.available();
 		// CRIU may or may not be installed — just check it doesn't throw
@@ -84,7 +84,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 
 	test("create + start + destroy lifecycle", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 		const instanceId = generateInstanceId();
 		trackInstance(instanceId);
 
@@ -96,8 +96,8 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 		await runtime.start(handle);
 		expect(handle.running).toBe(true);
 
-		// Verify container is running via the API
-		const inspect = await cleanupClient!.inspectContainer(instanceId);
+		// Verify container is running via the daemon
+		const inspect = await cleanupBackend!.inspectContainer(instanceId);
 		expect(inspect.State.Running).toBe(true);
 
 		await runtime.destroy(handle);
@@ -106,7 +106,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 
 	test("exec runs command inside container", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 		const instanceId = generateInstanceId();
 		trackInstance(instanceId);
 
@@ -123,7 +123,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 
 	test("getEndpoint returns published host ports", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 		const instanceId = generateInstanceId();
 		trackInstance(instanceId);
 
@@ -141,7 +141,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 
 	test("list tracks created instances", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 		const id1 = generateInstanceId();
 		const id2 = generateInstanceId();
 		trackInstance(id1);
@@ -165,7 +165,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 
 	test("destroy is idempotent", async () => {
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-		const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+		const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 		const instanceId = generateInstanceId();
 		trackInstance(instanceId);
 
@@ -177,12 +177,10 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 		await runtime.destroy(handle);
 	});
 
-	// CRIU tests — skip if CRIU is not available via the socket
+	// CRIU tests — skip if CRIU is not available
 	const criuAvailable = (() => {
-		if (!podmanAvailable || !cleanupClient) return false;
+		if (!podmanAvailable) return false;
 		try {
-			// Synchronous check not possible over socket, so we use a flag
-			// that gets resolved in beforeAll. For now, use env var override.
 			return process.env.BOILERHOUSE_CRIU_AVAILABLE === "true";
 		} catch {
 			return false;
@@ -192,7 +190,7 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 	describe.skipIf(!criuAvailable)("snapshot + restore (CRIU)", () => {
 		test("checkpoint creates archive and restore resumes container", async () => {
 			const snapshotDir = mkdtempSync(join(tmpdir(), "bh-test-"));
-			const runtime = new PodmanRuntime({ snapshotDir, socketPath: PODMAN_SOCKET });
+			const runtime = new PodmanRuntime({ snapshotDir, socketPath: DAEMON_SOCKET });
 			const instanceId = generateInstanceId();
 			trackInstance(instanceId);
 

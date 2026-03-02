@@ -7,15 +7,18 @@ import { generateInstanceId } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import { PodmanRuntime, hasEstablishedConnections } from "./runtime";
 import { resolveTemplates } from "./templates";
+import type { ContainerCreateSpec } from "./client";
 
 /**
- * Creates a mock HTTP server on a temporary Unix socket.
+ * Creates a mock HTTP server on a temporary Unix socket that speaks
+ * the boilerhoused daemon API.
  */
-function createMockServer(
+function createMockDaemon(
 	handler: (
-		req: http.IncomingMessage,
-		body: Buffer,
-	) => { status: number; body?: unknown; rawBody?: Buffer },
+		method: string,
+		url: string,
+		body: unknown,
+	) => { status: number; body?: unknown },
 ): { socketPath: string; server: http.Server; close: () => Promise<void> } {
 	const tmpDir = mkdtempSync(join(tmpdir(), "podman-runtime-test-"));
 	const socketPath = join(tmpDir, "test.sock");
@@ -24,16 +27,15 @@ function createMockServer(
 		const chunks: Buffer[] = [];
 		req.on("data", (chunk: Buffer) => chunks.push(chunk));
 		req.on("end", () => {
-			const body = Buffer.concat(chunks);
-			const response = handler(req, body);
+			const raw = Buffer.concat(chunks).toString("utf-8");
+			const parsed = raw ? JSON.parse(raw) : null;
+			const response = handler(req.method ?? "GET", req.url ?? "/", parsed);
 
 			res.writeHead(response.status, {
 				"Content-Type": "application/json",
 			});
 
-			if (response.rawBody) {
-				res.end(response.rawBody);
-			} else if (response.body !== undefined) {
+			if (response.body !== undefined) {
 				res.end(JSON.stringify(response.body));
 			} else {
 				res.end();
@@ -59,7 +61,7 @@ function createMockServer(
 }
 
 describe("PodmanRuntime", () => {
-	let mockServer: ReturnType<typeof createMockServer>;
+	let mockServer: ReturnType<typeof createMockDaemon>;
 
 	afterEach(async () => {
 		if (mockServer) {
@@ -75,27 +77,42 @@ describe("PodmanRuntime", () => {
 		idle: { action: "hibernate" },
 	};
 
-	test("create() converts overlay_dirs to tmpfs mounts", async () => {
-		let createBody: Record<string, unknown> | undefined;
+	/**
+	 * Creates a mock daemon that captures the container create spec
+	 * and stores it in the returned ref for assertion.
+	 */
+	function createSpecCapturingDaemon(): {
+		mock: ReturnType<typeof createMockDaemon>;
+		captured: { spec: ContainerCreateSpec | undefined };
+	} {
+		const captured: { spec: ContainerCreateSpec | undefined } = { spec: undefined };
 
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			// Image exists check
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
+		const mock = createMockDaemon((method, url, body) => {
+			// POST /images/ensure
+			if (method === "POST" && url === "/images/ensure") {
+				const b = body as { ref?: string };
+				return { status: 200, body: { image: b.ref ?? "built:latest" } };
 			}
-			// Container create
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-123" } };
+			// POST /containers (create)
+			if (method === "POST" && url === "/containers") {
+				const b = body as { spec: ContainerCreateSpec };
+				captured.spec = b.spec;
+				return { status: 201, body: { id: "ctr-mock" } };
 			}
-			return { status: 404 };
+			return { status: 404, body: { error: "not found" } };
 		});
+
+		return { mock, captured };
+	}
+
+	test("create() converts overlay_dirs to tmpfs mounts", async () => {
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		const workload: Workload = {
@@ -107,7 +124,7 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		expect(createBody?.mounts).toEqual([
+		expect(captured.spec?.mounts).toEqual([
 			{ destination: "/home/node/.openclaw", type: "tmpfs", options: ["size=256m", "mode=1777"] },
 			{ destination: "/var/data", type: "tmpfs", options: ["size=256m", "mode=1777"] },
 		]);
@@ -117,24 +134,13 @@ describe("PodmanRuntime", () => {
 
 	test("create() resolves ${VAR} in entrypoint env values", async () => {
 		process.env.TEST_SECRET_KEY = "sk-test-12345";
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-env" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		const workload: Workload = {
@@ -151,7 +157,7 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		expect(createBody?.env).toEqual({
+		expect(captured.spec?.env).toEqual({
 			API_KEY: "sk-test-12345",
 			FIXED_VAL: "literal",
 		});
@@ -161,24 +167,13 @@ describe("PodmanRuntime", () => {
 	});
 
 	test("create() injects HTTP_PROXY when proxyAddress is set", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-proxy" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 			proxyAddress: "http://host.containers.internal:38080",
 		});
 
@@ -189,36 +184,25 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		expect((createBody?.env as Record<string, string>)?.HTTP_PROXY).toBe(
+		expect(captured.spec?.env?.HTTP_PROXY).toBe(
 			"http://host.containers.internal:38080",
 		);
-		expect((createBody?.env as Record<string, string>)?.http_proxy).toBe(
+		expect(captured.spec?.env?.http_proxy).toBe(
 			"http://host.containers.internal:38080",
 		);
-		expect(createBody?.hostadd).toEqual(["host.containers.internal:host-gateway"]);
+		expect(captured.spec?.hostadd).toEqual(["host.containers.internal:host-gateway"]);
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
 	test("create() does not inject HTTP_PROXY when proxyAddress is absent", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-noproxy" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		const workload: Workload = {
@@ -228,60 +212,38 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		expect(createBody?.env).toBeUndefined();
-		expect(createBody?.hostadd).toBeUndefined();
+		expect(captured.spec?.env).toBeUndefined();
+		expect(captured.spec?.hostadd).toBeUndefined();
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
 	test("create() does not inject HTTP_PROXY for network.access = 'none'", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-nonet" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 			proxyAddress: "http://host.containers.internal:38080",
 		});
 
 		await runtime.create(BASE_WORKLOAD, generateInstanceId());
 
-		expect(createBody?.env).toBeUndefined();
+		expect(captured.spec?.env).toBeUndefined();
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
 	test("create() does not override user-specified HTTP_PROXY", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-usrproxy" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 			proxyAddress: "http://host.containers.internal:38080",
 		});
 
@@ -296,7 +258,7 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		expect((createBody?.env as Record<string, string>)?.HTTP_PROXY).toBe(
+		expect(captured.spec?.env?.HTTP_PROXY).toBe(
 			"http://custom-proxy:9999",
 		);
 
@@ -304,52 +266,30 @@ describe("PodmanRuntime", () => {
 	});
 
 	test("create() emits privileged: false in the container create body", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-priv" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		await runtime.create(BASE_WORKLOAD, generateInstanceId());
 
-		expect(createBody?.privileged).toBe(false);
+		expect(captured.spec?.privileged).toBe(false);
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
 	test("create() always sets host_port: 0 for ephemeral allocation", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-port" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		const workload: Workload = {
@@ -362,9 +302,8 @@ describe("PodmanRuntime", () => {
 
 		await runtime.create(workload, generateInstanceId());
 
-		const portmappings = createBody?.portmappings as Array<{ host_port: number }>;
-		expect(portmappings).toHaveLength(2);
-		for (const pm of portmappings) {
+		expect(captured.spec?.portmappings).toHaveLength(2);
+		for (const pm of captured.spec!.portmappings!) {
 			expect(pm.host_port).toBe(0);
 		}
 
@@ -372,58 +311,35 @@ describe("PodmanRuntime", () => {
 	});
 
 	test("create() uses isolated network namespace (not host)", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-netns" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		// network.access = "none" maps to nsmode: "none" (isolated)
 		await runtime.create(BASE_WORKLOAD, generateInstanceId());
-		const netns = createBody?.netns as { nsmode: string } | undefined;
-		expect(netns?.nsmode).not.toBe("host");
+		expect(captured.spec?.netns?.nsmode).not.toBe("host");
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
 
 	test("create() does not include mounts when no overlay_dirs", async () => {
-		let createBody: Record<string, unknown> | undefined;
-
-		mockServer = createMockServer((req, body) => {
-			const url = req.url ?? "";
-			if (url.includes("/images/") && url.includes("/exists")) {
-				return { status: 204 };
-			}
-			if (url.includes("/containers/create")) {
-				createBody = JSON.parse(body.toString());
-				return { status: 201, body: { Id: "ctr-456" } };
-			}
-			return { status: 404 };
-		});
+		const { mock, captured } = createSpecCapturingDaemon();
+		mockServer = mock;
 
 		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
 		const runtime = new PodmanRuntime({
 			snapshotDir,
-			socketPath: mockServer.socketPath,
+			socketPath: mock.socketPath,
 		});
 
 		await runtime.create(BASE_WORKLOAD, generateInstanceId());
 
-		expect(createBody?.mounts).toBeUndefined();
+		expect(captured.spec?.mounts).toBeUndefined();
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});

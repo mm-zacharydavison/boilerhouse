@@ -1,0 +1,165 @@
+import * as http from "node:http";
+import type { ContainerBackend, CheckpointResult, BackendInfo } from "./backend";
+import type { ContainerCreateSpec, ContainerInspect, ExecResult } from "./client";
+import { PodmanRuntimeError } from "./errors";
+
+export interface DaemonBackendConfig {
+	/** Path to the boilerhoused Unix socket. */
+	socketPath: string;
+}
+
+/**
+ * HTTP-over-Unix-socket client that talks to `boilerhoused`.
+ * Same communication pattern as `PodmanClient` but speaks the daemon's API.
+ */
+export class DaemonBackend implements ContainerBackend {
+	private readonly socketPath: string;
+
+	constructor(config: DaemonBackendConfig) {
+		this.socketPath = config.socketPath;
+	}
+
+	async info(): Promise<BackendInfo> {
+		const res = await this.request("GET", "/info");
+		return res as BackendInfo;
+	}
+
+	async ensureImage(
+		image: { ref?: string; dockerfile?: string },
+		workload: { name: string; version: string },
+	): Promise<string> {
+		const body: Record<string, string> = {};
+		if (image.ref) body.ref = image.ref;
+		if (image.dockerfile) {
+			body.dockerfile = image.dockerfile;
+			body.tag = `boilerhouse/${workload.name}:${workload.version}`;
+		}
+
+		const res = await this.request("POST", "/images/ensure", body);
+		return (res as { image: string }).image;
+	}
+
+	async createContainer(spec: ContainerCreateSpec): Promise<string> {
+		const res = await this.request("POST", "/containers", { spec });
+		return (res as { id: string }).id;
+	}
+
+	async startContainer(id: string): Promise<void> {
+		await this.request("POST", `/containers/${encodeURIComponent(id)}/start`);
+	}
+
+	async inspectContainer(id: string): Promise<ContainerInspect> {
+		const res = await this.request("GET", `/containers/${encodeURIComponent(id)}`);
+		return res as ContainerInspect;
+	}
+
+	async removeContainer(id: string): Promise<void> {
+		await this.request("DELETE", `/containers/${encodeURIComponent(id)}`);
+	}
+
+	async checkpoint(id: string, archiveDir: string): Promise<CheckpointResult> {
+		const res = await this.request(
+			"POST",
+			`/containers/${encodeURIComponent(id)}/checkpoint`,
+			{ archiveDir },
+		);
+		return res as CheckpointResult;
+	}
+
+	async restore(
+		archivePath: string,
+		hmac: string | undefined,
+		name: string,
+		publishPorts?: string[],
+	): Promise<string> {
+		const res = await this.request("POST", "/containers/restore", {
+			archivePath,
+			hmac,
+			name,
+			publishPorts,
+		});
+		return (res as { id: string }).id;
+	}
+
+	async exec(id: string, cmd: string[]): Promise<ExecResult> {
+		const res = await this.request(
+			"POST",
+			`/containers/${encodeURIComponent(id)}/exec`,
+			{ cmd },
+		);
+		return res as ExecResult;
+	}
+
+	async listContainers(): Promise<string[]> {
+		const res = await this.request("GET", "/containers");
+		return (res as { ids: string[] }).ids;
+	}
+
+	// ── HTTP transport ──────────────────────────────────────────────────────
+
+	private request(
+		method: string,
+		path: string,
+		body?: object,
+	): Promise<unknown> {
+		return new Promise((resolve, reject) => {
+			const bodyData = body ? Buffer.from(JSON.stringify(body)) : undefined;
+			const headers: Record<string, string> = {};
+			if (bodyData) {
+				headers["Content-Type"] = "application/json";
+				headers["Content-Length"] = String(bodyData.length);
+			}
+
+			const req = http.request(
+				{
+					socketPath: this.socketPath,
+					path,
+					method,
+					headers,
+				},
+				(res) => {
+					const chunks: Buffer[] = [];
+					res.on("data", (chunk: Buffer) => chunks.push(chunk));
+					res.on("end", () => {
+						const raw = Buffer.concat(chunks).toString("utf-8");
+						let parsed: unknown;
+						try {
+							parsed = raw ? JSON.parse(raw) : null;
+						} catch {
+							parsed = raw;
+						}
+
+						const status = res.statusCode ?? 0;
+						if (status >= 400) {
+							const msg =
+								(parsed as Record<string, unknown>)?.error ??
+								`HTTP ${status}`;
+							reject(
+								new PodmanRuntimeError(
+									`Daemon request ${method} ${path} failed: ${msg}`,
+								),
+							);
+							return;
+						}
+
+						resolve(parsed);
+					});
+					res.on("error", reject);
+				},
+			);
+
+			req.on("error", (err) => {
+				reject(
+					new PodmanRuntimeError(
+						`Daemon request failed: ${err.message}`,
+					),
+				);
+			});
+
+			if (bodyData) {
+				req.write(bodyData);
+			}
+			req.end();
+		});
+	}
+}

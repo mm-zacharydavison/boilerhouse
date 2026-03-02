@@ -1,0 +1,474 @@
+import { mkdirSync, existsSync, rmSync, chmodSync } from "node:fs";
+import { dirname } from "node:path";
+import type { Subprocess } from "bun";
+import { PodmanClient } from "@boilerhouse/runtime-podman";
+import type { ContainerCreateSpec } from "@boilerhouse/runtime-podman";
+import { validateContainerSpec, PolicyViolationError } from "./validate";
+
+export interface DaemonConfig {
+	/**
+	 * Path for the podman API socket.
+	 * When `managePodman` is true (default), boilerhoused spawns podman
+	 * and creates this socket. Otherwise it connects to an existing socket.
+	 * @default "/run/boilerhouse/podman.sock"
+	 */
+	podmanSocketPath: string;
+	/** Path for the daemon's own listening socket. */
+	listenSocketPath: string;
+	/** Directory for storing checkpoint archives. */
+	snapshotDir: string;
+	/** Hex-encoded HMAC key for archive signing. */
+	hmacKey?: string;
+	/** Base directory for resolving workload Dockerfiles. */
+	workloadsDir?: string;
+	/**
+	 * When true, boilerhoused spawns and manages the `podman system service`
+	 * child process. The podman socket is created with mode 0600 (root-only).
+	 * On stop, the podman process is killed.
+	 * @default true
+	 */
+	managePodman?: boolean;
+}
+
+/**
+ * Spawns `podman system service` and waits for the socket.
+ * Returns the child process handle.
+ */
+async function startPodman(socketPath: string): Promise<Subprocess> {
+	const socketDir = dirname(socketPath);
+	mkdirSync(socketDir, { recursive: true });
+
+	// Clean up stale socket
+	if (existsSync(socketPath)) {
+		rmSync(socketPath, { force: true });
+	}
+
+	const proc = Bun.spawn(
+		["podman", "system", "service", "--time=0", `unix://${socketPath}`],
+		{ stdout: "inherit", stderr: "inherit" },
+	);
+
+	// Race: wait for socket to appear OR process to exit (whichever comes first)
+	const deadline = Date.now() + 10_000;
+	while (Date.now() < deadline) {
+		if (existsSync(socketPath)) {
+			// Lock down the socket to root-only
+			chmodSync(socketPath, 0o600);
+			return proc;
+		}
+
+		// Check if process already exited
+		// Bun's Subprocess has .exitCode which is null while running
+		if (proc.exitCode !== null) {
+			throw new Error(
+				`podman system service exited with code ${proc.exitCode} before creating socket`,
+			);
+		}
+
+		await new Promise((r) => setTimeout(r, 100));
+	}
+
+	proc.kill();
+	throw new Error(
+		`Podman socket did not appear at ${socketPath} within 10s`,
+	);
+}
+
+/**
+ * Creates and starts the boilerhoused daemon.
+ * Returns a handle with a `stop()` function.
+ */
+export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => void }> {
+	const managePodman = config.managePodman ?? true;
+	let podmanProc: Subprocess | undefined;
+
+	// Start podman if we're managing it
+	if (managePodman) {
+		podmanProc = await startPodman(config.podmanSocketPath);
+	}
+
+	const client = new PodmanClient({ socketPath: config.podmanSocketPath });
+
+	// In-memory container registry.
+	// Clients address containers by name (instanceId), but podman returns
+	// its own hex IDs. We keep both mappings so lookups work either way.
+	const nameToId = new Map<string, string>(); // container name → podman ID
+	const idToName = new Map<string, string>(); // podman ID → container name
+
+	function registerContainer(podmanId: string, name: string): void {
+		nameToId.set(name, podmanId);
+		idToName.set(podmanId, name);
+	}
+
+	function unregisterByName(name: string): void {
+		const podmanId = nameToId.get(name);
+		nameToId.delete(name);
+		if (podmanId) idToName.delete(podmanId);
+	}
+
+	function unregisterByPodmanId(podmanId: string): void {
+		const name = idToName.get(podmanId);
+		idToName.delete(podmanId);
+		if (name) nameToId.delete(name);
+	}
+
+	/**
+	 * Resolve an identifier (name or podman ID) to a podman ID.
+	 * Returns undefined if the container is not in the registry.
+	 */
+	function resolveContainer(identifier: string): string | undefined {
+		// Try as name first (most common path from PodmanRuntime)
+		const byName = nameToId.get(identifier);
+		if (byName) return byName;
+		// Fallback: check if it's a podman ID directly
+		if (idToName.has(identifier)) return identifier;
+		return undefined;
+	}
+
+	// Recover existing managed containers from podman
+	try {
+		const res = await client.get(
+			'/libpod/containers/json?filters={"label":["managed-by=boilerhoused"]}',
+		);
+		const containers = res.body as Array<{ Id: string; Names?: string[] }>;
+		for (const c of containers) {
+			const name = c.Names?.[0] ?? c.Id;
+			registerContainer(c.Id, name);
+		}
+	} catch {
+		// Podman not reachable at startup — registry stays empty
+	}
+
+	mkdirSync(config.snapshotDir, { recursive: true, mode: 0o700 });
+
+	function jsonResponse(status: number, body?: unknown): Response {
+		if (body === undefined || body === null) {
+			return new Response(null, { status });
+		}
+		return new Response(JSON.stringify(body), {
+			status,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
+
+	async function readJsonBody(req: Request): Promise<unknown> {
+		const text = await req.text();
+		return text ? JSON.parse(text) : null;
+	}
+
+	/** Route dispatch. */
+	async function handleRequest(req: Request): Promise<Response> {
+		const url = new URL(req.url, "http://localhost");
+		const { pathname } = url;
+		const method = req.method;
+
+		try {
+			// GET /healthz
+			if (method === "GET" && pathname === "/healthz") {
+				return jsonResponse(200, { status: "ok" });
+			}
+
+			// GET /info
+			if (method === "GET" && pathname === "/info") {
+				return await handleInfo();
+			}
+
+			// POST /images/ensure
+			if (method === "POST" && pathname === "/images/ensure") {
+				return await handleEnsureImage(req);
+			}
+
+			// GET /containers (list)
+			if (method === "GET" && pathname === "/containers") {
+				return jsonResponse(200, { ids: Array.from(nameToId.keys()) });
+			}
+
+			// POST /containers (create)
+			if (method === "POST" && pathname === "/containers") {
+				return await handleCreateContainer(req);
+			}
+
+			// Routes with container ID
+			const containerMatch = pathname.match(/^\/containers\/([^/]+)$/);
+			if (containerMatch) {
+				const id = containerMatch[1]!;
+
+				if (method === "GET") {
+					return await handleInspectContainer(id);
+				}
+
+				if (method === "DELETE") {
+					return await handleRemoveContainer(id);
+				}
+			}
+
+			// POST /containers/:id/start
+			const startMatch = pathname.match(/^\/containers\/([^/]+)\/start$/);
+			if (method === "POST" && startMatch) {
+				return await handleStartContainer(startMatch[1]!);
+			}
+
+			// POST /containers/:id/checkpoint
+			const checkpointMatch = pathname.match(/^\/containers\/([^/]+)\/checkpoint$/);
+			if (method === "POST" && checkpointMatch) {
+				return await handleCheckpoint(checkpointMatch[1]!, req);
+			}
+
+			// POST /containers/restore
+			if (method === "POST" && pathname === "/containers/restore") {
+				return await handleRestore(req);
+			}
+
+			// POST /containers/:id/exec
+			const execMatch = pathname.match(/^\/containers\/([^/]+)\/exec$/);
+			if (method === "POST" && execMatch) {
+				return await handleExec(execMatch[1]!, req);
+			}
+
+			return jsonResponse(404, { error: "not found" });
+		} catch (err) {
+			if (err instanceof PolicyViolationError) {
+				return jsonResponse(403, { error: err.message });
+			}
+			const message = err instanceof Error ? err.message : String(err);
+			return jsonResponse(500, { error: message });
+		}
+	}
+
+	// ── Route handlers ──────────────────────────────────────────────────────
+
+	async function handleInfo(): Promise<Response> {
+		const info = await client.info();
+		const arch = await getArchitecture();
+		return jsonResponse(200, {
+			criuEnabled: info.host.criuEnabled,
+			version: info.version.Version,
+			architecture: arch,
+		});
+	}
+
+	async function handleEnsureImage(req: Request): Promise<Response> {
+		const body = (await readJsonBody(req)) as {
+			ref?: string;
+			dockerfile?: string;
+			tag?: string;
+		};
+
+		if (body.ref) {
+			const exists = await client.imageExists(body.ref);
+			if (!exists) {
+				await client.pullImage(body.ref);
+			}
+			return jsonResponse(200, { image: body.ref });
+		}
+
+		if (body.dockerfile && body.tag) {
+			const exists = await client.imageExists(body.tag);
+			if (exists) {
+				return jsonResponse(200, { image: body.tag });
+			}
+			// Dockerfile build would need the context tar — not yet implemented
+			return jsonResponse(501, { error: "Dockerfile builds via daemon not yet supported" });
+		}
+
+		return jsonResponse(400, { error: "Must provide ref or (dockerfile + tag)" });
+	}
+
+	async function handleCreateContainer(req: Request): Promise<Response> {
+		const body = (await readJsonBody(req)) as { spec: ContainerCreateSpec };
+
+		// Validate and sanitize the spec — throws PolicyViolationError on violation
+		const sanitized = validateContainerSpec(body.spec);
+
+		const podmanId = await client.createContainer(sanitized);
+		registerContainer(podmanId, sanitized.name);
+
+		return jsonResponse(201, { id: podmanId });
+	}
+
+	async function handleStartContainer(identifier: string): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			return jsonResponse(404, { error: `Container ${identifier} not in registry` });
+		}
+
+		await client.startContainer(podmanId);
+		return jsonResponse(204);
+	}
+
+	async function handleInspectContainer(identifier: string): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			return jsonResponse(404, { error: `Container ${identifier} not in registry` });
+		}
+
+		const inspect = await client.inspectContainer(podmanId);
+		return jsonResponse(200, inspect);
+	}
+
+	async function handleRemoveContainer(identifier: string): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			// Idempotent — already gone (matches PodmanClient.removeContainer behavior)
+			return jsonResponse(204);
+		}
+
+		await client.removeContainer(podmanId, true);
+		unregisterByPodmanId(podmanId);
+		return jsonResponse(204);
+	}
+
+	async function handleCheckpoint(identifier: string, req: Request): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			return jsonResponse(404, { error: `Container ${identifier} not in registry` });
+		}
+
+		const body = (await readJsonBody(req)) as { archiveDir: string };
+
+		// Import checkpoint logic from runtime-podman
+		const { rewriteCheckpointPorts, computeArchiveHmac } = await import(
+			"@boilerhouse/runtime-podman"
+		);
+		const { chmodSync } = await import("node:fs");
+		const { join } = await import("node:path");
+
+		const archivePath = join(body.archiveDir, "checkpoint.tar.gz");
+		const archiveBuffer = await client.checkpointContainer(podmanId);
+
+		const { archive: rewrittenArchive, containerPorts } =
+			await rewriteCheckpointPorts(archiveBuffer);
+
+		await Bun.write(archivePath, rewrittenArchive);
+		chmodSync(archivePath, 0o600);
+
+		const hmac = config.hmacKey
+			? computeArchiveHmac(rewrittenArchive, config.hmacKey)
+			: undefined;
+
+		// Container is stopped/destroyed by podman after checkpoint,
+		// but stays in the registry until the caller explicitly DELETEs it.
+
+		return jsonResponse(200, {
+			archivePath,
+			hmac,
+			exposedPorts: containerPorts,
+		});
+	}
+
+	async function handleRestore(req: Request): Promise<Response> {
+		const body = (await readJsonBody(req)) as {
+			archivePath: string;
+			hmac?: string;
+			name: string;
+			publishPorts?: string[];
+		};
+
+		const { verifyArchiveHmac } = await import("@boilerhouse/runtime-podman");
+
+		const archiveData = await Bun.file(body.archivePath).arrayBuffer();
+		const archive = Buffer.from(archiveData);
+
+		// Verify HMAC if key is configured
+		if (config.hmacKey) {
+			if (!body.hmac) {
+				return jsonResponse(403, {
+					error: "Archive HMAC is missing but daemon has HMAC key configured",
+				});
+			}
+			try {
+				verifyArchiveHmac(archive, config.hmacKey, body.hmac);
+			} catch {
+				return jsonResponse(403, { error: "Archive HMAC verification failed" });
+			}
+		}
+
+		const podmanId = await client.restoreContainer(archive, body.name, body.publishPorts);
+		registerContainer(podmanId, body.name);
+
+		return jsonResponse(200, { id: podmanId });
+	}
+
+	async function handleExec(identifier: string, req: Request): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			return jsonResponse(404, { error: `Container ${identifier} not in registry` });
+		}
+
+		const body = (await readJsonBody(req)) as { cmd: string[] };
+		const execId = await client.execCreate(podmanId, body.cmd);
+		const result = await client.execStart(execId);
+
+		return jsonResponse(200, {
+			exitCode: result.exitCode,
+			stdout: result.stdout,
+			stderr: result.stderr,
+		});
+	}
+
+	// ── Helpers ──────────────────────────────────────────────────────────────
+
+	async function getArchitecture(): Promise<string> {
+		const proc = Bun.spawn(["uname", "-m"], { stdout: "pipe" });
+		const stdout = await new Response(proc.stdout).text();
+		await proc.exited;
+		return stdout.trim() || "unknown";
+	}
+
+	// ── Start server ─────────────────────────────────────────────────────────
+
+	const server = Bun.serve({
+		unix: config.listenSocketPath,
+		fetch: handleRequest,
+	});
+
+	return {
+		stop: () => {
+			server.stop();
+			if (podmanProc) {
+				podmanProc.kill();
+			}
+		},
+	};
+}
+
+// ── CLI entrypoint ──────────────────────────────────────────────────────────
+
+if (import.meta.main) {
+	const podmanSocketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
+	const listenSocketPath = process.env.LISTEN_SOCKET ?? "/run/boilerhouse/runtime.sock";
+	const snapshotDir = process.env.SNAPSHOT_DIR ?? "/var/lib/boilerhouse/snapshots";
+	const hmacKey = process.env.HMAC_KEY;
+	const workloadsDir = process.env.WORKLOADS_DIR;
+
+	let daemon: { stop: () => void };
+	try {
+		daemon = await createDaemon({
+			podmanSocketPath,
+			listenSocketPath,
+			snapshotDir,
+			hmacKey,
+			workloadsDir,
+			managePodman: true,
+		});
+	} catch (err) {
+		console.error("Failed to start boilerhoused:", err instanceof Error ? err.message : err);
+		process.exit(1);
+	}
+
+	console.log(`boilerhoused listening on ${listenSocketPath}`);
+	console.log(`  podman socket: ${podmanSocketPath} (managed)`);
+	console.log(`  snapshot dir:  ${snapshotDir}`);
+
+	process.on("SIGTERM", () => {
+		console.log("Received SIGTERM, shutting down...");
+		daemon.stop();
+		process.exit(0);
+	});
+
+	process.on("SIGINT", () => {
+		console.log("Received SIGINT, shutting down...");
+		daemon.stop();
+		process.exit(0);
+	});
+}

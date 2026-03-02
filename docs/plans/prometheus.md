@@ -334,10 +334,20 @@ event from the EventBus. Idle timeout counter increments in the
 | `boilerhouse.snapshot.create.duration` | Histogram (seconds) | `workload`, `type` |
 | `boilerhouse.snapshot.creates` | Counter | `workload`, `type`, `outcome` |
 | `boilerhouse.golden.queue_depth` | ObservableGauge | — |
+| `boilerhouse.snapshot.disk.total` | ObservableGauge (bytes) | `workload`, `type` |
+| `boilerhouse.snapshot.disk.avg_per_tenant` | ObservableGauge (bytes) | `workload` |
+| `boilerhouse.snapshot.count` | ObservableGauge | `workload`, `type` |
 
 The golden queue depth reads from `GoldenCreator.pending`. Snapshot durations
 are timed by wrapping `SnapshotManager.createGolden` and
 `InstanceManager.hibernate` call sites.
+
+The disk usage gauges use observable callbacks that query the DB:
+- `snapshot.disk.total` — `SUM(size_bytes) GROUP BY workload_id, type`
+- `snapshot.disk.avg_per_tenant` — `SUM(size_bytes) / COUNT(DISTINCT tenant_id)`
+  for tenant snapshots, grouped by `workload_id`
+- `snapshot.count` — `COUNT(*) GROUP BY workload_id, type` (useful as context
+  alongside size totals)
 
 #### `metrics/capacity.ts`
 
@@ -462,6 +472,15 @@ instances can coexist.
 | Snapshot Creates/sec | timeseries (stacked) | `sum(rate(boilerhouse_snapshot_creates_total{job="$job"}[5m])) by (type, outcome)` |
 | Golden Queue Depth | timeseries | `boilerhouse_golden_queue_depth{job="$job"}` |
 
+#### Row: Disk Usage
+
+| Panel | Type | Query |
+|-------|------|-------|
+| Total Snapshot Disk by Workload | timeseries (stacked, bytes) | `sum(boilerhouse_snapshot_disk_total_bytes{job="$job"}) by (workload)` |
+| Snapshot Disk by Type | timeseries (stacked, bytes) | `sum(boilerhouse_snapshot_disk_total_bytes{job="$job"}) by (workload, type)` |
+| Avg Tenant Snapshot Size | bar gauge (bytes) | `boilerhouse_snapshot_disk_avg_per_tenant_bytes{job="$job"}` |
+| Snapshot Count by Workload | timeseries (stacked) | `sum(boilerhouse_snapshot_count{job="$job"}) by (workload, type)` |
+
 #### Row: HTTP
 
 | Panel | Type | Query |
@@ -546,24 +565,179 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, tracing instrumentation is
 still active (spans are created, context propagates) but spans are not
 exported anywhere. Zero overhead in production until a collector is configured.
 
+### 11. Dashboard metrics tab (no Grafana required)
+
+A built-in "metrics" tab in the dashboard SPA that displays Prometheus metrics
+directly — no Grafana, no Prometheus server needed. The dashboard fetches the
+`/metrics` text endpoint, parses it client-side, and renders the data using the
+existing component library.
+
+#### Dashboard server — `/metrics` proxy
+
+Add a proxy route in `apps/dashboard/src/server.ts` (between the `/api/*` block
+and the SPA catch-all) that forwards to the Prometheus exporter:
+
+```ts
+const METRICS_URL = process.env.METRICS_URL ?? "http://localhost:9464";
+
+if (url.pathname === "/metrics") {
+    const upstream = new URL("/metrics", METRICS_URL);
+    const headers = new Headers(req.headers);
+    headers.delete("host");
+    return fetch(upstream.toString(), { method: "GET", headers });
+}
+```
+
+#### Prometheus text format parser (`prometheus.ts`)
+
+New file `apps/dashboard/src/prometheus.ts` — parses the Prometheus exposition
+format into structured TypeScript types.
+
+**Types:**
+
+```ts
+interface PrometheusSample {
+    name: string;
+    labels: Record<string, string>;
+    value: number;
+}
+
+type MetricType = "counter" | "gauge" | "histogram" | "summary" | "untyped";
+
+interface MetricFamily {
+    name: string;
+    help: string;
+    type: MetricType;
+    samples: PrometheusSample[];
+}
+
+interface PrometheusMetrics {
+    families: MetricFamily[];
+    byName: Map<string, MetricFamily>;
+}
+```
+
+**Exports:**
+
+| Function | Purpose |
+|----------|---------|
+| `parsePrometheus(text)` | Line-by-line parser: `# HELP`, `# TYPE`, sample lines with labels |
+| `fetchMetrics()` | `fetch("/metrics")` + parse |
+| `getGaugeValues(metrics, name)` | Extract gauge samples with labels |
+| `getCounterValues(metrics, name)` | Extract counter totals with labels |
+| `computePercentile(metrics, name, p, filterLabels?)` | Histogram quantile via linear interpolation over `_bucket` samples |
+| `groupByLabel(samples, labelKey)` | Group samples by a label value |
+
+The `computePercentile` function uses the same algorithm as Prometheus's
+`histogram_quantile`: sort buckets by `le`, find the bucket containing the
+target count, linearly interpolate between boundaries.
+
+#### `useAutoRefresh` hook
+
+Add to `apps/dashboard/src/hooks.ts`:
+
+```ts
+function useAutoRefresh(refetch: () => void, defaultInterval?: number): {
+    interval: number;
+    setInterval: (ms: number) => void;
+    paused: boolean;
+    setPaused: (paused: boolean) => void;
+}
+```
+
+Interval options: 5s, 10s, 30s, 60s, off. Manual refresh always available.
+
+#### Metrics page layout
+
+New file `apps/dashboard/src/pages/MetricsPage.tsx`:
+
+```
+PageHeader: "metrics"   [auto-refresh: 10s ▾] [last updated: 12:34:56] [↻]
+
+── Overview (stat card grid) ──────────────────────────────────────
+  Active Tenants │ Active Instances │ Capacity (used/max)
+  Claim p50      │ Claim p95        │ Golden Queue Depth
+
+── Tenants ────────────────────────────────────────────────────────
+  Workload │ Active │ Claims (total) │ Releases (total) │ p50 │ p95
+
+── Instances ──────────────────────────────────────────────────────
+  Workload │ Node │ Creating │ Active │ Hibernated │ Destroyed
+
+── Capacity ───────────────────────────────────────────────────────
+  Node │ Max │ Used │ Utilisation % │ Queue Depth
+
+── Snapshots ──────────────────────────────────────────────────────
+  Workload │ Type │ Creates (ok) │ Creates (error) │ Create p95
+
+── Disk Usage ─────────────────────────────────────────────────────
+  Workload │ Golden Total │ Tenant Total │ All Snapshots │ Tenant Count │ Avg/Tenant
+
+── HTTP ───────────────────────────────────────────────────────────
+  Route │ Method │ Requests (total) │ Errors 5xx (total) │ p50 │ p95
+
+── Raw Metrics (collapsible <details>) ────────────────────────────
+  <pre> full /metrics text </pre>
+```
+
+Uses existing `DataTable`, `DataRow`, `PageHeader`, `LoadingState`, `ErrorState`
+components. Internal helper: `MetricStatCard` (like `StatCard` but string value
++ optional subtext for formatted durations/percentages).
+
+**Counters** show raw totals — no PromQL means no rates. Table headers include
+`(total)` suffix. Users can observe rate by watching values change between
+refreshes.
+
+**Histograms** — p50/p95 computed client-side from `_bucket` data via
+`computePercentile()`. Displayed as formatted durations (`245ms`, `1.2s`).
+
+**Missing metrics** — each section shows "no data yet" if its metric family
+hasn't been emitted, rather than hiding.
+
+**Prometheus exporter down** — `ErrorState` with "Cannot reach metrics endpoint.
+Is the API server running with metrics enabled?"
+
+#### Wire up routing (`app.tsx`)
+
+- Import `BarChart3` from `lucide-react`
+- Add nav item: `{ path: "/metrics", label: "metrics", icon: BarChart3 }`
+- Add route: `else if (path === "/metrics") { content = <MetricsPage key={tick} /> }`
+
+#### Tests (`prometheus.test.ts`)
+
+Unit tests for the parser (TDD — write tests first):
+
+- Parse gauge, counter (`_total`), histogram (buckets + sum + count)
+- Escaped label values, `NaN`, `+Inf`
+- Empty input
+- `computePercentile` with known bucket distributions
+- `getGaugeValues` / `getCounterValues` filtering
+- `groupByLabel` grouping
+
 ## File changes summary
 
-| File | Change |
-|------|--------|
-| `packages/o11y/` | **New package** — logger + OTEL metrics + tracing + Elysia plugin |
-| `packages/logger/` | **Delete** — absorbed into o11y |
-| `apps/api/package.json` | Replace `@boilerhouse/logger` with `@boilerhouse/o11y` |
-| `apps/api/src/server.ts` | Update import, add `initO11y`, wrap managers with tracing |
-| `apps/api/src/app.ts` | Use HTTP tracing/metrics Elysia plugin |
-| `apps/api/src/tenant-manager.ts` | Update import path |
-| `apps/api/src/instance-manager.ts` | Update import path |
-| `apps/api/src/golden-creator.ts` | Update import path |
-| `apps/api/src/routes/deps.ts` | Update import path, add `tracer` to deps |
-| `apps/api/src/test-helpers.ts` | Update import path |
-| `apps/api/src/e2e/e2e-helpers.ts` | Update import path |
-| `apps/api/src/resource-limits.ts` | Add `queueDepth()` accessor |
-| `deploy/grafana/boilerhouse.json` | **New** — Grafana dashboard JSON |
-| `deploy/prometheus/prometheus.yml` | **New** — reference scrape config |
+| File                                        | Change                                                                |
+|---------------------------------------------|-----------------------------------------------------------------------|
+| `packages/o11y/`                            | **New package** — logger + OTEL metrics + tracing + Elysia plugin     |
+| `packages/logger/`                          | **Delete** — absorbed into o11y                                       |
+| `apps/api/package.json`                     | Replace `@boilerhouse/logger` with `@boilerhouse/o11y`                |
+| `apps/api/src/server.ts`                    | Update import, add `initO11y`, wrap managers with tracing             |
+| `apps/api/src/app.ts`                       | Use HTTP tracing/metrics Elysia plugin                                |
+| `apps/api/src/tenant-manager.ts`            | Update import path                                                    |
+| `apps/api/src/instance-manager.ts`          | Update import path                                                    |
+| `apps/api/src/golden-creator.ts`            | Update import path                                                    |
+| `apps/api/src/routes/deps.ts`               | Update import path, add `tracer` to deps                              |
+| `apps/api/src/test-helpers.ts`              | Update import path                                                    |
+| `apps/api/src/e2e/e2e-helpers.ts`           | Update import path                                                    |
+| `apps/api/src/resource-limits.ts`           | Add `queueDepth()` accessor                                          |
+| `deploy/grafana/boilerhouse.json`           | **New** — Grafana dashboard JSON                                      |
+| `deploy/prometheus/prometheus.yml`          | **New** — reference scrape config                                     |
+| `apps/dashboard/src/server.ts`              | Add `/metrics` proxy to Prometheus exporter (`METRICS_URL` env var)   |
+| `apps/dashboard/src/prometheus.ts`          | **New** — Prometheus text format parser + helpers                     |
+| `apps/dashboard/src/prometheus.test.ts`     | **New** — parser unit tests                                           |
+| `apps/dashboard/src/hooks.ts`               | Add `useAutoRefresh` hook                                             |
+| `apps/dashboard/src/pages/MetricsPage.tsx`  | **New** — metrics page with all sections                              |
+| `apps/dashboard/src/app.tsx`                | Add nav item + route for metrics page                                 |
 
 ## Local dev setup
 

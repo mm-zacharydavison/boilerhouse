@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -7,23 +7,25 @@ for (const rt of availableRuntimes()) {
 
 	describe(`[${rt.name}] http connectivity`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
+
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
+			expect(registerRes.status).toBe(201);
+			const registerBody = await registerRes.json();
+			workloadName = registerBody.name;
+
+			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
+
+		afterAll(async () => {
 			if (server) await server.cleanup();
 		});
 
 		test("claim tenant and verify HTTP response body", async () => {
-			server = await startE2EServer(rt.name);
-			const fixture = await readFixture(rt.workloadFixtures.httpserver);
-
-			// Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
-			expect(registerRes.status).toBe(201);
-			const registerBody = await registerRes.json();
-			const workloadName = registerBody.name;
-
-			await waitForWorkloadReady(server, workloadName);
-
 			// Claim tenant
 			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-http-1/claim", {
 				workload: workloadName,

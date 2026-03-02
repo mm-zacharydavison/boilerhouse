@@ -19,7 +19,7 @@ to provide instant, fork-style tenant provisioning from golden snapshots.
 The setup script installs podman, crun, and CRIU, then configures podman to use crun:
 
 ```bash
-sudo scripts/setup-podman.sh
+sudo scripts/setup-boilerhoused.sh
 ```
 
 Or install manually:
@@ -57,30 +57,30 @@ If CRIU shows as disabled, check that:
 - You're running podman as root (rootful mode) — rootless podman does not support CRIU
 - The OCI runtime is `crun`, not `runc` (`runc` has poor CRIU support)
 
-### 3. Start the rootful podman daemon
+### 3. Start the boilerhoused runtime daemon
 
-CRIU checkpoint/restore requires rootful podman. The API server communicates with rootful
-podman over a Unix socket at `/run/boilerhouse/podman.sock`.
+CRIU checkpoint/restore requires rootful podman. `boilerhoused` manages the podman process
+internally and exposes a restricted API on `/run/boilerhouse/runtime.sock`.
 
 **Development:**
 
 ```bash
-sudo scripts/start-podman-daemon.sh
+sudo scripts/start-boilerhoused.sh
 ```
 
 **Production (systemd):**
 
 ```bash
 # Install the service (replace <group> with the API server's group)
-sudo cp deploy/boilerhouse-podman.service /etc/systemd/system/boilerhouse-podman@.service
+sudo cp deploy/boilerhoused.service /etc/systemd/system/boilerhoused@.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now boilerhouse-podman@<group>.service
+sudo systemctl enable --now boilerhoused@<group>.service
 ```
 
-**Verify the socket is working:**
+**Verify the daemon is running:**
 
 ```bash
-curl --unix-socket /run/boilerhouse/podman.sock http://localhost/v5.0.0/libpod/info | jq .host.criuEnabled
+curl --unix-socket /run/boilerhouse/runtime.sock http://localhost/healthz
 ```
 
 ### 4. Install project dependencies

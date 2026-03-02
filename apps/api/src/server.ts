@@ -32,7 +32,7 @@ const snapshotDir = process.env.SNAPSHOT_DIR ?? "./data/snapshots";
 const runtimeType = (process.env.RUNTIME_TYPE ?? "podman") as RuntimeType;
 const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
 const workloadsDir = process.env.WORKLOADS_DIR;
-const podmanSocket = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
+const socketPath = process.env.RUNTIME_SOCKET ?? "/run/boilerhouse/runtime.sock";
 const proxyPort = Number(process.env.PROXY_PORT ?? 18080);
 
 // Ensure data directories exist with restrictive permissions
@@ -82,12 +82,11 @@ if (secretKey) {
 
 let runtime: Runtime;
 if (runtimeType === "podman") {
+	log.info({ socketPath }, "Using boilerhoused daemon backend");
 	runtime = new PodmanRuntime({
 		snapshotDir,
-		socketPath: podmanSocket,
-		workloadsDir: workloadsDir ? workloadsDir : undefined,
+		socketPath,
 		proxyAddress: forwardProxy ? `http://host.containers.internal:${forwardProxy.port}` : undefined,
-		hmacKey: secretKey,
 	});
 } else {
 	runtime = new FakeRuntime();

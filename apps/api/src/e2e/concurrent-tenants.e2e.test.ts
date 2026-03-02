@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -7,22 +7,25 @@ for (const rt of availableRuntimes()) {
 
 	describe.skipIf(!rt.capabilities.concurrentRestore)(`[${rt.name}] concurrent tenants`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
+
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
+			expect(registerRes.status).toBe(201);
+			const body = await registerRes.json();
+			workloadName = body.name;
+
+			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
+
+		afterAll(async () => {
 			if (server) await server.cleanup();
 		});
 
 		test("3 tenants claim and release in parallel", async () => {
-			server = await startE2EServer(rt.name);
-			const fixture = await readFixture(rt.workloadFixtures.httpserver);
-
-			// Step 1: Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
-			expect(registerRes.status).toBe(201);
-			const { name: workloadName } = await registerRes.json();
-
-			await waitForWorkloadReady(server, workloadName);
-
 			// Step 2: Claim 3 tenants in parallel
 			const tenantIds = ["e2e-conc-1", "e2e-conc-2", "e2e-conc-3"];
 			const claimResults = await Promise.all(

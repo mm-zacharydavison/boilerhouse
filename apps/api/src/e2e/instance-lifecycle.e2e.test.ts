@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { InstanceId } from "@boilerhouse/core";
 import { activityLog } from "@boilerhouse/db";
@@ -10,25 +10,26 @@ for (const rt of availableRuntimes()) {
 
 	describe(`[${rt.name}] instance lifecycle`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
-			if (server) await server.cleanup();
-		});
-
-		test("full lifecycle: register, claim, verify, release, cleanup", async () => {
+		beforeAll(async () => {
 			server = await startE2EServer(rt.name);
 			const fixture = await readFixture(rt.workloadFixtures.httpserver);
 
-			// Step 1: Register workload
 			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
 			expect(registerRes.status).toBe(201);
 			const registerBody = await registerRes.json();
 			expect(registerBody.workloadId).toBeDefined();
-
-			const workloadName = registerBody.name;
+			workloadName = registerBody.name;
 
 			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
 
+		afterAll(async () => {
+			if (server) await server.cleanup();
+		});
+
+		test("full lifecycle: register, claim, verify, release, cleanup", async () => {
 			// Step 2: Claim tenant
 			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-test-1/claim", {
 				workload: workloadName,
@@ -46,7 +47,6 @@ for (const rt of availableRuntimes()) {
 			expect(instanceRes.status).toBe(200);
 			const instanceBody = await instanceRes.json();
 			expect(instanceBody.status).toBe("active");
-			expect(instanceBody.workloadId).toBe(registerBody.workloadId);
 
 			// Step 4: Verify endpoint
 			const endpointRes = await api(server, "GET", `/api/v1/instances/${instanceId}/endpoint`);

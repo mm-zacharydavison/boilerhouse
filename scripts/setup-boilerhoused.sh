@@ -4,8 +4,8 @@ set -euo pipefail
 # Installs and configures rootful podman with crun + CRIU for Boilerhouse.
 #
 # Usage:
-#   sudo scripts/setup-podman.sh
-#   sudo scripts/setup-podman.sh --dry-run
+#   sudo scripts/setup-boilerhoused.sh
+#   sudo scripts/setup-boilerhoused.sh --dry-run
 #
 # What this script does:
 #   1. Installs podman, crun, and criu via the system package manager
@@ -268,8 +268,8 @@ echo ""
 info "Setup complete."
 echo ""
 echo "Next steps:"
-echo "  1. Start the podman API daemon:"
-echo "     sudo scripts/start-podman-daemon.sh"
+echo "  1. Start the boilerhoused runtime daemon:"
+echo "     sudo scripts/start-boilerhoused.sh"
 echo ""
 echo "  2. Install project dependencies:"
 echo "     bun install"

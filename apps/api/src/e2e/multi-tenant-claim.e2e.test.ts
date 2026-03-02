@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -7,22 +7,25 @@ for (const rt of availableRuntimes()) {
 
 	describe(`[${rt.name}] multi-tenant claim`, () => {
 		let server: E2EServer;
+		let workloadName: string;
 
-		afterEach(async () => {
+		beforeAll(async () => {
+			server = await startE2EServer(rt.name);
+			const fixture = await readFixture(rt.workloadFixtures.httpserver);
+
+			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
+			expect(registerRes.status).toBe(201);
+			const body = await registerRes.json();
+			workloadName = body.name;
+
+			await waitForWorkloadReady(server, workloadName);
+		}, timeouts.operation);
+
+		afterAll(async () => {
 			if (server) await server.cleanup();
 		});
 
 		test("two different tenants can claim the same workload sequentially", async () => {
-			server = await startE2EServer(rt.name);
-			const fixture = await readFixture(rt.workloadFixtures.httpserver);
-
-			// Register workload
-			const registerRes = await api(server, "POST", "/api/v1/workloads", fixture);
-			expect(registerRes.status).toBe(201);
-			const { name: workloadName } = await registerRes.json();
-
-			await waitForWorkloadReady(server, workloadName);
-
 			// Tenant 1 claims
 			const claim1Res = await api(server, "POST", "/api/v1/tenants/e2e-zac/claim", {
 				workload: workloadName,
@@ -32,7 +35,7 @@ for (const rt of availableRuntimes()) {
 			expect(claim1Body.source).toBe("golden");
 			expect(claim1Body.instanceId).toBeDefined();
 
-			// Tenant 2 claims the same workload (this was returning 500)
+			// Tenant 2 claims the same workload
 			const claim2Res = await api(server, "POST", "/api/v1/tenants/e2e-zac2/claim", {
 				workload: workloadName,
 			});
