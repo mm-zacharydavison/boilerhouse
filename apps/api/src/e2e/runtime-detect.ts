@@ -21,10 +21,20 @@ function commandSucceeds(cmd: string, args: string[]): boolean {
 	}
 }
 
+/**
+ * Check that the podman API socket exists AND the daemon is responsive.
+ * existsSync alone is not enough — stale socket files from crashed daemons
+ * cause tests to hang instead of skipping.
+ */
 function podmanSocketAvailable(): boolean {
 	const socketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
 	try {
-		return existsSync(socketPath);
+		if (!existsSync(socketPath)) return false;
+		const result = Bun.spawnSync(
+			["curl", "--unix-socket", socketPath, "--max-time", "2", "-sf", "http://localhost/_ping"],
+			{ stdout: "pipe", stderr: "ignore" },
+		);
+		return result.exitCode === 0;
 	} catch {
 		return false;
 	}

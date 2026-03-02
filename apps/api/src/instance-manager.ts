@@ -189,6 +189,7 @@ export class InstanceManager {
 				nodeId: this.nodeId,
 				vmstatePath: correctedRef.paths.vmstate,
 				memoryPath: correctedRef.paths.memory,
+				archiveHmac: correctedRef.archiveHmac ?? null,
 				sizeBytes: 0,
 				runtimeMeta: correctedRef.runtimeMeta as Record<string, unknown>,
 				createdAt: new Date(),
@@ -350,8 +351,15 @@ export class InstanceManager {
 		if (!this.runtime.getContainerIp) return;
 
 		const ip = await this.runtime.getContainerIp(handle);
-		if (!ip) return;
+		if (!ip) {
+			this.log?.warn({ instanceId: handle.instanceId }, "Cannot register proxy — container has no IP");
+			return;
+		}
 
+		this.log?.info(
+			{ instanceId: handle.instanceId, containerIp: ip, tenantId },
+			"Registering container in proxy routing table",
+		);
 		this.proxyRegistrar.registerInstance(
 			ip,
 			workload,

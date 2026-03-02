@@ -46,6 +46,12 @@ export const SnapshotRefSchema = Type.Object({
 	/** Present only for tenant snapshots. */
 	tenantId: Type.Optional(TenantIdSchema),
 	runtimeMeta: SnapshotMetadataSchema,
+	/**
+	 * HMAC-SHA256 of the checkpoint archive, hex-encoded.
+	 * Present when the server has a configured HMAC key.
+	 * @example "a1b2c3d4e5f6..."
+	 */
+	archiveHmac: Type.Optional(Type.String()),
 });
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -66,6 +72,12 @@ export interface SnapshotRef {
 	/** Present only for tenant snapshots. */
 	tenantId?: TenantId;
 	runtimeMeta: SnapshotMetadata;
+	/**
+	 * HMAC-SHA256 of the checkpoint archive, hex-encoded.
+	 * Present when the server has a configured HMAC key.
+	 * @example "a1b2c3d4e5f6..."
+	 */
+	archiveHmac?: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

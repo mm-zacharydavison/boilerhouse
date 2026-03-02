@@ -61,4 +61,4 @@ const server = Bun.serve<WsData>({
 	},
 });
 
-console.log(`Dashboard listening on ${server.url}`);
+console.log(`♨️ Dashboard listening on ${server.url}`);

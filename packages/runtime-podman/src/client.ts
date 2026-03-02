@@ -20,6 +20,11 @@ export interface ContainerCreateSpec {
 	 * @example { "boilerhouse.workload": "openclaw", "boilerhouse.version": "0.1.0" }
 	 */
 	labels?: Record<string, string>;
+	/**
+	 * Run the container in privileged mode.
+	 * @default false
+	 */
+	privileged?: boolean;
 	resource_limits?: {
 		cpu?: { quota?: number; period?: number };
 		memory?: { limit?: number };
@@ -35,6 +40,11 @@ export interface ContainerCreateSpec {
 		options?: string[];
 	}>;
 	netns?: { nsmode: string };
+	/**
+	 * Extra `/etc/hosts` entries for the container.
+	 * @example ["host.containers.internal:host-gateway"]
+	 */
+	hostadd?: string[];
 }
 
 /** Subset of the container inspect response we use. */
@@ -379,6 +389,7 @@ export class PodmanClient {
 		const body: Record<string, unknown> = {
 			name: spec.name,
 			image: spec.image,
+			privileged: false,
 		};
 
 		if (spec.command) {
@@ -407,6 +418,9 @@ export class PodmanClient {
 		}
 		if (spec.mounts && spec.mounts.length > 0) {
 			body.mounts = spec.mounts;
+		}
+		if (spec.hostadd && spec.hostadd.length > 0) {
+			body.hostadd = spec.hostadd;
 		}
 
 		return body;

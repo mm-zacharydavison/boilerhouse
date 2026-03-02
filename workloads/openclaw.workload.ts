@@ -31,7 +31,7 @@ export default defineWorkload({
 		args: ["--disable-warning=ExperimentalWarning", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"],
 		env: {
 			OPENCLAW_GATEWAY_TOKEN: "73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470",
-			ANTHROPIC_BASE_URL: "http://api.anthropic.com",
+			ANTHROPIC_BASE_URL: "http://host.containers.internal:18080",
 			ANTHROPIC_API_KEY: "sk-ant-proxy-managed",
 		},
 	},

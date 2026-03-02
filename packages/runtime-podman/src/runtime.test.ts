@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import * as http from "node:http";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -195,6 +195,7 @@ describe("PodmanRuntime", () => {
 		expect((createBody?.env as Record<string, string>)?.http_proxy).toBe(
 			"http://host.containers.internal:38080",
 		);
+		expect(createBody?.hostadd).toEqual(["host.containers.internal:host-gateway"]);
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
@@ -228,6 +229,7 @@ describe("PodmanRuntime", () => {
 		await runtime.create(workload, generateInstanceId());
 
 		expect(createBody?.env).toBeUndefined();
+		expect(createBody?.hostadd).toBeUndefined();
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});
@@ -297,6 +299,103 @@ describe("PodmanRuntime", () => {
 		expect((createBody?.env as Record<string, string>)?.HTTP_PROXY).toBe(
 			"http://custom-proxy:9999",
 		);
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() emits privileged: false in the container create body", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-priv" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+		});
+
+		await runtime.create(BASE_WORKLOAD, generateInstanceId());
+
+		expect(createBody?.privileged).toBe(false);
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() always sets host_port: 0 for ephemeral allocation", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-port" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+		});
+
+		const workload: Workload = {
+			...BASE_WORKLOAD,
+			network: {
+				access: "outbound",
+				expose: [{ guest: 8080, host_range: [0, 0] }, { guest: 9090, host_range: [0, 0] }],
+			},
+		};
+
+		await runtime.create(workload, generateInstanceId());
+
+		const portmappings = createBody?.portmappings as Array<{ host_port: number }>;
+		expect(portmappings).toHaveLength(2);
+		for (const pm of portmappings) {
+			expect(pm.host_port).toBe(0);
+		}
+
+		rmSync(snapshotDir, { recursive: true, force: true });
+	});
+
+	test("create() uses isolated network namespace (not host)", async () => {
+		let createBody: Record<string, unknown> | undefined;
+
+		mockServer = createMockServer((req, body) => {
+			const url = req.url ?? "";
+			if (url.includes("/images/") && url.includes("/exists")) {
+				return { status: 204 };
+			}
+			if (url.includes("/containers/create")) {
+				createBody = JSON.parse(body.toString());
+				return { status: 201, body: { Id: "ctr-netns" } };
+			}
+			return { status: 404 };
+		});
+
+		const snapshotDir = mkdtempSync(join(tmpdir(), "bh-snap-"));
+		const runtime = new PodmanRuntime({
+			snapshotDir,
+			socketPath: mockServer.socketPath,
+		});
+
+		// network.access = "none" maps to nsmode: "none" (isolated)
+		await runtime.create(BASE_WORKLOAD, generateInstanceId());
+		const netns = createBody?.netns as { nsmode: string } | undefined;
+		expect(netns?.nsmode).not.toBe("host");
 
 		rmSync(snapshotDir, { recursive: true, force: true });
 	});

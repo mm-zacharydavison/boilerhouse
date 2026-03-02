@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, chmodSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
 import type { Runtime, RuntimeType, Workload, TenantId } from "@boilerhouse/core";
@@ -33,9 +33,11 @@ const runtimeType = (process.env.RUNTIME_TYPE ?? "podman") as RuntimeType;
 const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
 const workloadsDir = process.env.WORKLOADS_DIR;
 const podmanSocket = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
+const proxyPort = Number(process.env.PROXY_PORT ?? 18080);
 
-// Ensure data directories exist
-mkdirSync(snapshotDir, { recursive: true });
+// Ensure data directories exist with restrictive permissions
+mkdirSync(snapshotDir, { recursive: true, mode: 0o700 });
+chmodSync(snapshotDir, 0o700); // enforce on pre-existing dir
 mkdirSync(storagePath, { recursive: true });
 
 const db = initDatabase(dbPath);
@@ -67,13 +69,15 @@ let forwardProxy: ForwardProxy | undefined;
 if (secretKey) {
 	secretStore = new SecretStore(db, secretKey);
 	forwardProxy = new ForwardProxy({
-		port: 0,
+		port: proxyPort,
 		secretResolver: (tenantId, template) =>
 			secretStore!.resolveSecretRefs(tenantId as TenantId, template),
 	});
 	await forwardProxy.start();
 	proxyRegistrar = new ProxyRegistrar(forwardProxy, secretStore);
 	log.info({ proxyPort: forwardProxy.port }, "Secret gateway proxy started");
+} else {
+	log.warn("BOILERHOUSE_SECRET_KEY not set — secret gateway proxy disabled, credential injection will not work");
 }
 
 let runtime: Runtime;
@@ -83,6 +87,7 @@ if (runtimeType === "podman") {
 		socketPath: podmanSocket,
 		workloadsDir: workloadsDir ? workloadsDir : undefined,
 		proxyAddress: forwardProxy ? `http://host.containers.internal:${forwardProxy.port}` : undefined,
+		hmacKey: secretKey,
 	});
 } else {
 	runtime = new FakeRuntime();
@@ -204,4 +209,4 @@ const app = createApp({
 
 app.listen(port);
 
-log.info({ port }, "Boilerhouse API listening");
+log.info({ port }, "♨️ Boilerhouse API listening");

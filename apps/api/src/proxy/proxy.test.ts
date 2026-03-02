@@ -243,6 +243,63 @@ describe("ForwardProxy", () => {
 			await credProxy.stop();
 		});
 
+		test("direct request with credential rule attempts upstream TLS connection", async () => {
+			const credProxy = new ForwardProxy({
+				port: 0,
+				secretResolver: (_tenantId, template) => {
+					return template.replace(
+						/\$\{(?:global-secret|tenant-secret):(\w+)\}/g,
+						() => "direct-mode-secret",
+					);
+				},
+			});
+			await credProxy.start();
+
+			credProxy.addInstance("127.0.0.1", {
+				allowlist: [],
+				credentials: [
+					{
+						domain: "api.example.com",
+						headers: { "x-api-key": "${tenant-secret:API_KEY}" },
+					},
+				],
+				tenantId: "test-tenant",
+			});
+
+			// Send a direct request (relative URL) — simulates Node.js fetch()
+			// when ANTHROPIC_BASE_URL points at the proxy.
+			// The proxy resolves upstream from the credential rule and tries to
+			// connect to api.example.com:443 over TLS. In tests there's no such
+			// server, so we expect a 502 (proves direct mode activated).
+			const response = await rawRequest(
+				credProxy.port,
+				`POST /v1/messages HTTP/1.1\r\nHost: host.containers.internal:18080\r\nContent-Length: 0\r\n\r\n`,
+			);
+
+			expect(response).toContain("502");
+
+			await credProxy.stop();
+		});
+
+		test("direct request without credential rule returns 400", async () => {
+			const credProxy = new ForwardProxy({ port: 0 });
+			await credProxy.start();
+
+			credProxy.addInstance("127.0.0.1", {
+				allowlist: ["example.com"],
+				credentials: [],
+			});
+
+			const response = await rawRequest(
+				credProxy.port,
+				`GET /v1/messages HTTP/1.1\r\nHost: host.containers.internal:18080\r\n\r\n`,
+			);
+
+			expect(response).toContain("400");
+
+			await credProxy.stop();
+		});
+
 		test("non-credentialed domains still work normally", async () => {
 			const credProxy = new ForwardProxy({ port: 0 });
 			await credProxy.start();

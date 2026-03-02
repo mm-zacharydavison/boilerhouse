@@ -1,5 +1,14 @@
 import type { Socket, TCPSocketListener } from "bun";
+import { createLogger } from "@boilerhouse/logger";
 import { matchesDomain } from "./matcher";
+
+const log = createLogger("proxy");
+
+/** Strip the `::ffff:` prefix from IPv4-mapped IPv6 addresses. */
+function normalizeIp(ip: string): string {
+	if (ip.startsWith("::ffff:")) return ip.slice(7);
+	return ip;
+}
 
 export interface CredentialRule {
 	domain: string;
@@ -77,7 +86,7 @@ export class ForwardProxy {
 					this.handleData(socket, Buffer.from(data));
 				},
 				error: (_socket, error) => {
-					console.error("[proxy] socket error:", error.message);
+					log.error({ err: error }, "Socket error");
 				},
 				close: (socket) => {
 					socket.data.upstream?.end();
@@ -93,12 +102,12 @@ export class ForwardProxy {
 
 	/** Register a source IP with its routing configuration. */
 	addInstance(sourceIp: string, route: InstanceRoute): void {
-		this.routingTable.set(sourceIp, route);
+		this.routingTable.set(normalizeIp(sourceIp), route);
 	}
 
 	/** Remove a source IP from the routing table. */
 	removeInstance(sourceIp: string): void {
-		this.routingTable.delete(sourceIp);
+		this.routingTable.delete(normalizeIp(sourceIp));
 	}
 
 	private handleData(socket: Socket<SocketState>, data: Buffer): void {
@@ -120,10 +129,14 @@ export class ForwardProxy {
 		const requestLine = lines[0]!;
 		const [method, target] = requestLine.split(" ");
 
-		// Look up source IP route
-		const sourceIp = socket.remoteAddress;
+		// Look up source IP route — normalize to handle IPv4-mapped IPv6 (::ffff:x.x.x.x)
+		const sourceIp = normalizeIp(socket.remoteAddress);
 		const route = this.routingTable.get(sourceIp);
+
+		log.debug({ method, sourceIp, target, routeFound: !!route }, "Incoming request");
+
 		if (!route) {
+			log.warn({ sourceIp, method, target }, "Rejected request from unknown source IP");
 			socket.write(
 				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: unknown source IP\r\n",
 			);
@@ -202,59 +215,88 @@ export class ForwardProxy {
 		headerLines: string[],
 		route: InstanceRoute,
 	): void {
-		// Extract host from Host header or URL
+		const isDirectMode = target.startsWith("/");
+
 		let host: string | undefined;
-
-		for (const line of headerLines) {
-			if (line.toLowerCase().startsWith("host:")) {
-				host = line.slice(5).trim().split(":")[0];
-				break;
-			}
-		}
-
-		if (!host && target.startsWith("http://")) {
-			try {
-				host = new URL(target).hostname;
-			} catch {
-				// invalid URL
-			}
-		}
-
-		if (!host || !matchesDomain(host, route.allowlist)) {
-			socket.write(
-				"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: domain not allowed\r\n",
-			);
-			socket.end();
-			return;
-		}
-
-		// Check if this domain has credential rules
-		const credRule = this.findCredentialRule(host, route);
-
 		let upstreamHost: string;
 		let upstreamPort: number;
 		let path: string;
 		let useTls = false;
-		let hasExplicitPort = false;
+		let credRule: CredentialRule | undefined;
 
-		try {
-			const url = new URL(target);
-			upstreamHost = url.hostname;
-			hasExplicitPort = url.port !== "";
-			upstreamPort = hasExplicitPort ? parseInt(url.port, 10) : 80;
-			path = url.pathname + url.search;
-		} catch {
-			socket.write(
-				"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nBad request URL\r\n",
-			);
-			socket.end();
-			return;
-		}
+		if (isDirectMode) {
+			// Direct connection mode: the client sent a relative URL (e.g. /v1/messages).
+			// This happens when Node.js fetch() targets the proxy directly via
+			// ANTHROPIC_BASE_URL instead of using HTTP_PROXY env vars.
+			// Resolve the upstream from the first credential rule.
+			credRule = route.credentials?.[0];
+			if (!credRule) {
+				socket.write(
+					"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nDirect request requires a credential rule to determine upstream\r\n",
+				);
+				socket.end();
+				return;
+			}
 
-		// For credentialed domains without an explicit port, upgrade to TLS on 443
-		if (credRule && !hasExplicitPort) {
-			useTls = true;
+			host = credRule.domain;
+			upstreamHost = credRule.domain;
 			upstreamPort = 443;
+			useTls = true;
+			path = target;
+
+			log.debug({ host, path, tenantId: route.tenantId }, "Direct-mode request");
+		} else {
+			// Forward-proxy mode: the client sent an absolute URL (e.g. http://api.anthropic.com/v1/messages)
+
+			// Extract host from Host header or URL
+			for (const line of headerLines) {
+				if (line.toLowerCase().startsWith("host:")) {
+					host = line.slice(5).trim().split(":")[0];
+					break;
+				}
+			}
+
+			if (!host && target.startsWith("http://")) {
+				try {
+					host = new URL(target).hostname;
+				} catch {
+					// invalid URL
+				}
+			}
+
+			if (!host || !matchesDomain(host, route.allowlist)) {
+				socket.write(
+					"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nForbidden: domain not allowed\r\n",
+				);
+				socket.end();
+				return;
+			}
+
+			credRule = this.findCredentialRule(host, route);
+
+			log.debug({ host, credentialDomain: credRule?.domain, tenantId: route.tenantId }, "Forwarding HTTP request");
+
+			let hasExplicitPort = false;
+
+			try {
+				const url = new URL(target);
+				upstreamHost = url.hostname;
+				hasExplicitPort = url.port !== "";
+				upstreamPort = hasExplicitPort ? parseInt(url.port, 10) : 80;
+				path = url.pathname + url.search;
+			} catch {
+				socket.write(
+					"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nBad request URL\r\n",
+				);
+				socket.end();
+				return;
+			}
+
+			// For credentialed domains without an explicit port, upgrade to TLS on 443
+			if (credRule && !hasExplicitPort) {
+				useTls = true;
+				upstreamPort = 443;
+			}
 		}
 
 		// Rewrite the request line to use a relative path
@@ -265,6 +307,18 @@ export class ForwardProxy {
 			rewrittenRequestLine,
 			...headerLines.slice(1),
 		];
+
+		// In direct mode, rewrite the Host header from the proxy's address
+		// to the actual upstream domain
+		if (isDirectMode) {
+			rewrittenHeaders = rewrittenHeaders.map((line, i) => {
+				if (i === 0) return line;
+				if (line.toLowerCase().startsWith("host:")) {
+					return `Host: ${upstreamHost}`;
+				}
+				return line;
+			});
+		}
 
 		// Inject credential headers, replacing any existing ones from the client
 		if (credRule && this.config.secretResolver && route.tenantId) {

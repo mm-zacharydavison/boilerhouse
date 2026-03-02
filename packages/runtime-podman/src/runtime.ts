@@ -1,5 +1,5 @@
 import { resolve, dirname, basename, join } from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { InstanceId } from "@boilerhouse/core";
 import { generateSnapshotId, generateWorkloadId, generateNodeId } from "@boilerhouse/core";
@@ -11,6 +11,7 @@ import { PodmanRuntimeError } from "./errors";
 import { PodmanClient } from "./client";
 import type { ContainerCreateSpec } from "./client";
 import { resolveTemplates, assertNoSecretRefs } from "./templates";
+import { computeArchiveHmac, verifyArchiveHmac } from "./hmac";
 
 const DEFAULT_SOCKET_PATH = "/run/boilerhouse/podman.sock";
 
@@ -26,12 +27,14 @@ export class PodmanRuntime implements Runtime {
 	private readonly snapshotDir: string;
 	private readonly workloadsDir: string | undefined;
 	private readonly proxyAddress: string | undefined;
+	private readonly hmacKey: string | undefined;
 	private readonly client: PodmanClient;
 
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
 		this.workloadsDir = config.workloadsDir;
 		this.proxyAddress = config.proxyAddress;
+		this.hmacKey = config.hmacKey;
 		this.client = new PodmanClient({
 			socketPath: config.socketPath ?? DEFAULT_SOCKET_PATH,
 		});
@@ -118,6 +121,25 @@ export class PodmanRuntime implements Runtime {
 			spec.env ??= {};
 			spec.env.HTTP_PROXY ??= this.proxyAddress;
 			spec.env.http_proxy ??= this.proxyAddress;
+			// Ensure host.containers.internal resolves inside the container
+			// (Libpod API doesn't add it automatically like `podman run` does)
+			spec.hostadd = ["host.containers.internal:host-gateway"];
+		}
+
+		// Security assertions: enforce unprivileged mode, ephemeral host ports, isolated netns
+		if (spec.portmappings) {
+			for (const pm of spec.portmappings) {
+				if (pm.host_port !== 0) {
+					throw new PodmanRuntimeError(
+						`Fixed host port ${pm.host_port} is not allowed — use host_port: 0 for ephemeral allocation`,
+					);
+				}
+			}
+		}
+		if (spec.netns?.nsmode === "host") {
+			throw new PodmanRuntimeError(
+				"Host network namespace is not allowed — containers must use an isolated netns",
+			);
 		}
 
 		await this.client.createContainer(spec);
@@ -155,7 +177,7 @@ export class PodmanRuntime implements Runtime {
 
 		const archiveDir = `${this.snapshotDir}/${snapshotId}`;
 		try {
-			await Bun.$`mkdir -p ${archiveDir}`.quiet();
+			mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
 		} catch {
 			throw new PodmanRuntimeError(
 				`Cannot create snapshot directory ${archiveDir} — check that ${this.snapshotDir} exists and is writable`,
@@ -182,6 +204,12 @@ export class PodmanRuntime implements Runtime {
 			await rewriteCheckpointPorts(archiveBuffer);
 
 		await Bun.write(archivePath, rewrittenArchive);
+		chmodSync(archivePath, 0o600);
+
+		// Compute HMAC over the stored archive if a key is configured
+		const archiveHmac = this.hmacKey
+			? computeArchiveHmac(rewrittenArchive, this.hmacKey)
+			: undefined;
 
 		const info = await this.client.info();
 		const architecture = await this.getArchitecture();
@@ -204,6 +232,7 @@ export class PodmanRuntime implements Runtime {
 			workloadId: generateWorkloadId(),
 			nodeId: generateNodeId(),
 			runtimeMeta,
+			archiveHmac,
 		};
 	}
 
@@ -213,6 +242,16 @@ export class PodmanRuntime implements Runtime {
 		// We also pass publishPorts so podman sets up fresh port forwarding.
 		const archiveData = await Bun.file(ref.paths.vmstate).arrayBuffer();
 		const archive = Buffer.from(archiveData);
+
+		// Verify archive integrity when HMAC key is configured
+		if (this.hmacKey) {
+			if (!ref.archiveHmac) {
+				throw new PodmanRuntimeError(
+					"Archive HMAC is missing but an HMAC key is configured — refusing to restore unsigned archive",
+				);
+			}
+			verifyArchiveHmac(archive, this.hmacKey, ref.archiveHmac);
+		}
 
 		// Build publishPorts specs from the snapshot's exposed container ports.
 		// Just the container port number — podman picks a random host port.

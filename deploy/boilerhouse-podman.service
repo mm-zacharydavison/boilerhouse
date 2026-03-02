@@ -5,11 +5,18 @@ After=network.target
 
 [Service]
 Type=simple
+UMask=0117
 ExecStartPre=/bin/mkdir -p /run/boilerhouse
 ExecStart=/usr/bin/podman system service --time=0 unix:///run/boilerhouse/podman.sock
-ExecStartPost=/bin/sh -c 'until [ -S /run/boilerhouse/podman.sock ]; do sleep 0.1; done; chmod 660 /run/boilerhouse/podman.sock; chgrp %i /run/boilerhouse/podman.sock'
+ExecStartPost=/bin/sh -c 'until [ -S /run/boilerhouse/podman.sock ]; do sleep 0.1; done; chgrp %i /run/boilerhouse/podman.sock; chmod 660 /run/boilerhouse/podman.sock'
 Restart=on-failure
 RestartSec=5
+
+# Security hardening
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_PTRACE CAP_NET_ADMIN CAP_SYS_CHROOT CAP_CHOWN CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/run/boilerhouse /var/lib/containers /var/run/containers /tmp
 
 [Install]
 WantedBy=multi-user.target

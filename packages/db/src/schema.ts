@@ -106,6 +106,7 @@ export const snapshots = sqliteTable(
 		statusDetail: text("status_detail"),
 		vmstatePath: text("vmstate_path").notNull(),
 		memoryPath: text("memory_path"),
+		archiveHmac: text("archive_hmac"),
 		sizeBytes: integer("size_bytes").notNull(),
 		runtimeMeta: jsonObject<Record<string, unknown>>("runtime_meta"),
 		expiresAt: timestamp("expires_at"),

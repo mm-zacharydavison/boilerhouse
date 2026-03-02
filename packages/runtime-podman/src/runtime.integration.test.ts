@@ -3,17 +3,24 @@ import { generateInstanceId } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import { PodmanRuntime } from "./runtime";
 import { PodmanClient } from "./client";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_SOCKET = "/run/boilerhouse/podman.sock";
 const PODMAN_SOCKET = process.env.PODMAN_SOCKET ?? DEFAULT_SOCKET;
 
-// Skip entire suite if the podman API socket is not available
+// Skip entire suite if the podman API socket is not available.
+// existsSync alone is not enough — stale socket files from crashed daemons
+// cause tests to hang instead of skipping. Probe with a real HTTP request.
 const podmanAvailable = (() => {
 	try {
-		return existsSync(PODMAN_SOCKET);
+		if (!existsSync(PODMAN_SOCKET)) return false;
+		const result = Bun.spawnSync(
+			["curl", "--unix-socket", PODMAN_SOCKET, "--max-time", "2", "-sf", "http://localhost/_ping"],
+			{ stdout: "pipe", stderr: "ignore" },
+		);
+		return result.exitCode === 0;
 	} catch {
 		return false;
 	}
@@ -203,9 +210,11 @@ describe.skipIf(!podmanAvailable)("PodmanRuntime (socket)", () => {
 			expect(ref.runtimeMeta.runtimeVersion).toBeDefined();
 			expect(ref.runtimeMeta.architecture).toBeDefined();
 
-			// Archive file should exist
+			// Archive file should exist with restrictive permissions (0o600)
 			const archiveExists = await Bun.file(ref.paths.memory).exists();
 			expect(archiveExists).toBe(true);
+			const archiveStat = statSync(ref.paths.memory);
+			expect(archiveStat.mode & 0o777).toBe(0o600);
 
 			// Restore to a new container
 			const restoredId = generateInstanceId();

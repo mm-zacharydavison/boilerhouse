@@ -52,10 +52,13 @@ fi
 
 echo "Starting podman system service on $SOCKET_PATH..."
 if [ "$DRY_RUN" = true ]; then
+	echo "[dry-run] umask 0117"
 	echo "[dry-run] podman system service --time=0 unix://$SOCKET_PATH &"
-	echo "[dry-run] chmod 660 $SOCKET_PATH"
 	echo "[dry-run] chgrp $CALLER_GROUP $SOCKET_PATH"
+	echo "[dry-run] chmod 660 $SOCKET_PATH"
 else
+	umask 0117
+
 	if [ "$BACKGROUND" = true ]; then
 		podman system service --time=0 "unix://$SOCKET_PATH" >/dev/null 2>&1 &
 	else
@@ -77,8 +80,8 @@ else
 		exit 1
 	fi
 
-	chmod 660 "$SOCKET_PATH"
 	chgrp "$CALLER_GROUP" "$SOCKET_PATH"
+	chmod 660 "$SOCKET_PATH"
 
 	echo "Podman API listening on $SOCKET_PATH (PID $PODMAN_PID)"
 	echo "Socket is accessible to GID $CALLER_GROUP"

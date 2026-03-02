@@ -155,6 +155,7 @@ export class SnapshotManager {
 					nodeId: this.nodeId,
 					vmstatePath: goldenRef.paths.vmstate,
 					memoryPath: goldenRef.paths.memory,
+					archiveHmac: goldenRef.archiveHmac ?? null,
 					sizeBytes,
 					runtimeMeta: goldenRef.runtimeMeta as Record<string, unknown>,
 					createdAt: new Date(),

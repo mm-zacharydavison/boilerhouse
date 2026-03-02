@@ -1,5 +1,5 @@
 import { Glob } from "bun";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { eq, and } from "drizzle-orm";
 import { resolveWorkloadConfig, generateWorkloadId } from "@boilerhouse/core";
 import type { WorkloadConfig } from "@boilerhouse/core";
@@ -45,7 +45,7 @@ export async function loadWorkloadsFromDir(
 
 	for (const file of files) {
 
-		const fullPath = join(dir, file);
+		const fullPath = resolve(dir, file);
 
 		let mod: { default?: WorkloadConfig };
 		try {

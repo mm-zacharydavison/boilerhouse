@@ -26,4 +26,12 @@ export interface PodmanConfig {
 	 * @example "http://host.containers.internal:38080"
 	 */
 	proxyAddress?: string;
+
+	/**
+	 * Hex-encoded key for HMAC-SHA256 archive integrity verification.
+	 * When set, snapshots are signed and restores are verified.
+	 * Unsigned archives are rejected during restore when this key is configured.
+	 * @example "a1b2c3d4e5f6..."
+	 */
+	hmacKey?: string;
 }

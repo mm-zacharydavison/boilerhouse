@@ -314,6 +314,41 @@ describe("InstanceManager", () => {
 			expect(allSnapshots).toHaveLength(1);
 		});
 
+		test("stores archiveHmac in the snapshot DB row when present", async () => {
+			// Use a runtime that returns an archiveHmac on snapshot
+			const hmacRuntime = new FakeRuntime();
+			const originalSnapshot = hmacRuntime.snapshot.bind(hmacRuntime);
+			hmacRuntime.snapshot = async (handle) => {
+				const ref = await originalSnapshot(handle);
+				return { ...ref, archiveHmac: "deadbeefcafe1234" };
+			};
+
+			const hmacManager = new InstanceManager(hmacRuntime, db, log, nodeId);
+			const handle = await hmacManager.create(workloadId, TEST_WORKLOAD);
+			const ref = await hmacManager.hibernate(handle.instanceId);
+
+			const row = db
+				.select()
+				.from(snapshots)
+				.where(eq(snapshots.snapshotId, ref.id))
+				.get();
+
+			expect(row!.archiveHmac).toBe("deadbeefcafe1234");
+		});
+
+		test("stores null archiveHmac when not present in snapshot ref", async () => {
+			const handle = await manager.create(workloadId, TEST_WORKLOAD);
+			const ref = await manager.hibernate(handle.instanceId);
+
+			const row = db
+				.select()
+				.from(snapshots)
+				.where(eq(snapshots.snapshotId, ref.id))
+				.get();
+
+			expect(row!.archiveHmac).toBeNull();
+		});
+
 		test("falls back to destroy on snapshot failure", async () => {
 			const failRuntime = new FakeRuntime({
 				failOn: new Set(["snapshot"]),
