@@ -26,6 +26,7 @@
       "name": "@boilerhouse/boilerhoused",
       "version": "0.0.1",
       "dependencies": {
+        "@boilerhouse/core": "workspace:*",
         "@boilerhouse/o11y": "workspace:*",
         "@boilerhouse/runtime-podman": "workspace:*",
       },

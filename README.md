@@ -60,7 +60,7 @@ If CRIU shows as disabled, check that:
 ### 3. Start the boilerhoused runtime daemon
 
 CRIU checkpoint/restore requires rootful podman. `boilerhoused` manages the podman process
-internally and exposes a restricted API on `/run/boilerhouse/runtime.sock`.
+internally and exposes a restricted API on `/var/run/boilerhouse/runtime.sock`.
 
 **Development:**
 
@@ -80,7 +80,7 @@ sudo systemctl enable --now boilerhoused@<group>.service
 **Verify the daemon is running:**
 
 ```bash
-curl --unix-socket /run/boilerhouse/runtime.sock http://localhost/healthz
+curl --unix-socket /var/run/boilerhouse/runtime.sock http://localhost/healthz
 ```
 
 ### 4. Install project dependencies
@@ -108,7 +108,7 @@ cp apps/api/.env.example apps/api/.env
 | Variable        | Description                              | Default                            |
 |-----------------|------------------------------------------|------------------------------------|
 | `RUNTIME_TYPE`  | Container runtime (`podman` or `fake`)   | `podman`                           |
-| `PODMAN_SOCKET` | Path to rootful podman API socket        | `/run/boilerhouse/podman.sock`     |
+| `PODMAN_SOCKET` | Path to rootful podman API socket        | `/var/run/boilerhouse/podman.sock`     |
 | `SNAPSHOT_DIR`  | Directory for checkpoint archives        | `./data/snapshots`                 |
 | `STORAGE_PATH`  | Tenant data storage directory            | `./data`                           |
 | `WORKLOADS_DIR` | Path to workload TOML definitions        | *(none)*                           |

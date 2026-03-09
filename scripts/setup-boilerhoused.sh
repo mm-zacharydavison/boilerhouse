@@ -16,7 +16,7 @@ set -euo pipefail
 # Supported distros: Ubuntu, Debian, Fedora, RHEL, CentOS, Arch
 
 DRY_RUN=false
-SOCKET_PATH="/run/boilerhouse/podman.sock"
+SOCKET_PATH="${PODMAN_SOCKET:-/var/run/boilerhouse/podman.sock}"
 MIN_CRIU_VERSION="4.2"
 
 for arg in "$@"; do

@@ -10,6 +10,14 @@ export interface CheckpointResult {
 	exposedPorts: number[];
 }
 
+/** Result of an ensureImage operation. */
+export interface EnsureImageResult {
+	/** The resolved image reference. */
+	image: string;
+	/** What action was taken: "cached" (already present), "pulled", or "built". */
+	action: "cached" | "pulled" | "built";
+}
+
 /** Backend system information. */
 export interface BackendInfo {
 	/** Whether CRIU is available for checkpoint/restore. */
@@ -36,7 +44,7 @@ export interface ContainerBackend {
 	ensureImage(
 		image: { ref?: string; dockerfile?: string },
 		workload: { name: string; version: string },
-	): Promise<string>;
+	): Promise<EnsureImageResult>;
 
 	/** Create a container from a spec. Returns the container ID. */
 	createContainer(spec: ContainerCreateSpec): Promise<string>;
@@ -81,4 +89,11 @@ export interface ContainerBackend {
 	 * List container IDs managed by this backend.
 	 */
 	listContainers(): Promise<string[]>;
+
+	/**
+	 * Fetch recent stdout/stderr logs from a container.
+	 *
+	 * @param tail - Number of most recent lines to return.
+	 */
+	logs(id: string, tail?: number): Promise<string>;
 }

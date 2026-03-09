@@ -95,14 +95,15 @@ describe("DaemonBackend", () => {
 		setup((req, body) => {
 			expect(req.url).toBe("/images/ensure");
 			receivedBody = JSON.parse(body.toString());
-			return { status: 200, body: { image: "alpine:3.21" } };
+			return { status: 200, body: { image: "alpine:3.21", action: "pulled" } };
 		});
 
-		const ref = await backend.ensureImage(
+		const result = await backend.ensureImage(
 			{ ref: "alpine:3.21" },
 			{ name: "test", version: "1.0" },
 		);
-		expect(ref).toBe("alpine:3.21");
+		expect(result.image).toBe("alpine:3.21");
+		expect(result.action).toBe("pulled");
 		expect(receivedBody?.ref).toBe("alpine:3.21");
 	});
 

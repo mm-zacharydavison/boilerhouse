@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceId } from "@boilerhouse/core";
-import { generateSnapshotId, generateWorkloadId, generateNodeId } from "@boilerhouse/core";
+import { generateSnapshotId, generateWorkloadId, generateNodeId, DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 import type { SnapshotRef, SnapshotPaths, SnapshotMetadata } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import type { Runtime, InstanceHandle, Endpoint, ExecResult } from "@boilerhouse/core";
@@ -13,7 +13,6 @@ import type { ContainerCreateSpec } from "./client";
 import { resolveTemplates, assertNoSecretRefs } from "./templates";
 import { DaemonBackend } from "./daemon-backend";
 
-const DEFAULT_SOCKET = "/run/boilerhouse/runtime.sock";
 
 interface ManagedContainer {
 	instanceId: InstanceId;
@@ -31,7 +30,7 @@ export class PodmanRuntime implements Runtime {
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
 		this.proxyAddress = config.proxyAddress;
-		this.backend = new DaemonBackend({ socketPath: config.socketPath ?? DEFAULT_SOCKET });
+		this.backend = new DaemonBackend({ socketPath: config.socketPath ?? DEFAULT_RUNTIME_SOCKET });
 	}
 
 	async available(): Promise<boolean> {
@@ -43,11 +42,26 @@ export class PodmanRuntime implements Runtime {
 		}
 	}
 
-	async create(workload: Workload, instanceId: InstanceId): Promise<InstanceHandle> {
-		const imageRef = await this.backend.ensureImage(
+	async create(workload: Workload, instanceId: InstanceId, onLog?: (line: string) => void): Promise<InstanceHandle> {
+		const log = onLog ?? (() => {});
+
+		const imageSource = workload.image.dockerfile
+			? `Dockerfile ${workload.image.dockerfile}`
+			: workload.image.ref ?? "unknown";
+		log(`Ensuring image (${imageSource})...`);
+
+		const { image: imageRef, action } = await this.backend.ensureImage(
 			workload.image,
 			workload.workload,
 		);
+
+		if (action === "built") {
+			log(`Image built: ${imageRef}`);
+		} else if (action === "pulled") {
+			log(`Image pulled: ${imageRef}`);
+		} else {
+			log(`Image cached: ${imageRef}`);
+		}
 
 		// Build container create spec
 		const spec: ContainerCreateSpec = {
@@ -264,6 +278,14 @@ export class PodmanRuntime implements Runtime {
 
 	async list(): Promise<InstanceId[]> {
 		return Array.from(this.containers.keys()) as InstanceId[];
+	}
+
+	async logs(handle: InstanceHandle, tail = 100): Promise<string | null> {
+		try {
+			return await this.backend.logs(handle.instanceId, tail);
+		} catch {
+			return null;
+		}
 	}
 
 	async getContainerIp(handle: InstanceHandle): Promise<string | null> {

@@ -1,6 +1,6 @@
 import { mkdirSync, chmodSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
+import { FakeRuntime, generateNodeId, DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 import type { Runtime, RuntimeType, Workload, TenantId } from "@boilerhouse/core";
 import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { initDatabase, ActivityLog, loadWorkloadsFromDir } from "@boilerhouse/db";
@@ -39,7 +39,7 @@ const snapshotDir = process.env.SNAPSHOT_DIR ?? "./data/snapshots";
 const runtimeType = (process.env.RUNTIME_TYPE ?? "podman") as RuntimeType;
 const maxInstances = Number(process.env.MAX_INSTANCES ?? 100);
 const workloadsDir = process.env.WORKLOADS_DIR;
-const socketPath = process.env.RUNTIME_SOCKET ?? "/run/boilerhouse/runtime.sock";
+const socketPath = process.env.RUNTIME_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
 const proxyPort = Number(process.env.PROXY_PORT ?? 18080);
 
 // Ensure data directories exist with restrictive permissions

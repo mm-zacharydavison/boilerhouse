@@ -69,7 +69,7 @@ export class SnapshotManager {
 		const instanceId: InstanceId = generateInstanceId();
 
 		log("Creating bootstrap instance...");
-		const handle = await this.runtime.create(workload, instanceId);
+		const handle = await this.runtime.create(workload, instanceId, log);
 
 		log("Starting bootstrap instance...");
 		await this.runtime.start(handle);
@@ -83,7 +83,30 @@ export class SnapshotManager {
 			}
 		}
 
+		// Helper to dump container logs into the bootstrap log stream
+		const dumpContainerLogs = async (label: string) => {
+			if (!this.runtime.logs) return;
+			try {
+				const logs = await this.runtime.logs(handle, 50);
+				if (logs?.trim()) {
+					log(`── container logs (${label}) ──`);
+					for (const line of logs.trim().split("\n")) {
+						log(`  ${line}`);
+					}
+					log(`── end container logs ──`);
+				}
+			} catch {
+				// Ignore log fetch errors
+			}
+		};
+
 		try {
+			// Dump initial container output shortly after start
+			if (this.runtime.logs) {
+				await new Promise((r) => setTimeout(r, 1000));
+				await dumpContainerLogs("after start");
+			}
+
 			// Poll health probe if the workload defines one.
 			if (workload.health) {
 				const intervalMs = workload.health.interval_seconds * 1000;
@@ -105,6 +128,26 @@ export class SnapshotManager {
 					throw new Error("Workload health config has no exec or http_get probe defined");
 				}
 
+				// Wrap check to dump container logs periodically on failures
+				let failCount = 0;
+				const wrappedCheck: HealthCheckFn = async () => {
+					try {
+						const ok = await check();
+						if (ok) {
+							failCount = 0;
+							return true;
+						}
+						failCount++;
+					} catch {
+						failCount++;
+					}
+					// Dump logs every 5 failures so we can see what's happening
+					if (failCount > 0 && failCount % 5 === 0) {
+						await dumpContainerLogs(`health fail #${failCount}`);
+					}
+					return false;
+				};
+
 				const config: HealthConfig = {
 					interval: intervalMs,
 					unhealthyThreshold: workload.health.unhealthy_threshold,
@@ -115,7 +158,13 @@ export class SnapshotManager {
 				};
 
 				log(`Health check: timeout ${Math.round(config.timeoutMs / 1000)}s, interval ${Math.round(intervalMs / 1000)}s, threshold ${workload.health.unhealthy_threshold}`);
-				await this.healthChecker(check, config, log);
+				try {
+					await this.healthChecker(wrappedCheck, config, log);
+				} catch (err) {
+					// Dump final container logs before re-throwing health failure
+					await dumpContainerLogs("health failed");
+					throw err;
+				}
 				log("Health check passed.");
 			}
 

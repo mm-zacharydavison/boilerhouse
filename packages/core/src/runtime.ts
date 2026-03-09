@@ -44,7 +44,7 @@ export type Endpoint = Static<typeof EndpointSchema>;
 
 export interface Runtime {
 	/** Create a new instance from a workload definition (cold boot). */
-	create(workload: Workload, instanceId: InstanceId): Promise<InstanceHandle>;
+	create(workload: Workload, instanceId: InstanceId, onLog?: (line: string) => void): Promise<InstanceHandle>;
 
 	/** Start a stopped/created instance. */
 	start(handle: InstanceHandle): Promise<void>;
@@ -79,6 +79,12 @@ export interface Runtime {
 	 * or the container has no IP assigned.
 	 */
 	getContainerIp?(handle: InstanceHandle): Promise<string | null>;
+
+	/**
+	 * Fetch recent stdout/stderr logs from a running instance.
+	 * Returns null if the runtime doesn't support log retrieval.
+	 */
+	logs?(handle: InstanceHandle, tail?: number): Promise<string | null>;
 
 	/** Check if the runtime is available on this host. */
 	available(): Promise<boolean>;

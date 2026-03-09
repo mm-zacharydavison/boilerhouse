@@ -5,7 +5,13 @@
 
 set -euo pipefail
 
-SOCKET_PATH="${PODMAN_SOCKET:-/run/boilerhouse/podman.sock}"
+# On macOS, discover the podman machine socket automatically.
+# On Linux, use the boilerhoused-managed socket.
+if [ "$(uname -s)" = "Darwin" ]; then
+  SOCKET_PATH="${PODMAN_SOCKET:-$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)}"
+else
+  SOCKET_PATH="${PODMAN_SOCKET:-/var/run/boilerhouse/podman.sock}"
+fi
 PODMAN_API="http://d/v5.0.0/libpod"
 BH_API="http://127.0.0.1:${PORT:-3000}/api/v1"
 KILL_ALL=false

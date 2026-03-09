@@ -1,5 +1,5 @@
 import * as http from "node:http";
-import type { ContainerBackend, CheckpointResult, BackendInfo } from "./backend";
+import type { ContainerBackend, CheckpointResult, BackendInfo, EnsureImageResult } from "./backend";
 import type { ContainerCreateSpec, ContainerInspect, ExecResult } from "./client";
 import { PodmanRuntimeError } from "./errors";
 
@@ -27,7 +27,7 @@ export class DaemonBackend implements ContainerBackend {
 	async ensureImage(
 		image: { ref?: string; dockerfile?: string },
 		workload: { name: string; version: string },
-	): Promise<string> {
+	): Promise<EnsureImageResult> {
 		const body: Record<string, string> = {};
 		if (image.ref) body.ref = image.ref;
 		if (image.dockerfile) {
@@ -36,7 +36,11 @@ export class DaemonBackend implements ContainerBackend {
 		}
 
 		const res = await this.request("POST", "/images/ensure", body);
-		return (res as { image: string }).image;
+		const { image: resolvedImage, action } = res as { image: string; action: string };
+		return {
+			image: resolvedImage,
+			action: (action as EnsureImageResult["action"]) ?? "cached",
+		};
 	}
 
 	async createContainer(spec: ContainerCreateSpec): Promise<string> {
@@ -93,6 +97,14 @@ export class DaemonBackend implements ContainerBackend {
 	async listContainers(): Promise<string[]> {
 		const res = await this.request("GET", "/containers");
 		return (res as { ids: string[] }).ids;
+	}
+
+	async logs(id: string, tail = 100): Promise<string> {
+		const res = await this.request(
+			"GET",
+			`/containers/${encodeURIComponent(id)}/logs?tail=${tail}`,
+		);
+		return (res as { logs: string }).logs;
 	}
 
 	// ── HTTP transport ──────────────────────────────────────────────────────

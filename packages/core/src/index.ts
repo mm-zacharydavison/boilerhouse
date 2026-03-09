@@ -123,6 +123,12 @@ export {
 } from "./snapshot-state";
 
 export {
+	DEFAULT_RUNTIME_SOCKET,
+	DEFAULT_PODMAN_SOCKET,
+	DEFAULT_SNAPSHOT_DIR,
+} from "./paths";
+
+export {
 	type WorkloadStatus,
 	type WorkloadEvent,
 	WorkloadStatusSchema,

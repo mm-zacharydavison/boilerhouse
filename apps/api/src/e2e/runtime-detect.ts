@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 
 export interface RuntimeAvailability {
 	/** Always available */
@@ -27,7 +28,7 @@ function commandSucceeds(cmd: string, args: string[]): boolean {
  * cause tests to hang instead of skipping.
  */
 function podmanSocketAvailable(): boolean {
-	const socketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
+	const socketPath = process.env.RUNTIME_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
 	try {
 		if (!existsSync(socketPath)) return false;
 		const result = Bun.spawnSync(

@@ -8,8 +8,7 @@ export interface PodmanConfig {
 
 	/**
 	 * Path to the `boilerhoused` runtime socket.
-	 * @default "/run/boilerhouse/runtime.sock"
-	 * @example "/run/boilerhouse/runtime.sock"
+	 * @default DEFAULT_RUNTIME_SOCKET (platform-dependent, see @boilerhouse/core paths.ts)
 	 */
 	socketPath?: string;
 

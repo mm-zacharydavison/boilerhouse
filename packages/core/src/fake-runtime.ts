@@ -57,6 +57,7 @@ export class FakeRuntime implements Runtime {
 	async create(
 		workload: Workload,
 		instanceId: InstanceId,
+		_onLog?: (line: string) => void,
 	): Promise<InstanceHandle> {
 		await this.maybeDelay("create");
 		const ports = (workload.network.expose ?? []).map((e) => e.guest);

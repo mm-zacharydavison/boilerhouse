@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { FakeRuntime, generateNodeId, resolveWorkloadConfig } from "@boilerhouse/core";
+import { FakeRuntime, generateNodeId, resolveWorkloadConfig, DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 import type { Runtime, TenantId, Workload, WorkloadConfig } from "@boilerhouse/core";
 import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { mkdtempSync } from "node:fs";
@@ -94,7 +94,7 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		runtime = new FakeRuntime({ failOn: fakeFailOn });
 	} else if (runtimeName === "podman") {
 		snapshotDir = mkdtempSync(join(tmpdir(), "bh-e2e-snap-"));
-		const socketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
+		const socketPath = process.env.RUNTIME_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
 		runtime = new PodmanRuntime({ snapshotDir, socketPath, proxyAddress });
 	} else {
 		throw new Error(`Runtime '${runtimeName}' not implemented for E2E`);

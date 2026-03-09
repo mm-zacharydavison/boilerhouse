@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from "bun:test";
-import { generateInstanceId } from "@boilerhouse/core";
+import { generateInstanceId, DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
 import { PodmanRuntime } from "./runtime";
 import { DaemonBackend } from "./daemon-backend";
@@ -7,8 +7,7 @@ import { mkdtempSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const DEFAULT_DAEMON_SOCKET = "/run/boilerhouse/runtime.sock";
-const DAEMON_SOCKET = process.env.DAEMON_SOCKET ?? DEFAULT_DAEMON_SOCKET;
+const DAEMON_SOCKET = process.env.DAEMON_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
 
 // Skip entire suite if the daemon socket is not available.
 // existsSync alone is not enough — stale socket files from crashed daemons

@@ -12,7 +12,7 @@ bun test --recursive
 
 ### Integration tests (Podman)
 
-Require the Podman API socket (default `/run/boilerhouse/podman.sock`).
+Require the Podman API socket (default `/var/run/boilerhouse/podman.sock`).
 Override with `PODMAN_SOCKET` env var. For CRIU snapshot/restore tests:
 
 ```sh

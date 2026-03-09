@@ -1,16 +1,20 @@
 import { mkdirSync, existsSync, rmSync, chmodSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { Subprocess } from "bun";
+import { DEFAULT_RUNTIME_SOCKET, DEFAULT_PODMAN_SOCKET, DEFAULT_SNAPSHOT_DIR } from "@boilerhouse/core";
 import { PodmanClient } from "@boilerhouse/runtime-podman";
 import type { ContainerCreateSpec } from "@boilerhouse/runtime-podman";
 import { validateContainerSpec, PolicyViolationError } from "./validate";
+import { ensurePodmanMachine, detectPodmanSocket } from "./macos";
 
 export interface DaemonConfig {
 	/**
 	 * Path for the podman API socket.
 	 * When `managePodman` is true (default), boilerhoused spawns podman
 	 * and creates this socket. Otherwise it connects to an existing socket.
-	 * @default "/run/boilerhouse/podman.sock"
+	 *
+	 * @default (linux) "/var/run/boilerhouse/podman.sock".
+	 * @default (macOS) discovered at runtime via `podman machine inspect` (no static default).
 	 */
 	podmanSocketPath: string;
 	/** Path for the daemon's own listening socket. */
@@ -30,11 +34,25 @@ export interface DaemonConfig {
 	managePodman?: boolean;
 }
 
+const IS_MACOS = process.platform === "darwin";
+
 /**
- * Spawns `podman system service` and waits for the socket.
- * Returns the child process handle.
+ * Spawns `podman system service` (Linux) or ensures a podman machine is
+ * running (macOS) and waits for the API socket.
+ *
+ * On Linux, returns the child process handle. On macOS, returns `undefined`
+ * because the podman machine manages its own lifecycle.
  */
-async function startPodman(socketPath: string): Promise<Subprocess> {
+async function startPodman(socketPath: string): Promise<Subprocess | undefined> {
+	if (IS_MACOS) {
+		await ensurePodmanMachine();
+		return undefined;
+	}
+	return startPodmanService(socketPath);
+}
+
+/** Linux: spawn `podman system service` and wait for the socket. */
+async function startPodmanService(socketPath: string): Promise<Subprocess> {
 	const socketDir = dirname(socketPath);
 	mkdirSync(socketDir, { recursive: true });
 
@@ -87,7 +105,13 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		podmanProc = await startPodman(config.podmanSocketPath);
 	}
 
-	const client = new PodmanClient({ socketPath: config.podmanSocketPath });
+	// On macOS the config socket path is irrelevant — discover the real one
+	// from `podman machine inspect`.
+	const podmanSocketPath = IS_MACOS && managePodman
+		? detectPodmanSocket()
+		: config.podmanSocketPath;
+
+	const client = new PodmanClient({ socketPath: podmanSocketPath });
 
 	// In-memory container registry.
 	// Clients address containers by name (instanceId), but podman returns
@@ -219,6 +243,12 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 				return await handleRestore(req);
 			}
 
+			// GET /containers/:id/logs
+			const logsMatch = pathname.match(/^\/containers\/([^/]+)\/logs$/);
+			if (method === "GET" && logsMatch) {
+				return await handleLogs(logsMatch[1]!, url);
+			}
+
 			// POST /containers/:id/exec
 			const execMatch = pathname.match(/^\/containers\/([^/]+)\/exec$/);
 			if (method === "POST" && execMatch) {
@@ -258,17 +288,39 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 			const exists = await client.imageExists(body.ref);
 			if (!exists) {
 				await client.pullImage(body.ref);
+				return jsonResponse(200, { image: body.ref, action: "pulled" });
 			}
-			return jsonResponse(200, { image: body.ref });
+			return jsonResponse(200, { image: body.ref, action: "cached" });
 		}
 
 		if (body.dockerfile && body.tag) {
 			const exists = await client.imageExists(body.tag);
 			if (exists) {
-				return jsonResponse(200, { image: body.tag });
+				return jsonResponse(200, { image: body.tag, action: "cached" });
 			}
-			// Dockerfile build would need the context tar — not yet implemented
-			return jsonResponse(501, { error: "Dockerfile builds via daemon not yet supported" });
+
+			// Resolve the Dockerfile path relative to the workloads directory
+			const dockerfilePath = config.workloadsDir
+				? resolve(config.workloadsDir, body.dockerfile)
+				: body.dockerfile;
+			const contextDir = dirname(dockerfilePath);
+
+			if (!existsSync(dockerfilePath)) {
+				return jsonResponse(400, { error: `Dockerfile not found: ${dockerfilePath}` });
+			}
+
+			// Create a tar archive of the build context
+			const tar = Bun.spawnSync(["tar", "-cf", "-", "-C", contextDir, "."], {
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			if (tar.exitCode !== 0) {
+				const stderr = new TextDecoder().decode(tar.stderr);
+				return jsonResponse(500, { error: `Failed to create build context: ${stderr}` });
+			}
+
+			await client.buildImage(Buffer.from(tar.stdout), body.tag);
+			return jsonResponse(200, { image: body.tag, action: "built" });
 		}
 
 		return jsonResponse(400, { error: "Must provide ref or (dockerfile + tag)" });
@@ -406,6 +458,17 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		});
 	}
 
+	async function handleLogs(identifier: string, url: URL): Promise<Response> {
+		const podmanId = resolveContainer(identifier);
+		if (!podmanId) {
+			return jsonResponse(404, { error: `Container ${identifier} not in registry` });
+		}
+
+		const tail = Number(url.searchParams.get("tail") ?? 100);
+		const logs = await client.containerLogs(podmanId, tail);
+		return jsonResponse(200, { logs });
+	}
+
 	// ── Helpers ──────────────────────────────────────────────────────────────
 
 	async function getArchitecture(): Promise<string> {
@@ -435,9 +498,9 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────
 
 if (import.meta.main) {
-	const podmanSocketPath = process.env.PODMAN_SOCKET ?? "/run/boilerhouse/podman.sock";
-	const listenSocketPath = process.env.LISTEN_SOCKET ?? "/run/boilerhouse/runtime.sock";
-	const snapshotDir = process.env.SNAPSHOT_DIR ?? "/var/lib/boilerhouse/snapshots";
+	const podmanSocketPath = process.env.PODMAN_SOCKET ?? DEFAULT_PODMAN_SOCKET ?? "/var/run/boilerhouse/podman.sock";
+	const listenSocketPath = process.env.LISTEN_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
+	const snapshotDir = process.env.SNAPSHOT_DIR ?? DEFAULT_SNAPSHOT_DIR;
 	const hmacKey = process.env.HMAC_KEY;
 	const workloadsDir = process.env.WORKLOADS_DIR;
 

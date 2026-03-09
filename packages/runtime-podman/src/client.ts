@@ -80,7 +80,7 @@ export interface ExecResult {
 export interface PodmanClientConfig {
 	/**
 	 * Path to the rootful podman API socket.
-	 * @default "/run/boilerhouse/podman.sock"
+	 * @default "/var/run/boilerhouse/podman.sock"
 	 * @example "/run/podman/podman.sock"
 	 */
 	socketPath: string;
@@ -380,6 +380,24 @@ export class PodmanClient {
 				// Non-JSON lines are normal build output, ignore
 			}
 		}
+	}
+
+	/**
+	 * Fetch stdout/stderr logs from a container.
+	 *
+	 * @param tail - Number of most recent lines to return. Defaults to 100.
+	 */
+	async containerLogs(id: string, tail = 100): Promise<string> {
+		const path =
+			`/libpod/containers/${encodeURIComponent(id)}/logs` +
+			`?stdout=true&stderr=true&tail=${tail}`;
+		const raw = await this.requestRaw("GET", path);
+		const { stdout, stderr } = this.demuxStream(raw);
+		// Interleave stdout and stderr (both are useful for diagnosing startup failures)
+		const parts: string[] = [];
+		if (stdout.trim()) parts.push(stdout.trim());
+		if (stderr.trim()) parts.push(stderr.trim());
+		return parts.join("\n");
 	}
 
 	// ── Internal helpers ─────────────────────────────────────────────────────

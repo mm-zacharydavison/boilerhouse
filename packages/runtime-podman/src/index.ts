@@ -5,7 +5,7 @@ export { ArchiveIntegrityError } from "./hmac";
 export { DaemonBackend } from "./daemon-backend";
 export { rewriteCheckpointPorts } from "./runtime";
 export { computeArchiveHmac, verifyArchiveHmac } from "./hmac";
-export type { ContainerBackend, CheckpointResult, BackendInfo } from "./backend";
+export type { ContainerBackend, CheckpointResult, BackendInfo, EnsureImageResult } from "./backend";
 export type { DaemonBackendConfig } from "./daemon-backend";
 export type { PodmanConfig } from "./types";
 export type { PodmanClientConfig, ContainerCreateSpec, ContainerInspect, PodmanInfo } from "./client";
