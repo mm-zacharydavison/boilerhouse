@@ -20,6 +20,8 @@ export const WorkloadIdSchema = Type.String({ minLength: 1 });
 export const NodeIdSchema = Type.String({ minLength: 1 });
 /** @example "a1b2c3d4-e5f6-7890-abcd-ef1234567890" */
 export const SnapshotIdSchema = Type.String({ minLength: 1 });
+/** @example "a1b2c3d4-e5f6-7890-abcd-ef1234567890" */
+export const TriggerIdSchema = Type.String({ minLength: 1 });
 
 // ── Branded ID types ─────────────────────────────────────────────────────────
 
@@ -37,6 +39,9 @@ export type NodeId = Brand<Static<typeof NodeIdSchema>, "NodeId">;
 
 /** Unique identifier for a snapshot. */
 export type SnapshotId = Brand<Static<typeof SnapshotIdSchema>, "SnapshotId">;
+
+/** Unique identifier for a trigger definition. */
+export type TriggerId = Brand<Static<typeof TriggerIdSchema>, "TriggerId">;
 
 // ── Factory functions ────────────────────────────────────────────────────────
 
@@ -58,4 +63,8 @@ export function generateNodeId(): NodeId {
 
 export function generateSnapshotId(): SnapshotId {
 	return crypto.randomUUID() as SnapshotId;
+}
+
+export function generateTriggerId(): TriggerId {
+	return crypto.randomUUID() as TriggerId;
 }

@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Flame, Package, HardDrive, ScrollText, BarChart3 } from "lucide-react";
+import { Flame, Package, HardDrive, ScrollText, BarChart3, Zap } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
@@ -8,9 +8,11 @@ import { WorkloadDetail } from "./pages/WorkloadDetail";
 import { NodeList } from "./pages/NodeList";
 import { ActivityLog } from "./pages/ActivityLog";
 import { MetricsPage } from "./pages/MetricsPage";
+import { TriggerList } from "./pages/TriggerList";
 
 const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/workloads", label: "workloads", icon: Package },
+	{ path: "/triggers", label: "triggers", icon: Zap },
 	{ path: "/nodes", label: "nodes", icon: HardDrive },
 	{ path: "/metrics", label: "metrics", icon: BarChart3 },
 	{ path: "/logs", label: "logs", icon: ScrollText },
@@ -34,6 +36,8 @@ function App() {
 		content = <WorkloadList key={tick} navigate={navigate} />;
 	} else if ((params = matchRoute(path, "/workloads/:name"))) {
 		content = <WorkloadDetail key={`${params.name}-${tick}`} name={params.name!} navigate={navigate} />;
+	} else if (path === "/triggers") {
+		content = <TriggerList tick={tick} />;
 	} else if (path === "/nodes") {
 		content = <NodeList key={tick} />;
 	} else if (path === "/metrics") {

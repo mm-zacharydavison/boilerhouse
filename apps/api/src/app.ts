@@ -10,6 +10,7 @@ import { nodeRoutes } from "./routes/nodes";
 import { snapshotRoutes } from "./routes/snapshots";
 import { activityRoutes } from "./routes/activity";
 import { secretRoutes } from "./routes/secrets";
+import { triggerRoutes } from "./routes/triggers";
 import { wsPlugin } from "./routes/ws";
 
 export function createApp(deps: RouteDeps) {
@@ -31,7 +32,8 @@ export function createApp(deps: RouteDeps) {
 				.use(nodeRoutes(deps))
 				.use(snapshotRoutes(deps))
 				.use(activityRoutes(deps))
-				.use(secretRoutes(deps)),
+				.use(secretRoutes(deps))
+				.use(triggerRoutes(deps)),
 		)
 		.use(wsPlugin(deps));
 }

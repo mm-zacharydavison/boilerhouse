@@ -6,16 +6,19 @@ export {
 	type WorkloadId,
 	type NodeId,
 	type SnapshotId,
+	type TriggerId,
 	InstanceIdSchema,
 	TenantIdSchema,
 	WorkloadIdSchema,
 	NodeIdSchema,
 	SnapshotIdSchema,
+	TriggerIdSchema,
 	generateInstanceId,
 	generateTenantId,
 	generateWorkloadId,
 	generateNodeId,
 	generateSnapshotId,
+	generateTriggerId,
 } from "./types";
 
 export {

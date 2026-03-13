@@ -20,6 +20,7 @@ import type {
 	SnapshotType,
 	TenantStatus,
 	SnapshotStatus,
+	TriggerId,
 } from "@boilerhouse/core";
 import { timestamp, jsonObject } from "./columns";
 
@@ -205,6 +206,32 @@ export const buildLogs = sqliteTable(
 	],
 );
 
+// ── triggers ────────────────────────────────────────────────────────────────
+
+/** Adapter-specific configuration stored as JSON. */
+type TriggerAdapterConfig = Record<string, unknown>;
+
+/** @example "webhook" | "slack" | "telegram" | "cron" */
+type TriggerType = "webhook" | "slack" | "telegram" | "cron";
+
+/** How to resolve tenant ID for a trigger event. */
+type TenantMapping =
+	| { static: string }
+	| { fromField: string; prefix?: string };
+
+export const triggers = sqliteTable("triggers", {
+	id: text("id").primaryKey().$type<TriggerId>(),
+	name: text("name").notNull().unique(),
+	type: text("type").notNull().$type<TriggerType>(),
+	tenant: jsonObject<TenantMapping>("tenant").notNull(),
+	workload: text("workload").notNull(),
+	config: jsonObject<TriggerAdapterConfig>("config").notNull(),
+	enabled: integer("enabled").notNull().default(1),
+	lastInvokedAt: timestamp("last_invoked_at"),
+	createdAt: timestamp("created_at").notNull(),
+	updatedAt: timestamp("updated_at").notNull(),
+});
+
 // ── Row types (inferred from schema) ─────────────────────────────────────────
 
 export type NodeRow = typeof nodes.$inferSelect;
@@ -231,6 +258,9 @@ export type BuildLogInsert = typeof buildLogs.$inferInsert;
 export type TenantSecretRow = typeof tenantSecrets.$inferSelect;
 export type TenantSecretInsert = typeof tenantSecrets.$inferInsert;
 
+export type TriggerRow = typeof triggers.$inferSelect;
+export type TriggerInsert = typeof triggers.$inferInsert;
+
 // ── Schema bundle (for drizzle() calls) ──────────────────────────────────────
 
 export const schema = {
@@ -242,4 +272,5 @@ export const schema = {
 	activityLog,
 	buildLogs,
 	tenantSecrets,
+	triggers,
 };

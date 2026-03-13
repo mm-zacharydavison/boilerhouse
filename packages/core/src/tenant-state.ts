@@ -47,7 +47,7 @@ export const TENANT_EVENTS = [
 const transitions: TransitionMap<TenantStatus, TenantEvent> = {
 	idle: { claim: "claiming" },
 	claiming: { claimed: "active", claim_failed: "idle" },
-	active: { release: "releasing" },
+	active: { claim: "claiming", release: "releasing" },
 	releasing: { hibernated: "released", destroyed: "idle" },
 	released: { claim: "claiming" },
 };

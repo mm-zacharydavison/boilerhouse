@@ -46,6 +46,14 @@
         "@types/react-syntax-highlighter": "^15.5.13",
       },
     },
+    "apps/triggers": {
+      "name": "@boilerhouse/triggers",
+      "version": "0.0.1",
+      "dependencies": {
+        "@boilerhouse/core": "workspace:*",
+        "croner": "^10.0.1",
+      },
+    },
     "packages/core": {
       "name": "@boilerhouse/core",
       "version": "0.0.1",
@@ -114,6 +122,8 @@
     "@boilerhouse/o11y": ["@boilerhouse/o11y@workspace:packages/o11y"],
 
     "@boilerhouse/runtime-podman": ["@boilerhouse/runtime-podman@workspace:packages/runtime-podman"],
+
+    "@boilerhouse/triggers": ["@boilerhouse/triggers@workspace:apps/triggers"],
 
     "@boilerhouse/workloads": ["@boilerhouse/workloads@workspace:workloads"],
 
@@ -298,6 +308,8 @@
     "comma-separated-tokens": ["comma-separated-tokens@2.0.3", "", {}, "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg=="],
 
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
+
+    "croner": ["croner@10.0.1", "", {}, "sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g=="],
 
     "csstype": ["csstype@3.2.3", "", {}, "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="],
 

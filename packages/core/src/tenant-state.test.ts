@@ -35,17 +35,15 @@ describe("tenant state machine", () => {
 		test("released → claiming (via 'claim')", () => {
 			expect(tenantTransition("released", "claim")).toBe("claiming");
 		});
+
+		test("active → claiming (via 'claim', re-claim)", () => {
+			expect(tenantTransition("active", "claim")).toBe("claiming");
+		});
 	});
 
 	describe("invalid transitions", () => {
 		test("idle → active throws (must claim first)", () => {
 			expect(() => tenantTransition("idle", "claimed")).toThrow(
-				InvalidTransitionError,
-			);
-		});
-
-		test("active → claiming throws", () => {
-			expect(() => tenantTransition("active", "claim")).toThrow(
 				InvalidTransitionError,
 			);
 		});

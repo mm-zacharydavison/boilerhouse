@@ -28,6 +28,9 @@ export {
 	tenantSecrets,
 	type TenantSecretRow,
 	type TenantSecretInsert,
+	triggers,
+	type TriggerRow,
+	type TriggerInsert,
 } from "./schema";
 
 export {

@@ -155,15 +155,27 @@ export class PodmanClient {
 	 */
 	async pullImage(ref: string): Promise<void> {
 		const encoded = encodeURIComponent(ref);
-		const res = await this.request(
+		const raw = await this.requestRaw(
 			"POST",
 			`/libpod/images/pull?reference=${encoded}`,
 		);
-		// Pull returns 200 with streaming JSON; check for error in last line
-		if (res.status !== 200) {
-			throw new PodmanRuntimeError(
-				`Failed to pull image ${ref}: HTTP ${res.status}`,
-			);
+
+		// The pull API streams newline-delimited JSON objects.
+		// The last object contains either { images: [...] } on success
+		// or { error: "..." } on failure. Intermediate objects have { stream: "..." }.
+		const text = raw.toString("utf-8").trim();
+		const lines = text.split("\n").filter(Boolean);
+		for (const line of lines) {
+			try {
+				const obj = JSON.parse(line) as Record<string, unknown>;
+				if (obj.error) {
+					throw new PodmanRuntimeError(
+						`Failed to pull image ${ref}: ${String(obj.error)}`,
+					);
+				}
+			} catch (e) {
+				if (e instanceof PodmanRuntimeError) throw e;
+			}
 		}
 	}
 

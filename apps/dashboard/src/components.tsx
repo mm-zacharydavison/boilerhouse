@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { api, type InstanceEndpoint } from "./api";
 import { ClipboardCopy, Check } from "lucide-react";
@@ -238,14 +238,22 @@ export function Modal({
 	onClose: () => void;
 	children: ReactNode;
 }) {
+	const mouseDownTarget = useRef<EventTarget | null>(null);
+
 	return (
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-			onClick={onClose}
+			onMouseDown={(e) => { mouseDownTarget.current = e.target; }}
+			onClick={(e) => {
+				// Only close if both mousedown and click landed on the backdrop itself,
+				// preventing dismissal from drag-releases or layout shifts.
+				if (e.target === e.currentTarget && mouseDownTarget.current === e.currentTarget) {
+					onClose();
+				}
+			}}
 		>
 			<div
 				className="bg-surface-1 border border-border rounded-lg shadow-xl w-full max-w-md mx-4"
-				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
 					<h3 className="text-sm font-tight font-semibold">{title}</h3>

@@ -3,7 +3,7 @@ import { defineWorkload, secret } from "@boilerhouse/core";
 export default defineWorkload({
 	name: "openclaw",
 	version: "2026.3.7",
-	image: { ref: "alpine/openclaw:2026.3.7" },
+	image: { dockerfile: "openclaw/Dockerfile" },
 	resources: { vcpus: 2, memory_mb: 2048, disk_gb: 10 },
 	network: {
 		access: "restricted",

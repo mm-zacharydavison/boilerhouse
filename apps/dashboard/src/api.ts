@@ -168,6 +168,66 @@ export interface ClaimResult {
 	latencyMs: number;
 }
 
+export type TenantMapping =
+	| { static: string }
+	| { fromField: string; prefix?: string };
+
+export interface TriggerSummary {
+	id: string;
+	name: string;
+	/** @example "webhook" */
+	type: string;
+	tenant: TenantMapping;
+	workload: string;
+	config: Record<string, unknown>;
+	/** 1 = enabled, 0 = disabled */
+	enabled: number;
+	/** @example "2026-03-13T15:24:59.634Z" */
+	lastInvokedAt: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface CreateTriggerInput {
+	name: string;
+	type: "webhook" | "slack" | "telegram" | "cron";
+	tenant: TenantMapping;
+	workload: string;
+	config: Record<string, unknown>;
+}
+
+export interface TriggerTestInput {
+	tenantId: string;
+	payload: unknown;
+}
+
+export interface TriggerTestResult {
+	claim: {
+		tenantId: string;
+		instanceId: string;
+		endpoint: { host: string; port: number };
+		source: string;
+		latencyMs: number;
+	};
+	response: {
+		status: number;
+		body: unknown;
+	} | null;
+	error?: string;
+}
+
+async function del<T>(path: string): Promise<T> {
+	const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(
+			(body as { error?: string } | null)?.error ??
+				`HTTP ${res.status}: ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<T>;
+}
+
 // --- API methods ---
 
 export const api = {
@@ -219,4 +279,22 @@ export const api = {
 		postJson<ClaimResult>(`/tenants/${encodeURIComponent(tenantId)}/claim`, {
 			workload: workloadName,
 		}),
+
+	// Triggers
+	fetchTriggers: () => get<TriggerSummary[]>("/triggers"),
+
+	createTrigger: (data: CreateTriggerInput) =>
+		postJson<TriggerSummary>("/triggers", data),
+
+	deleteTrigger: (id: string) =>
+		del<{ ok: boolean }>(`/triggers/${encodeURIComponent(id)}`),
+
+	enableTrigger: (id: string) =>
+		post<TriggerSummary>(`/triggers/${encodeURIComponent(id)}/enable`),
+
+	disableTrigger: (id: string) =>
+		post<TriggerSummary>(`/triggers/${encodeURIComponent(id)}/disable`),
+
+	testTrigger: (id: string, data: TriggerTestInput) =>
+		postJson<TriggerTestResult>(`/triggers/${encodeURIComponent(id)}/test`, data),
 };
