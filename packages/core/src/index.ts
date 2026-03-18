@@ -94,6 +94,7 @@ export {
 
 export {
 	type Runtime,
+	type RuntimeCapabilities,
 	type InstanceHandle,
 	type Endpoint,
 	type ExecResult,

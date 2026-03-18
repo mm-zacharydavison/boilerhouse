@@ -21,7 +21,7 @@ import type { TenantDataStore } from "./tenant-data";
 import type { IdleMonitor } from "./idle-monitor";
 import type { EventBus } from "./event-bus";
 
-export type ClaimSource = "existing" | "snapshot" | "cold+data" | "golden";
+export type ClaimSource = "existing" | "snapshot" | "cold+data" | "golden" | "cold";
 
 export interface ClaimResult {
 	tenantId: TenantId;
@@ -54,11 +54,18 @@ export class TenantManager {
 	) {}
 
 	/**
-	 * Claims an instance for the given tenant, following the restore hierarchy:
+	 * Claims an instance for the given tenant.
+	 *
+	 * When the runtime supports golden snapshots, follows the restore hierarchy:
 	 * 1. Existing active instance
 	 * 2. Tenant snapshot (hot restore)
 	 * 3. Golden + data overlay (cold restore with data)
 	 * 4. Golden snapshot (fresh)
+	 *
+	 * When golden snapshots are not supported:
+	 * 1. Existing active instance
+	 * 2. Tenant snapshot (restore)
+	 * 3. Cold boot from workload definition
 	 */
 	async claim(tenantId: TenantId, workloadId: WorkloadId): Promise<ClaimResult> {
 		const start = performance.now();
@@ -103,6 +110,20 @@ export class TenantManager {
 			}
 		}
 
+		if (this.snapshotManager.capabilities.goldenSnapshots) {
+			return this.claimViaGolden(tenantId, workloadId, tenantRow, start);
+		}
+
+		return this.claimViaColdBoot(tenantId, workloadId, start);
+	}
+
+	/** Golden snapshot claim path (steps 3–4): overlay restore or fresh golden. */
+	private async claimViaGolden(
+		tenantId: TenantId,
+		workloadId: WorkloadId,
+		tenantRow: { tenantId: TenantId } | undefined,
+		start: number,
+	): Promise<ClaimResult> {
 		// 3. Check for data overlay (cold+data path)
 		const overlayPath = tenantRow
 			? this.tenantDataStore.restoreOverlay(tenantId)
@@ -126,6 +147,48 @@ export class TenantManager {
 
 		this.log?.info({ tenantId, workloadId, source: "golden", snapshotId: goldenRef.id }, "Claiming via golden snapshot");
 		return this.restoreAndClaim(goldenRef, tenantId, workloadId, "golden", start);
+	}
+
+	/** Cold boot claim path: create a fresh instance from the workload definition. */
+	private async claimViaColdBoot(
+		tenantId: TenantId,
+		workloadId: WorkloadId,
+		start: number,
+	): Promise<ClaimResult> {
+		const workloadRow = this.db
+			.select()
+			.from(workloads)
+			.where(eq(workloads.workloadId, workloadId))
+			.get();
+
+		if (!workloadRow) {
+			throw new Error(`Workload not found: ${workloadId}`);
+		}
+
+		this.log?.info({ tenantId, workloadId, source: "cold" }, "Claiming via cold boot");
+
+		const handle = await this.instanceManager.create(
+			workloadId,
+			workloadRow.config as Workload,
+			tenantId,
+		);
+
+		this.upsertTenant(tenantId, workloadId, handle.instanceId);
+		this.updateInstanceClaimed(handle.instanceId);
+
+		const endpoint = await this.safeGetEndpoint(handle);
+		const latencyMs = performance.now() - start;
+
+		this.logClaim(tenantId, handle.instanceId, workloadId, "cold");
+		this.startIdleWatch(handle.instanceId, workloadId);
+
+		return {
+			tenantId,
+			instanceId: handle.instanceId,
+			endpoint,
+			source: "cold",
+			latencyMs,
+		};
 	}
 
 	/**

@@ -179,6 +179,56 @@ describe("TenantManager", () => {
 			).rejects.toBeInstanceOf(NoGoldenSnapshotError);
 		});
 
+		test("no golden snapshots capability → cold boots new instance (source: 'cold')", async () => {
+			const noGoldenRuntime = new FakeRuntime({ goldenSnapshots: false });
+			const noGoldenIM = new InstanceManager(noGoldenRuntime, db, log, nodeId);
+			const noGoldenSM = new SnapshotManager(noGoldenRuntime, db, nodeId, {
+				healthChecker: alwaysHealthy,
+			});
+			const noGoldenTM = new TenantManager(
+				noGoldenIM,
+				noGoldenSM,
+				db,
+				log,
+				nodeId,
+				tenantDataStore,
+			);
+
+			const tenantId = generateTenantId();
+			const result = await noGoldenTM.claim(tenantId, workloadId);
+
+			expect(result.source).toBe("cold");
+			expect(result.instanceId).toBeTruthy();
+			expect(result.tenantId).toBe(tenantId);
+		});
+
+		test("no golden snapshots + tenant snapshot → restores from snapshot", async () => {
+			const noGoldenRuntime = new FakeRuntime({ goldenSnapshots: false });
+			const noGoldenIM = new InstanceManager(noGoldenRuntime, db, log, nodeId);
+			const noGoldenSM = new SnapshotManager(noGoldenRuntime, db, nodeId, {
+				healthChecker: alwaysHealthy,
+			});
+			const noGoldenTM = new TenantManager(
+				noGoldenIM,
+				noGoldenSM,
+				db,
+				log,
+				nodeId,
+				tenantDataStore,
+			);
+
+			const tenantId = generateTenantId();
+
+			// First claim → cold boot
+			await noGoldenTM.claim(tenantId, workloadId);
+			// Release → hibernate creates tenant snapshot
+			await noGoldenTM.release(tenantId);
+
+			// Re-claim → should restore from tenant snapshot
+			const result = await noGoldenTM.claim(tenantId, workloadId);
+			expect(result.source).toBe("snapshot");
+		});
+
 		test("creates tenant row if none exists", async () => {
 			const tenantId = generateTenantId();
 

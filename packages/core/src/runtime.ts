@@ -40,9 +40,21 @@ export interface InstanceHandle {
 
 export type Endpoint = Static<typeof EndpointSchema>;
 
+// ── Runtime capabilities ─────────────────────────────────────────────────────
+
+export interface RuntimeCapabilities {
+	/**
+	 * Whether the runtime supports golden snapshots (CRIU checkpoint/restore).
+	 * When false, workloads skip golden snapshot creation and go straight to
+	 * "ready". Claim always cold-boots; release always destroys after snapshot.
+	 */
+	goldenSnapshots: boolean;
+}
+
 // ── Runtime interface ────────────────────────────────────────────────────────
 
 export interface Runtime {
+	readonly capabilities: RuntimeCapabilities;
 	/** Create a new instance from a workload definition (cold boot). */
 	create(workload: Workload, instanceId: InstanceId, onLog?: (line: string) => void): Promise<InstanceHandle>;
 

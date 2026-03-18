@@ -5,7 +5,7 @@ import type { InstanceId } from "@boilerhouse/core";
 import { generateSnapshotId, generateWorkloadId, generateNodeId, DEFAULT_RUNTIME_SOCKET } from "@boilerhouse/core";
 import type { SnapshotRef, SnapshotPaths, SnapshotMetadata } from "@boilerhouse/core";
 import type { Workload } from "@boilerhouse/core";
-import type { Runtime, InstanceHandle, Endpoint, ExecResult } from "@boilerhouse/core";
+import type { Runtime, RuntimeCapabilities, InstanceHandle, Endpoint, ExecResult } from "@boilerhouse/core";
 import type { PodmanConfig } from "./types";
 import type { ContainerBackend } from "./backend";
 import { PodmanRuntimeError } from "./errors";
@@ -22,6 +22,7 @@ interface ManagedContainer {
 }
 
 export class PodmanRuntime implements Runtime {
+	readonly capabilities: RuntimeCapabilities = { goldenSnapshots: true };
 	private readonly containers = new Map<string, ManagedContainer>();
 	private readonly snapshotDir: string;
 	private readonly proxyAddress: string | undefined;

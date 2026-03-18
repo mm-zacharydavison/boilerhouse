@@ -212,6 +212,36 @@ describe("GoldenCreator", () => {
 		expect(buildLogEvents.length).toBeGreaterThan(0);
 	});
 
+	test("skips golden snapshot when runtime lacks goldenSnapshots capability", async () => {
+		const noGoldenRuntime = new FakeRuntime({ goldenSnapshots: false });
+		const noGoldenSnapMgr = new SnapshotManager(noGoldenRuntime, db, nodeId, {
+			healthChecker: async () => {},
+		});
+		const creator = new GoldenCreator(db, noGoldenSnapMgr, eventBus);
+		const workloadId = seedWorkload();
+
+		creator.enqueue(workloadId, MINIMAL_WORKLOAD);
+		await waitForIdle(creator);
+
+		// Workload should be ready without any golden snapshot
+		const row = db
+			.select()
+			.from(workloads)
+			.where(eq(workloads.workloadId, workloadId))
+			.get();
+		expect(row!.status).toBe("ready");
+
+		// No snapshot rows should exist
+		const snapshotRows = db.select().from(snapshots).all();
+		expect(snapshotRows).toHaveLength(0);
+
+		// Should still emit workload.state ready event
+		expect(events).toHaveLength(1);
+		if (events[0]!.type === "workload.state") {
+			expect(events[0]!.status).toBe("ready");
+		}
+	});
+
 	test("clears build log store on re-enqueue", async () => {
 		const bootstrapLogStore = new BootstrapLogStore(db);
 		const creator = new GoldenCreator(db, snapshotManager, eventBus, bootstrapLogStore);

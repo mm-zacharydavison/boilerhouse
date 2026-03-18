@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { WorkloadId, Workload } from "@boilerhouse/core";
+import type { WorkloadId, Workload, RuntimeCapabilities } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { workloads } from "@boilerhouse/db";
 import type { Logger } from "@boilerhouse/o11y";
@@ -109,6 +109,20 @@ export class GoldenCreator {
 				});
 			}
 		};
+
+		// Runtime doesn't support golden snapshots — mark ready immediately
+		if (!this.snapshotManager.capabilities.goldenSnapshots) {
+			applyWorkloadTransition(this.db, workloadId, "creating", "created");
+
+			this.eventBus.emit({
+				type: "workload.state",
+				workloadId,
+				status: "ready",
+			});
+
+			this.log?.info({ workloadId }, "Workload ready (no golden snapshot — runtime does not support them)");
+			return;
+		}
 
 		try {
 			onLog("Creating golden snapshot...");

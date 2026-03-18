@@ -58,6 +58,7 @@ export class InstanceManager {
 				instanceId,
 				workloadId,
 				nodeId: this.nodeId,
+				tenantId: tenantId ?? null,
 				status: "starting",
 				createdAt: new Date(),
 			})

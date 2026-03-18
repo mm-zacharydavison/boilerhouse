@@ -2,7 +2,7 @@ import type { InstanceId } from "./types";
 import { generateSnapshotId, generateWorkloadId, generateNodeId } from "./types";
 import type { SnapshotRef } from "./snapshot";
 import type { Workload } from "./workload";
-import type { Runtime, InstanceHandle, Endpoint, ExecResult } from "./runtime";
+import type { Runtime, RuntimeCapabilities, InstanceHandle, Endpoint, ExecResult } from "./runtime";
 
 type RuntimeOperation =
 	| "create"
@@ -30,6 +30,11 @@ export interface FakeRuntimeOptions {
 	 * @default { exitCode: 0, stdout: "", stderr: "" }
 	 */
 	execResult?: ExecResult;
+	/**
+	 * Whether golden snapshots are supported.
+	 * @default true
+	 */
+	goldenSnapshots?: boolean;
 }
 
 interface FakeInstance {
@@ -41,6 +46,7 @@ interface FakeInstance {
 }
 
 export class FakeRuntime implements Runtime {
+	readonly capabilities: RuntimeCapabilities;
 	private instances = new Map<string, FakeInstance>();
 	private snapshots = new Map<string, SnapshotRef>();
 	private nextPort = 30000;
@@ -52,6 +58,7 @@ export class FakeRuntime implements Runtime {
 		this.latencyMs = options?.latencyMs ?? 0;
 		this.failOn = options?.failOn ?? new Set();
 		this.execResult = options?.execResult ?? { exitCode: 0, stdout: "", stderr: "" };
+		this.capabilities = { goldenSnapshots: options?.goldenSnapshots ?? true };
 	}
 
 	async create(

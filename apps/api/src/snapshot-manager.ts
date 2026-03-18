@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { eq, and } from "drizzle-orm";
 import type {
 	Runtime,
+	RuntimeCapabilities,
 	InstanceId,
 	WorkloadId,
 	NodeId,
@@ -51,6 +52,10 @@ export class SnapshotManager {
 		this.healthChecker = options?.healthChecker ?? pollHealth;
 		this.defaultHealthTimeoutMs = options?.defaultHealthTimeoutMs ?? 120_000;
 		this.proxyRegistrar = options?.proxyRegistrar;
+	}
+
+	get capabilities(): RuntimeCapabilities {
+		return this.runtime.capabilities;
 	}
 
 	/**
