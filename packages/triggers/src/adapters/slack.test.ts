@@ -1,13 +1,26 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createSlackRoutes } from "./slack";
 import { Dispatcher } from "../dispatcher";
-import { BoilerhouseClient } from "../client";
+import type { DispatcherDeps } from "../dispatcher";
 import type { TriggerDefinition, SlackConfig } from "../config";
 
-let apiServer: ReturnType<typeof Bun.serve>;
 let agentServer: ReturnType<typeof Bun.serve>;
-let apiUrl: string;
 const signingSecret = "slack-signing-secret";
+
+function createTestDeps(): DispatcherDeps {
+	return {
+		async claim(tenantId) {
+			return {
+				tenantId,
+				instanceId: "i-1",
+				endpoint: { host: "localhost", ports: [agentServer.port!] },
+				source: "warm",
+				latencyMs: 10,
+			};
+		},
+		logActivity() {},
+	};
+}
 
 beforeAll(() => {
 	agentServer = Bun.serve({
@@ -17,28 +30,9 @@ beforeAll(() => {
 			return Response.json({ text: "agent reply", received: body });
 		},
 	});
-
-	apiServer = Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname.match(/\/api\/v1\/tenants\/[^/]+\/claim/) && req.method === "POST") {
-				return Response.json({
-					tenantId: "t-1",
-					instanceId: "i-1",
-					endpoint: { host: "localhost", port: agentServer.port },
-					source: "warm",
-					latencyMs: 10,
-				});
-			}
-			return new Response("Not Found", { status: 404 });
-		},
-	});
-	apiUrl = `http://localhost:${apiServer.port}`;
 });
 
 afterAll(() => {
-	apiServer.stop(true);
 	agentServer.stop(true);
 });
 
@@ -71,8 +65,7 @@ async function signRequest(body: string, timestamp: string): Promise<string> {
 }
 
 test("URL verification challenge response", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/slack/events"]!;
 
@@ -95,8 +88,7 @@ test("URL verification challenge response", async () => {
 });
 
 test("event callback with valid signature dispatches with derived tenant", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/slack/events"]!;
 
@@ -128,8 +120,7 @@ test("event callback with valid signature dispatches with derived tenant", async
 });
 
 test("event callback with invalid signature is rejected", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/slack/events"]!;
 
@@ -154,8 +145,7 @@ test("event callback with invalid signature is rejected", async () => {
 });
 
 test("event callback with missing signature headers is rejected", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/slack/events"]!;
 
@@ -176,8 +166,7 @@ test("event callback with missing signature headers is rejected", async () => {
 });
 
 test("non-matching event type returns 200 (ignored)", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/slack/events"]!;
 
@@ -198,8 +187,7 @@ test("non-matching event type returns 200 (ignored)", async () => {
 });
 
 test("empty triggers returns no routes", () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createSlackRoutes([], dispatcher);
 	expect(Object.keys(routes)).toHaveLength(0);
 });

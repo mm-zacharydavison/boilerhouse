@@ -11,6 +11,7 @@ import { snapshotRoutes } from "./routes/snapshots";
 import { activityRoutes } from "./routes/activity";
 import { secretRoutes } from "./routes/secrets";
 import { triggerRoutes } from "./routes/triggers";
+import { triggerAdapterPlugin } from "./routes/trigger-adapters";
 import { wsPlugin } from "./routes/ws";
 
 export function createApp(deps: RouteDeps) {
@@ -35,5 +36,6 @@ export function createApp(deps: RouteDeps) {
 				.use(secretRoutes(deps))
 				.use(triggerRoutes(deps)),
 		)
+		.use(triggerAdapterPlugin(deps))
 		.use(wsPlugin(deps));
 }

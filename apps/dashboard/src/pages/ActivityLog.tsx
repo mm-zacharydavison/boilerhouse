@@ -46,6 +46,12 @@ function eventColor(entry: ActivityLogEntry): string {
 			return "text-status-green";
 		case "tenant.released":
 			return "text-status-yellow";
+		case "trigger.invoked":
+			return "text-status-blue";
+		case "trigger.dispatched":
+			return "text-status-green";
+		case "trigger.error":
+			return "text-status-red";
 		default:
 			return "text-gray-200";
 	}

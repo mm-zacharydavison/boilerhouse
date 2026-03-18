@@ -1,20 +1,5 @@
 // Trigger configuration types
 
-export interface TriggerConfig {
-	/** Base URL of the boilerhouse API.
-	 * @example "http://localhost:3000"
-	 */
-	boilerhouseApiUrl: string;
-
-	/** Port for the trigger HTTP server.
-	 * @default 3001
-	 */
-	port?: number;
-
-	/** Trigger definitions. */
-	triggers: TriggerDefinition[];
-}
-
 /** How to determine the tenant ID for a trigger event. */
 export type TenantMapping =
 	| {

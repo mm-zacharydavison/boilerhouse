@@ -110,6 +110,13 @@ export const WorkloadSchema = Type.Object({
 		 * requests to the matching domain.
 		 */
 		credentials: Type.Optional(Type.Array(CredentialRuleSchema)),
+		/**
+		 * Path where the container accepts WebSocket upgrades.
+		 * When set, the trigger layer uses a persistent WebSocket connection
+		 * instead of HTTP POST per message.
+		 * @example "/ws"
+		 */
+		websocket: Type.Optional(Type.String({ minLength: 1 })),
 	}, { default: { access: "none" } }),
 	filesystem: Type.Optional(
 		Type.Object({
@@ -286,6 +293,10 @@ export interface WorkloadConfig {
 		allowlist?: string[];
 		expose?: Array<{ guest: number; host_range: [number, number] }>;
 		credentials?: WorkloadConfigCredentialRule[];
+		/** Path where the container accepts WebSocket upgrades.
+		 * @example "/ws"
+		 */
+		websocket?: string;
 	};
 	filesystem?: {
 		overlay_dirs?: string[];

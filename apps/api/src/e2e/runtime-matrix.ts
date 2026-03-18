@@ -12,6 +12,8 @@ export interface WorkloadFixtures {
 	httpserver: string;
 	/** Restricted network with allowlist, port 18789, HTTP health check. */
 	openclaw: string;
+	/** WebSocket echo server on port 8080, outbound network, HTTP health check, websocket on /ws. */
+	wsecho: string;
 }
 
 export interface RuntimeEntry {
@@ -61,6 +63,7 @@ const fakeEntry: RuntimeEntry = {
 		minimal: fixturePath("workload-fake-minimal.workload.ts"),
 		httpserver: fixturePath("workload-fake-httpserver.workload.ts"),
 		openclaw: fixturePath("workload-fake-openclaw.workload.ts"),
+		wsecho: fixturePath("workload-fake-wsecho.workload.ts"),
 	},
 	brokenWorkloadFixture: fixturePath("workload-fake-broken.workload.ts"),
 	verifyCleanup: async () => {
@@ -81,6 +84,7 @@ const dockerEntry: RuntimeEntry = {
 		minimal: fixturePath("workload-docker.workload.ts"),
 		httpserver: fixturePath("workload-docker.workload.ts"),
 		openclaw: fixturePath("workload-docker.workload.ts"),
+		wsecho: fixturePath("workload-docker.workload.ts"),
 	},
 	brokenWorkloadFixture: fixturePath("workload-docker-broken.workload.ts"),
 	verifyCleanup: async () => {
@@ -122,6 +126,7 @@ const podmanEntry: RuntimeEntry = {
 		minimal: fixturePath("workload-podman-minimal.workload.ts"),
 		httpserver: fixturePath("workload-podman-httpserver.workload.ts"),
 		openclaw: fixturePath("workload-podman-openclaw.workload.ts"),
+		wsecho: fixturePath("workload-podman-wsecho.workload.ts"),
 	},
 	brokenWorkloadFixture: fixturePath("workload-podman-broken.workload.ts"),
 	verifyCleanup: async () => {

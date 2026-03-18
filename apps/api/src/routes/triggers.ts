@@ -199,6 +199,13 @@ export function triggerRoutes(deps: RouteDeps) {
 
 				// Claim the tenant
 				const tenantId = body.tenantId as TenantId;
+				deps.activityLog.log({
+					event: "trigger.invoked",
+					tenantId,
+					workloadId: workloadRow.workloadId,
+					nodeId: deps.nodeId,
+					metadata: { trigger: trigger.name, source: "test" },
+				});
 				log?.info({ triggerId: trigger.id, triggerName: trigger.name, tenantId, workload: trigger.workload }, "Trigger test: claiming tenant");
 				let claim;
 				try {
@@ -261,6 +268,14 @@ export function triggerRoutes(deps: RouteDeps) {
 					}
 					if (!ready) {
 						log?.warn({ agentUrl, attempts }, "Trigger test: container not ready after 15s");
+						deps.activityLog.log({
+							event: "trigger.error",
+							tenantId,
+							instanceId: claim.instanceId,
+							workloadId: workloadRow.workloadId,
+							nodeId: deps.nodeId,
+							metadata: { trigger: trigger.name, source: "test", phase: "readiness", reason: "Container not ready after 15s" },
+						});
 						return {
 							claim: {
 								tenantId: claim.tenantId,
@@ -290,6 +305,17 @@ export function triggerRoutes(deps: RouteDeps) {
 					const errMsg = err instanceof Error ? err.message : String(err);
 					const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
 					log?.error({ agentUrl, err: errMsg, isTimeout }, "Trigger test: forward failed");
+					const reason = isTimeout
+						? "Container did not respond within 30s"
+						: "Container endpoint unreachable";
+					deps.activityLog.log({
+						event: "trigger.error",
+						tenantId,
+						instanceId: claim.instanceId,
+						workloadId: workloadRow.workloadId,
+						nodeId: deps.nodeId,
+						metadata: { trigger: trigger.name, source: "test", phase: "dispatch", reason },
+					});
 					return {
 						claim: {
 							tenantId: claim.tenantId,
@@ -314,6 +340,15 @@ export function triggerRoutes(deps: RouteDeps) {
 				}
 
 				log?.info({ agentUrl, agentStatus }, "Trigger test: got response");
+
+				deps.activityLog.log({
+					event: "trigger.dispatched",
+					tenantId,
+					instanceId: claim.instanceId,
+					workloadId: workloadRow.workloadId,
+					nodeId: deps.nodeId,
+					metadata: { trigger: trigger.name, source: "test", status: agentStatus },
+				});
 
 				// Update last invoked timestamp
 				db.update(triggers)

@@ -118,9 +118,15 @@ export class SnapshotManager {
 					check = createExecCheck(this.runtime, handle, workload.health.exec.command, log);
 				} else if (workload.health.http_get) {
 					const endpoint = await this.runtime.getEndpoint(handle);
-					// endpoint.ports contains host-mapped ports; use the first one.
-					// workload.health.http_get.port is the guest port, not the host port.
-					const port = endpoint.ports[0]!;
+					// endpoint.ports is ordered to match workload.network.expose.
+					// Find the host port corresponding to the health check's guest port.
+					const guestPort = workload.health.http_get.port;
+					let portIndex = 0;
+					if (guestPort != null && workload.network.expose) {
+						const idx = workload.network.expose.findIndex((e) => e.guest === guestPort);
+						if (idx >= 0) portIndex = idx;
+					}
+					const port = endpoint.ports[portIndex]!;
 					const url = `http://${endpoint.host}:${port}${workload.health.http_get.path}`;
 					log(`Health check: http [GET ${url}]...`);
 					check = createHttpCheck(url, log);

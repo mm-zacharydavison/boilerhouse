@@ -1,12 +1,25 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createWebhookRoutes } from "./webhook";
 import { Dispatcher } from "../dispatcher";
-import { BoilerhouseClient } from "../client";
+import type { DispatcherDeps } from "../dispatcher";
 import type { TriggerDefinition, WebhookConfig } from "../config";
 
-let apiServer: ReturnType<typeof Bun.serve>;
 let agentServer: ReturnType<typeof Bun.serve>;
-let apiUrl: string;
+
+function createTestDeps(): DispatcherDeps {
+	return {
+		async claim(tenantId) {
+			return {
+				tenantId,
+				instanceId: "i-1",
+				endpoint: { host: "localhost", ports: [agentServer.port!] },
+				source: "warm",
+				latencyMs: 10,
+			};
+		},
+		logActivity() {},
+	};
+}
 
 beforeAll(() => {
 	agentServer = Bun.serve({
@@ -16,28 +29,9 @@ beforeAll(() => {
 			return Response.json({ reply: "ok", received: body });
 		},
 	});
-
-	apiServer = Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname.match(/\/api\/v1\/tenants\/[^/]+\/claim/) && req.method === "POST") {
-				return Response.json({
-					tenantId: "t-1",
-					instanceId: "i-1",
-					endpoint: { host: "localhost", port: agentServer.port },
-					source: "warm",
-					latencyMs: 10,
-				});
-			}
-			return new Response("Not Found", { status: 404 });
-		},
-	});
-	apiUrl = `http://localhost:${apiServer.port}`;
 });
 
 afterAll(() => {
-	apiServer.stop(true);
 	agentServer.stop(true);
 });
 
@@ -52,8 +46,7 @@ function makeTrigger(config: WebhookConfig): TriggerDefinition & { config: Webho
 }
 
 test("payload passthrough with static tenant", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createWebhookRoutes(
 		[makeTrigger({ path: "/hooks/test" })],
 		dispatcher,
@@ -74,8 +67,7 @@ test("payload passthrough with static tenant", async () => {
 });
 
 test("tenant resolved from body field", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const trigger: TriggerDefinition & { config: WebhookConfig } = {
 		name: "dynamic-hook",
 		type: "webhook",
@@ -98,8 +90,7 @@ test("tenant resolved from body field", async () => {
 });
 
 test("tenant resolution failure returns 400", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const trigger: TriggerDefinition & { config: WebhookConfig } = {
 		name: "missing-field-hook",
 		type: "webhook",
@@ -139,8 +130,7 @@ test("HMAC validation - valid signature accepted", async () => {
 	const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
 	const signature = `sha256=${Buffer.from(sig).toString("hex")}`;
 
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createWebhookRoutes(
 		[makeTrigger({ path: "/hooks/secure", secret })],
 		dispatcher,
@@ -162,8 +152,7 @@ test("HMAC validation - valid signature accepted", async () => {
 });
 
 test("HMAC validation - invalid signature rejected", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createWebhookRoutes(
 		[makeTrigger({ path: "/hooks/secure", secret: "my-secret" })],
 		dispatcher,
@@ -185,8 +174,7 @@ test("HMAC validation - invalid signature rejected", async () => {
 });
 
 test("HMAC validation - missing signature rejected", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createWebhookRoutes(
 		[makeTrigger({ path: "/hooks/secure", secret: "my-secret" })],
 		dispatcher,
@@ -205,8 +193,7 @@ test("HMAC validation - missing signature rejected", async () => {
 });
 
 test("multiple webhook triggers get separate routes", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createWebhookRoutes(
 		[
 			makeTrigger({ path: "/hooks/a" }),

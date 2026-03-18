@@ -69,12 +69,15 @@ export function tenantRoutes(deps: RouteDeps) {
 				source: result.source,
 			});
 
+			const websocketPath = workloadRow.config.network?.websocket;
+
 			return {
 				tenantId: result.tenantId,
 				instanceId: result.instanceId,
 				endpoint: result.endpoint,
 				source: result.source,
 				latencyMs: result.latencyMs,
+				...(websocketPath ? { websocket: websocketPath } : {}),
 			};
 		}, {
 			body: t.Object({

@@ -1,12 +1,25 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createTelegramRoutes } from "./telegram";
 import { Dispatcher } from "../dispatcher";
-import { BoilerhouseClient } from "../client";
+import type { DispatcherDeps } from "../dispatcher";
 import type { TriggerDefinition, TelegramConfig } from "../config";
 
-let apiServer: ReturnType<typeof Bun.serve>;
 let agentServer: ReturnType<typeof Bun.serve>;
-let apiUrl: string;
+
+function createTestDeps(): DispatcherDeps {
+	return {
+		async claim(tenantId) {
+			return {
+				tenantId,
+				instanceId: "i-1",
+				endpoint: { host: "localhost", ports: [agentServer.port!] },
+				source: "warm",
+				latencyMs: 10,
+			};
+		},
+		logActivity() {},
+	};
+}
 
 beforeAll(() => {
 	agentServer = Bun.serve({
@@ -16,28 +29,9 @@ beforeAll(() => {
 			return Response.json({ text: "bot reply", received: body });
 		},
 	});
-
-	apiServer = Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname.match(/\/api\/v1\/tenants\/[^/]+\/claim/) && req.method === "POST") {
-				return Response.json({
-					tenantId: "t-1",
-					instanceId: "i-1",
-					endpoint: { host: "localhost", port: agentServer.port },
-					source: "warm",
-					latencyMs: 10,
-				});
-			}
-			return new Response("Not Found", { status: 404 });
-		},
-	});
-	apiUrl = `http://localhost:${apiServer.port}`;
 });
 
 afterAll(() => {
-	apiServer.stop(true);
 	agentServer.stop(true);
 });
 
@@ -57,8 +51,7 @@ function makeTrigger(overrides?: Partial<TelegramConfig>): TriggerDefinition & {
 }
 
 test("valid message update dispatches with derived tenant", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/telegram/tg-test"]!;
 
@@ -85,8 +78,7 @@ test("valid message update dispatches with derived tenant", async () => {
 });
 
 test("invalid secret token is rejected", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/telegram/tg-test"]!;
 
@@ -108,8 +100,7 @@ test("invalid secret token is rejected", async () => {
 });
 
 test("missing secret token is rejected when configured", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes([makeTrigger()], dispatcher);
 	const handler = routes["/telegram/tg-test"]!;
 
@@ -128,8 +119,7 @@ test("missing secret token is rejected when configured", async () => {
 });
 
 test("no secret token config allows all requests", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes(
 		[makeTrigger({ secretToken: undefined })],
 		dispatcher,
@@ -151,8 +141,7 @@ test("no secret token config allows all requests", async () => {
 });
 
 test("non-matching update type is ignored", async () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes(
 		[makeTrigger({ updateTypes: ["callback_query"] })],
 		dispatcher,
@@ -178,8 +167,7 @@ test("non-matching update type is ignored", async () => {
 });
 
 test("each trigger gets its own route", () => {
-	const client = new BoilerhouseClient(apiUrl);
-	const dispatcher = new Dispatcher(client, { waitForReady: false });
+	const dispatcher = new Dispatcher(createTestDeps(), { waitForReady: false });
 	const routes = createTelegramRoutes(
 		[
 			makeTrigger(),

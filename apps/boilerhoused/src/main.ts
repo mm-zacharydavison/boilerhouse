@@ -6,6 +6,7 @@ import { PodmanClient } from "@boilerhouse/runtime-podman";
 import type { ContainerCreateSpec } from "@boilerhouse/runtime-podman";
 import { validateContainerSpec, PolicyViolationError } from "./validate";
 import { ensurePodmanMachine, detectPodmanSocket } from "./macos";
+import { enrichCheckpointError } from "./criu";
 
 export interface DaemonConfig {
 	/**
@@ -386,7 +387,12 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		const { join } = await import("node:path");
 
 		const archivePath = join(body.archiveDir, "checkpoint.tar.gz");
-		const archiveBuffer = await client.checkpointContainer(podmanId);
+		let archiveBuffer: Buffer;
+		try {
+			archiveBuffer = await client.checkpointContainer(podmanId);
+		} catch (err: unknown) {
+			return await enrichCheckpointError(err, client, podmanId);
+		}
 
 		const { archive: rewrittenArchive, containerPorts } =
 			await rewriteCheckpointPorts(archiveBuffer);
