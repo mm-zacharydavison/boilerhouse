@@ -27,7 +27,7 @@ K8s Cluster
 │
 └── Node Pool: "boilerhouse"           ← tainted, labeled nodes
     ├── kubelet                          (standard, manages DaemonSets)
-    ├── boilerhoused                     (DaemonSet, privileged)
+    ├── boilerhouse-podmand                     (DaemonSet, privileged)
     ├── podman                           (host-installed, OS image)
     ├── CRIU                             (host-installed, OS image)
     └── agent containers                 (managed by podman, invisible to K8s)
@@ -37,12 +37,12 @@ K8s Cluster
 
 - Boilerhouse nodes are **real K8s nodes** (they run kubelet, appear in `kubectl get nodes`)
 - They are **tainted** (`boilerhouse.dev/runtime=podman:NoSchedule`) so normal pods don't
-  land on them. Only the boilerhoused DaemonSet tolerates this taint.
+  land on them. Only the boilerhouse-podmand DaemonSet tolerates this taint.
 - Agent containers run in **podman**, not K8s. K8s has no visibility into them. The Virtual
   Kubelet creates the illusion that pods are running on the virtual node.
 - Node pool **autoscaling** works — the cloud provider adds/removes boilerhouse nodes
   based on demand.
-- `boilerhoused` registers with the Boilerhouse API on startup (existing behavior).
+- `boilerhouse-podmand` registers with the Boilerhouse API on startup (existing behavior).
 
 ## Virtual Kubelet Web Provider
 
@@ -137,7 +137,7 @@ apps/virtual-kubelet-provider/
     server.test.ts
   deploy/
     virtual-kubelet.yaml     K8s manifests: Deployment + RBAC
-    boilerhoused.yaml        DaemonSet for boilerhouse nodes
+    boilerhouse-podmand.yaml        DaemonSet for boilerhouse nodes
     node-pool-taint.yaml     Taint/label config for boilerhouse nodes
 ```
 
@@ -260,12 +260,12 @@ rules:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: boilerhoused
+  name: boilerhouse-podmand
   namespace: boilerhouse-system
 spec:
   selector:
     matchLabels:
-      app: boilerhoused
+      app: boilerhouse-podmand
   template:
     spec:
       tolerations:
@@ -278,8 +278,8 @@ spec:
       hostPID: true
       hostNetwork: true
       containers:
-        - name: boilerhoused
-          image: boilerhouse/boilerhoused:latest
+        - name: boilerhouse-podmand
+          image: boilerhouse/boilerhouse-podmand:latest
           securityContext:
             privileged: true
           volumeMounts:
@@ -372,7 +372,7 @@ BOILERHOUSE_VK_E2E=true BOILERHOUSE_CRIU_AVAILABLE=true \
    Need to verify the web provider protocol is stable.
 
 2. **Multi-node scheduling**: The current boilerhouse API server runs with a single node.
-   When multiple boilerhouse nodes are available (multiple boilerhoused DaemonSet pods),
+   When multiple boilerhouse nodes are available (multiple boilerhouse-podmand DaemonSet pods),
    the API server needs a way to pick which node handles the claim. This may require a
    scheduler component or round-robin logic in the API server. Out of scope for this plan
    but needed before production.

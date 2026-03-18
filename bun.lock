@@ -23,8 +23,8 @@
         "elysia": "^1.4.25",
       },
     },
-    "apps/boilerhoused": {
-      "name": "@boilerhouse/boilerhoused",
+    "apps/boilerhouse-podmand": {
+      "name": "@boilerhouse/boilerhouse-podmand",
       "version": "0.0.1",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
@@ -112,7 +112,7 @@
 
     "@boilerhouse/api": ["@boilerhouse/api@workspace:apps/api"],
 
-    "@boilerhouse/boilerhoused": ["@boilerhouse/boilerhoused@workspace:apps/boilerhoused"],
+    "@boilerhouse/boilerhouse-podmand": ["@boilerhouse/boilerhouse-podmand@workspace:apps/boilerhouse-podmand"],
 
     "@boilerhouse/core": ["@boilerhouse/core@workspace:packages/core"],
 

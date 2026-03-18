@@ -61,13 +61,13 @@ describe("validateContainerSpec", () => {
 	test("injects managed-by label", () => {
 		const spec = validSpec();
 		const result = validateContainerSpec(spec);
-		expect(result.labels?.["managed-by"]).toBe("boilerhoused");
+		expect(result.labels?.["managed-by"]).toBe("boilerhouse-podmand");
 	});
 
 	test("preserves existing labels when injecting managed-by", () => {
 		const spec = validSpec({ labels: { "boilerhouse.workload": "myapp" } });
 		const result = validateContainerSpec(spec);
-		expect(result.labels?.["managed-by"]).toBe("boilerhoused");
+		expect(result.labels?.["managed-by"]).toBe("boilerhouse-podmand");
 		expect(result.labels?.["boilerhouse.workload"]).toBe("myapp");
 	});
 

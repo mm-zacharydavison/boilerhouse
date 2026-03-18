@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # On macOS, discover the podman machine socket automatically.
-# On Linux, use the boilerhoused-managed socket.
+# On Linux, use the boilerhouse-podmand-managed socket.
 if [ "$(uname -s)" = "Darwin" ]; then
   SOCKET_PATH="${PODMAN_SOCKET:-$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)}"
 else

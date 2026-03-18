@@ -7,7 +7,7 @@ export interface PodmanConfig {
 	snapshotDir: string;
 
 	/**
-	 * Path to the `boilerhoused` runtime socket.
+	 * Path to the `boilerhouse-podmand` runtime socket.
 	 * @default DEFAULT_RUNTIME_SOCKET (platform-dependent, see @boilerhouse/core paths.ts)
 	 */
 	socketPath?: string;

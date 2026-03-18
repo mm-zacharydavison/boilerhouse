@@ -95,9 +95,9 @@ group- or world-readable, tenant secrets are exposed to any local process on the
 has whatever permissions Podman assigns (depends on the process umask). On permissive systems
 this could be `0666`, making the socket briefly world-accessible.
 
-**Fix:** Set `UMask=0117` in `deploy/boilerhoused.service`. With this umask, both the podman
+**Fix:** Set `UMask=0117` in `deploy/boilerhouse-podmand.service`. With this umask, both the podman
 socket and runtime socket are created with restrictive permissions natively. The podman socket
-is now root-only (0600) since `boilerhoused` manages podman as a child process. Only the
+is now root-only (0600) since `boilerhouse-podmand` manages podman as a child process. Only the
 runtime socket needs group access (0660).
 
 ---
@@ -124,7 +124,7 @@ This does not restrict CRIU's intended operations but caps what an exploit could
 
 ---
 
-### 6 — Privilege-separating proxy daemon (`boilerhoused`) ✅ Implemented
+### 6 — Privilege-separating proxy daemon (`boilerhouse-podmand`) ✅ Implemented
 
 **Risk addressed:** C1 — the API server has full access to the raw Podman socket (a root API
 with no per-operation restrictions). Any code in the API server process — including transitive
@@ -150,7 +150,7 @@ to the proxy's restricted socket instead.
 ```
 API Server (unprivileged)
   └─ /run/boilerhouse/runtime.sock  (660, boilerhouse group)
-       └─ boilerhoused (root, minimal capabilities)
+       └─ boilerhouse-podmand (root, minimal capabilities)
             └─ podman system service (child process)
                  └─ /run/boilerhouse/podman.sock  (600, root-only)
 ```
@@ -174,11 +174,11 @@ The proxy maintains its own container registry (in-memory or small SQLite). On `
 records the new container ID. `checkpoint` and `restore` refuse to operate on unknown IDs.
 This is ownership enforcement at the privilege boundary, not only in the application layer.
 
-**Implementation:** `apps/boilerhoused/` contains the daemon. It manages the `podman system
+**Implementation:** `apps/boilerhouse-podmand/` contains the daemon. It manages the `podman system
 service` as a child process (no separate systemd unit needed). The runtime package provides
 `ContainerBackend` interface with `DirectBackend` (direct podman) and `DaemonBackend`
 (HTTP-over-Unix-socket to daemon). `PodmanRuntime` selects backend via `config.daemonSocket`.
-Deployment: `deploy/boilerhoused.service`, `scripts/start-boilerhoused.sh`.
+Deployment: `deploy/boilerhouse-podmand.service`, `scripts/start-boilerhouse-podmand.sh`.
 
 ---
 
@@ -191,7 +191,7 @@ Deployment: `deploy/boilerhoused.service`, `scripts/start-boilerhoused.sh`.
 | 3 | Snapshot dir/file permissions           | Trivial | H1 — memory dump leaks  |
 | 4 | Systemd `UMask=0117` TOCTOU fix         | Trivial | M1 — socket race        |
 | 5 | Systemd capability bounding set         | Small   | M4 — unrestricted root  |
-| 6 | Proxy daemon (`boilerhoused`)            | Medium  | C1 — full root socket   |
+| 6 | Proxy daemon (`boilerhouse-podmand`)            | Medium  | C1 — full root socket   |
 
 Items 2–4 are one-liners or single-file changes with no schema impact. Item 1 requires a DB
 migration. All items are now implemented.

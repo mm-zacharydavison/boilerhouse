@@ -1,5 +1,5 @@
 #!/bin/bash
-# Removes all boilerhouse/* images via the boilerhoused daemon API.
+# Removes all boilerhouse/* images via the boilerhouse-podmand daemon API.
 # Usage: nuke-images.sh <socket-path> [true|false]
 #   socket-path: path to the daemon's Unix socket
 #   dry-run:     "true" to only list images (default: "false")

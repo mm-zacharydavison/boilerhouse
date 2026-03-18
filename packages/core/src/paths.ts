@@ -8,7 +8,7 @@
 const IS_MACOS = process.platform === "darwin";
 const HOME = process.env.HOME ?? "/tmp";
 
-/** Default path for the boilerhoused runtime socket. */
+/** Default path for the boilerhouse-podmand runtime socket. */
 export const DEFAULT_RUNTIME_SOCKET = IS_MACOS
 	? `${HOME}/.local/share/boilerhouse/runtime.sock`
 	: "/var/run/boilerhouse/runtime.sock";

@@ -11,7 +11,7 @@ import { enrichCheckpointError } from "./criu";
 export interface DaemonConfig {
 	/**
 	 * Path for the podman API socket.
-	 * When `managePodman` is true (default), boilerhoused spawns podman
+	 * When `managePodman` is true (default), boilerhouse-podmand spawns podman
 	 * and creates this socket. Otherwise it connects to an existing socket.
 	 *
 	 * @default (linux) "/var/run/boilerhouse/podman.sock".
@@ -27,7 +27,7 @@ export interface DaemonConfig {
 	/** Base directory for resolving workload Dockerfiles. */
 	workloadsDir?: string;
 	/**
-	 * When true, boilerhoused spawns and manages the `podman system service`
+	 * When true, boilerhouse-podmand spawns and manages the `podman system service`
 	 * child process. The podman socket is created with mode 0600 (root-only).
 	 * On stop, the podman process is killed.
 	 * @default true
@@ -94,7 +94,7 @@ async function startPodmanService(socketPath: string): Promise<Subprocess> {
 }
 
 /**
- * Creates and starts the boilerhoused daemon.
+ * Creates and starts the boilerhouse-podmand daemon.
  * Returns a handle with a `stop()` function.
  */
 export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => void }> {
@@ -153,7 +153,7 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 	// Recover existing managed containers from podman
 	try {
 		const res = await client.get(
-			'/libpod/containers/json?filters={"label":["managed-by=boilerhoused"]}',
+			'/libpod/containers/json?filters={"label":["managed-by=boilerhouse-podmand"]}',
 		);
 		const containers = res.body as Array<{ Id: string; Names?: string[] }>;
 		for (const c of containers) {
@@ -549,11 +549,11 @@ if (import.meta.main) {
 			managePodman: true,
 		});
 	} catch (err) {
-		console.error("Failed to start boilerhoused:", err instanceof Error ? err.message : err);
+		console.error("Failed to start boilerhouse-podmand:", err instanceof Error ? err.message : err);
 		process.exit(1);
 	}
 
-	console.log(`boilerhoused listening on ${listenSocketPath}`);
+	console.log(`boilerhouse-podmand listening on ${listenSocketPath}`);
 	console.log(`  podman socket: ${podmanSocketPath} (managed)`);
 	console.log(`  snapshot dir:  ${snapshotDir}`);
 

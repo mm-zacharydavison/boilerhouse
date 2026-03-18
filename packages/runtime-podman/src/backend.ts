@@ -31,7 +31,7 @@ export interface BackendInfo {
 /**
  * Abstraction over container lifecycle operations.
  *
- * Implemented by `DaemonBackend`, which talks to `boilerhoused` over a Unix socket.
+ * Implemented by `DaemonBackend`, which talks to `boilerhouse-podmand` over a Unix socket.
  */
 export interface ContainerBackend {
 	/** Fetch backend system information. */

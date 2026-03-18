@@ -39,15 +39,15 @@ deployments, enabled when the API is network-reachable.
 The runtime has a two-tier architecture:
 
 ```
-API Server (apps/api)  →  PodmanRuntime  →  DaemonBackend  →  boilerhoused (apps/boilerhoused)  →  PodmanClient  →  Podman API
+API Server (apps/api)  →  PodmanRuntime  →  DaemonBackend  →  boilerhouse-podmand (apps/boilerhouse-podmand)  →  PodmanClient  →  Podman API
 ```
 
 - **`PodmanRuntime`** (`packages/runtime-podman/src/runtime.ts`) builds `ContainerCreateSpec` and delegates to a `ContainerBackend`.
-- **`DaemonBackend`** (`packages/runtime-podman/src/daemon-backend.ts`) sends HTTP requests over Unix socket to `boilerhoused`.
-- **`boilerhoused`** (`apps/boilerhoused/src/main.ts`) validates specs via `validateContainerSpec()` and calls `PodmanClient` to talk to Podman's Libpod API.
+- **`DaemonBackend`** (`packages/runtime-podman/src/daemon-backend.ts`) sends HTTP requests over Unix socket to `boilerhouse-podmand`.
+- **`boilerhouse-podmand`** (`apps/boilerhouse-podmand/src/main.ts`) validates specs via `validateContainerSpec()` and calls `PodmanClient` to talk to Podman's Libpod API.
 - **`PodmanClient`** (`packages/runtime-podman/src/client.ts`) builds the raw Libpod JSON body via `buildCreateBody()`.
 
-Security enforcement happens at **two layers**: `PodmanRuntime.create()` sets security fields on the spec, and `boilerhoused.validateContainerSpec()` enforces them as policy.
+Security enforcement happens at **two layers**: `PodmanRuntime.create()` sets security fields on the spec, and `boilerhouse-podmand.validateContainerSpec()` enforces them as policy.
 
 ---
 
@@ -272,10 +272,10 @@ Methods flow through the full stack:
 - Add `createNetwork(name, subnet)` and `removeNetwork(name)` to interface
 
 **`DaemonBackend`** (`packages/runtime-podman/src/daemon-backend.ts`):
-- Add `createNetwork()` → `POST /networks` to boilerhoused
-- Add `removeNetwork()` → `DELETE /networks/{name}` to boilerhoused
+- Add `createNetwork()` → `POST /networks` to boilerhouse-podmand
+- Add `removeNetwork()` → `DELETE /networks/{name}` to boilerhouse-podmand
 
-**`boilerhoused`** (`apps/boilerhoused/src/main.ts`):
+**`boilerhouse-podmand`** (`apps/boilerhouse-podmand/src/main.ts`):
 - Add `POST /networks` handler → calls `client.createNetwork()`
 - Add `DELETE /networks/:name` handler → calls `client.removeNetwork()`
 - Validate network spec (name must match `bh-*` pattern)
@@ -394,7 +394,7 @@ Read-only root works with existing `overlay_dirs` tmpfs mounts — writable dirs
 
 #### Enforce in daemon policy
 
-`apps/boilerhoused/src/validate.ts`:
+`apps/boilerhouse-podmand/src/validate.ts`:
 
 ```typescript
 // Force hardening fields regardless of what the caller sent
@@ -411,7 +411,7 @@ New file `deploy/seccomp.json` — whitelist of ~300 syscalls blocking `mount`, 
 `bpf`, `kexec_load`, `init_module`, `open_by_handle_at`, etc.
 
 Not configured in the spec by default (Podman's built-in default is fine). The deploy
-script installs the custom profile and `boilerhoused` can be configured to apply it
+script installs the custom profile and `boilerhouse-podmand` can be configured to apply it
 via config.
 
 ---
@@ -443,7 +443,7 @@ spec.user = workload.entrypoint?.user ?? "65534:65534";
 
 #### Daemon policy
 
-`apps/boilerhoused/src/validate.ts`:
+`apps/boilerhouse-podmand/src/validate.ts`:
 ```typescript
 sanitized.user = spec.user ?? "65534:65534";
 ```
@@ -493,7 +493,7 @@ Tests are written first, then features implemented to make them pass.
 - `create() sets read_only_filesystem: true`
 - `create() sets no_new_privileges: true`
 
-`apps/boilerhoused/src/validate.test.ts`:
+`apps/boilerhouse-podmand/src/validate.test.ts`:
 - Policy enforces user default
 - Policy enforces cap_drop/cap_add
 - Policy enforces read_only_filesystem
@@ -574,9 +574,9 @@ Tests are written first, then features implemented to make them pass.
 | `packages/runtime-podman/src/runtime.test.ts`          | Tests for hardening + networks              |
 | `packages/runtime-podman/src/runtime.integration.test.ts` | Network isolation integration tests      |
 | `packages/db/src/schema.ts`                            | Add `apiKeys` table                         |
-| `apps/boilerhoused/src/main.ts`                        | Network endpoints                           |
-| `apps/boilerhoused/src/validate.ts`                    | Enforce hardening as policy                 |
-| `apps/boilerhoused/src/validate.test.ts`               | Policy enforcement tests                    |
+| `apps/boilerhouse-podmand/src/main.ts`                        | Network endpoints                           |
+| `apps/boilerhouse-podmand/src/validate.ts`                    | Enforce hardening as policy                 |
+| `apps/boilerhouse-podmand/src/validate.test.ts`               | Policy enforcement tests                    |
 | `apps/api/src/app.ts`                                  | Wire auth middleware + routes               |
 | `apps/api/src/routes/deps.ts`                          | Add `authEnabled?`                          |
 | `apps/api/src/routes/ws.ts`                            | WS auth + event filtering                   |

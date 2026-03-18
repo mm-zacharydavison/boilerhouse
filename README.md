@@ -19,7 +19,7 @@ to provide instant, fork-style tenant provisioning from golden snapshots.
 The setup script installs podman, crun, and CRIU, then configures podman to use crun:
 
 ```bash
-sudo scripts/setup-boilerhoused.sh
+sudo scripts/setup-boilerhouse-podmand.sh
 ```
 
 Or install manually:
@@ -57,24 +57,24 @@ If CRIU shows as disabled, check that:
 - You're running podman as root (rootful mode) — rootless podman does not support CRIU
 - The OCI runtime is `crun`, not `runc` (`runc` has poor CRIU support)
 
-### 3. Start the boilerhoused runtime daemon
+### 3. Start the boilerhouse-podmand runtime daemon
 
-CRIU checkpoint/restore requires rootful podman. `boilerhoused` manages the podman process
+CRIU checkpoint/restore requires rootful podman. `boilerhouse-podmand` manages the podman process
 internally and exposes a restricted API on `/var/run/boilerhouse/runtime.sock`.
 
 **Development:**
 
 ```bash
-sudo scripts/start-boilerhoused.sh
+sudo scripts/start-boilerhouse-podmand.sh
 ```
 
 **Production (systemd):**
 
 ```bash
 # Install the service (replace <group> with the API server's group)
-sudo cp deploy/boilerhoused.service /etc/systemd/system/boilerhoused@.service
+sudo cp deploy/boilerhouse-podmand.service /etc/systemd/system/boilerhouse-podmand@.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now boilerhoused@<group>.service
+sudo systemctl enable --now boilerhouse-podmand@<group>.service
 ```
 
 **Verify the daemon is running:**

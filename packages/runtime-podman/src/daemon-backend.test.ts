@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DaemonBackend } from "./daemon-backend";
 
 /**
- * Creates a mock boilerhoused daemon on a temp Unix socket.
+ * Creates a mock boilerhouse-podmand daemon on a temp Unix socket.
  */
 function createMockDaemon(
 	handler: (

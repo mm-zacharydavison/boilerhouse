@@ -293,10 +293,10 @@ containers that PodmanRuntime creates dynamically (outside compose).
 
 ### Phase 7: Deployment scripts and documentation
 
-**Update `scripts/setup-boilerhoused.sh`:**
+**Update `scripts/setup-boilerhouse-podmand.sh`:**
 - Add network creation at the end: `podman network create boilerhouse 2>/dev/null || true`
 
-**Update `deploy/boilerhoused.service`:**
+**Update `deploy/boilerhouse-podmand.service`:**
 - Add network creation to `ExecStartPost`
 
 **Create `scripts/deploy.sh`** (with `--dry-run`):

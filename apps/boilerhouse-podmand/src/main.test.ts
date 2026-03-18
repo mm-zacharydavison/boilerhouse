@@ -15,7 +15,7 @@ function createMockPodman(
 		body: Buffer,
 	) => { status: number; body?: unknown; rawBody?: Buffer },
 ): { socketPath: string; server: http.Server; close: () => Promise<void> } {
-	const tmpDir = mkdtempSync(join(tmpdir(), "boilerhoused-test-podman-"));
+	const tmpDir = mkdtempSync(join(tmpdir(), "boilerhouse-podmand-test-podman-"));
 	const socketPath = join(tmpDir, "podman.sock");
 
 	const server = http.createServer((req, res) => {
@@ -95,7 +95,7 @@ async function request(
 	});
 }
 
-describe("boilerhoused", () => {
+describe("boilerhouse-podmand", () => {
 	let mockPodman: ReturnType<typeof createMockPodman>;
 	let daemonSocketPath: string;
 	let daemonTmpDir: string;
@@ -183,7 +183,7 @@ describe("boilerhoused", () => {
 			return { status: 404, body: { message: `unhandled: ${req.method} ${url}` } };
 		});
 
-		daemonTmpDir = mkdtempSync(join(tmpdir(), "boilerhoused-test-"));
+		daemonTmpDir = mkdtempSync(join(tmpdir(), "boilerhouse-podmand-test-"));
 		daemonSocketPath = join(daemonTmpDir, "runtime.sock");
 
 		const daemon = await createDaemon({

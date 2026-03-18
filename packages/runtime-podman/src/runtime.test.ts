@@ -11,7 +11,7 @@ import type { ContainerCreateSpec } from "./client";
 
 /**
  * Creates a mock HTTP server on a temporary Unix socket that speaks
- * the boilerhoused daemon API.
+ * the boilerhouse-podmand daemon API.
  */
 function createMockDaemon(
 	handler: (

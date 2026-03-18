@@ -4,12 +4,12 @@ import type { ContainerCreateSpec, ContainerInspect, ExecResult } from "./client
 import { PodmanRuntimeError } from "./errors";
 
 export interface DaemonBackendConfig {
-	/** Path to the boilerhoused Unix socket. */
+	/** Path to the boilerhouse-podmand Unix socket. */
 	socketPath: string;
 }
 
 /**
- * HTTP-over-Unix-socket client that talks to `boilerhoused`.
+ * HTTP-over-Unix-socket client that talks to `boilerhouse-podmand`.
  * Same communication pattern as `PodmanClient` but speaks the daemon's API.
  */
 export class DaemonBackend implements ContainerBackend {

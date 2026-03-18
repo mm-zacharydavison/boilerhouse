@@ -89,7 +89,7 @@ if (secretKey) {
 
 let runtime: Runtime;
 if (runtimeType === "podman") {
-	log.info({ socketPath }, "Using boilerhoused daemon backend");
+	log.info({ socketPath }, "Using boilerhouse-podmand daemon backend");
 	runtime = new PodmanRuntime({
 		snapshotDir,
 		socketPath,

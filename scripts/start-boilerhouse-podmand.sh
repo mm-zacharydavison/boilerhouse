@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts boilerhoused for development.
-# boilerhoused manages the podman daemon internally — no separate podman
+# Starts boilerhouse-podmand for development.
+# boilerhouse-podmand manages the podman daemon internally — no separate podman
 # script is needed.
 #
 # Usage:
-#   Linux:  sudo scripts/start-boilerhoused.sh
-#   macOS:  scripts/start-boilerhoused.sh  (no sudo — podman machine runs as user)
+#   Linux:  sudo scripts/start-boilerhouse-podmand.sh
+#   macOS:  scripts/start-boilerhouse-podmand.sh  (no sudo — podman machine runs as user)
 #
 # Flags:
 #   --dry-run     Print commands without executing
@@ -99,10 +99,10 @@ echo "Creating directories..."
 run mkdir -p "$(dirname "$LISTEN_SOCKET")" "$SNAPSHOT_DIR"
 run chmod 700 "$SNAPSHOT_DIR"
 
-echo "Starting boilerhoused (manages podman internally)..."
+echo "Starting boilerhouse-podmand (manages podman internally)..."
 if [ "$DRY_RUN" = true ]; then
 	echo "[dry-run] umask 0117"
-	echo "[dry-run] LISTEN_SOCKET=$LISTEN_SOCKET SNAPSHOT_DIR=$SNAPSHOT_DIR $BUN apps/boilerhoused/src/main.ts &"
+	echo "[dry-run] LISTEN_SOCKET=$LISTEN_SOCKET SNAPSHOT_DIR=$SNAPSHOT_DIR $BUN apps/boilerhouse-podmand/src/main.ts &"
 else
 	# Restrictive umask for socket creation — only needed on Linux where
 	# the daemon runs as root. On macOS the socket perms are set after creation.
@@ -117,22 +117,22 @@ else
 		export PODMAN_SOCKET
 	fi
 
-	# Start boilerhoused — keep stderr visible so startup errors are shown
+	# Start boilerhouse-podmand — keep stderr visible so startup errors are shown
 	if [ "$BACKGROUND" = true ]; then
-		"$BUN" apps/boilerhoused/src/main.ts >/dev/null &
+		"$BUN" apps/boilerhouse-podmand/src/main.ts >/dev/null &
 	else
-		"$BUN" apps/boilerhoused/src/main.ts &
+		"$BUN" apps/boilerhouse-podmand/src/main.ts &
 	fi
 	DAEMON_PID=$!
 
-	# Wait for runtime socket to appear (boilerhoused needs to start podman first)
+	# Wait for runtime socket to appear (boilerhouse-podmand needs to start podman first)
 	for _ in $(seq 1 100); do
 		if [ -S "$LISTEN_SOCKET" ]; then
 			break
 		fi
 		# Check if process already died
 		if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-			echo "Error: boilerhoused exited before creating socket." >&2
+			echo "Error: boilerhouse-podmand exited before creating socket." >&2
 			wait "$DAEMON_PID" 2>/dev/null || true
 			exit 1
 		fi
@@ -151,7 +151,7 @@ else
 	fi
 	chmod 660 "$LISTEN_SOCKET"
 
-	echo "boilerhoused listening on $LISTEN_SOCKET (PID $DAEMON_PID)"
+	echo "boilerhouse-podmand listening on $LISTEN_SOCKET (PID $DAEMON_PID)"
 	if [ -n "$PODMAN_SOCKET" ]; then
 		echo "  podman socket: $PODMAN_SOCKET (managed, 0600)"
 	else

@@ -1,12 +1,12 @@
 #!/bin/bash
 # kadai:name Start/Restart Daemon
 # kadai:emoji 🔄
-# kadai:description Start or restart the boilerhoused runtime daemon (manages podman internally)
+# kadai:description Start or restart the boilerhouse-podmand runtime daemon (manages podman internally)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-DAEMON_SCRIPT="$SCRIPT_DIR/scripts/start-boilerhoused.sh"
+DAEMON_SCRIPT="$SCRIPT_DIR/scripts/start-boilerhouse-podmand.sh"
 
 IS_MACOS=false
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -65,7 +65,7 @@ run_privileged() {
 }
 
 # Kill any existing processes on our sockets.
-# boilerhoused manages podman as a child, but if it died uncleanly
+# boilerhouse-podmand manages podman as a child, but if it died uncleanly
 # the podman process may still be lingering on its socket.
 for sock in "${SOCKETS_TO_CHECK[@]}"; do
   if [ -S "$sock" ]; then
@@ -82,7 +82,7 @@ for sock in "${SOCKETS_TO_CHECK[@]}"; do
   fi
 done
 
-echo "Starting boilerhoused..."
+echo "Starting boilerhouse-podmand..."
 if [ "$IS_MACOS" = true ]; then
   "$DAEMON_SCRIPT" --background
 else

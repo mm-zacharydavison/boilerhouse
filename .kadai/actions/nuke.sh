@@ -39,7 +39,7 @@ nuke "$DB_PATH-shm"
 # Data directory (snapshots + tenant overlays)
 nuke "$STORAGE_PATH"
 
-# Podman images managed by boilerhoused
+# Podman images managed by boilerhouse-podmand
 if [[ "$(uname -s)" == "Darwin" ]]; then
   RUNTIME_SOCKET="${RUNTIME_SOCKET:-$HOME/.local/share/boilerhouse/runtime.sock}"
 else

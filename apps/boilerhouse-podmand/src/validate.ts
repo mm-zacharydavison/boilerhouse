@@ -47,7 +47,7 @@ export function validateContainerSpec(spec: ContainerCreateSpec): ContainerCreat
 		privileged: false,
 		labels: {
 			...spec.labels,
-			"managed-by": "boilerhoused",
+			"managed-by": "boilerhouse-podmand",
 		},
 	};
 }

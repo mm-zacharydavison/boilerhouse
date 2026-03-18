@@ -10,7 +10,7 @@ Environment=PODMAN_SOCKET=/run/boilerhouse/podman.sock
 Environment=LISTEN_SOCKET=/run/boilerhouse/runtime.sock
 Environment=SNAPSHOT_DIR=/var/lib/boilerhouse/snapshots
 ExecStartPre=/bin/mkdir -p /run/boilerhouse /var/lib/boilerhouse/snapshots
-ExecStart=/usr/local/bin/bun /opt/boilerhouse/apps/boilerhoused/src/main.ts
+ExecStart=/usr/local/bin/bun /opt/boilerhouse/apps/boilerhouse-podmand/src/main.ts
 ExecStartPost=/bin/sh -c 'until [ -S /run/boilerhouse/runtime.sock ]; do sleep 0.1; done; chgrp %i /run/boilerhouse/runtime.sock; chmod 660 /run/boilerhouse/runtime.sock'
 Restart=on-failure
 RestartSec=5
