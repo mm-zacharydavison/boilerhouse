@@ -5,7 +5,7 @@ import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer 
 for (const rt of availableRuntimes()) {
 	const timeouts = E2E_TIMEOUTS[rt.name as keyof typeof E2E_TIMEOUTS] ?? E2E_TIMEOUTS.fake;
 
-	describe.skipIf(!rt.capabilities.concurrentRestore)(`[${rt.name}] concurrent tenants`, () => {
+	describe(`[${rt.name}] concurrent tenants`, () => {
 		let server: E2EServer;
 		let workloadName: string;
 

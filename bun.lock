@@ -17,6 +17,7 @@
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/db": "workspace:*",
         "@boilerhouse/o11y": "workspace:*",
+        "@boilerhouse/runtime-kubernetes": "workspace:*",
         "@boilerhouse/runtime-podman": "workspace:*",
         "@boilerhouse/triggers": "workspace:*",
         "drizzle-orm": "0.44.7",
@@ -84,6 +85,13 @@
         "pino-pretty": "^13.0.0",
       },
     },
+    "packages/runtime-kubernetes": {
+      "name": "@boilerhouse/runtime-kubernetes",
+      "version": "0.0.1",
+      "dependencies": {
+        "@boilerhouse/core": "workspace:*",
+      },
+    },
     "packages/runtime-podman": {
       "name": "@boilerhouse/runtime-podman",
       "version": "0.0.1",
@@ -121,6 +129,8 @@
     "@boilerhouse/db": ["@boilerhouse/db@workspace:packages/db"],
 
     "@boilerhouse/o11y": ["@boilerhouse/o11y@workspace:packages/o11y"],
+
+    "@boilerhouse/runtime-kubernetes": ["@boilerhouse/runtime-kubernetes@workspace:packages/runtime-kubernetes"],
 
     "@boilerhouse/runtime-podman": ["@boilerhouse/runtime-podman@workspace:packages/runtime-podman"],
 

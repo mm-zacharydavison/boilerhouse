@@ -156,16 +156,56 @@ const podmanEntry: RuntimeEntry = {
 	},
 };
 
+const kubernetesEntry: RuntimeEntry = {
+	name: "kubernetes",
+	capabilities: {
+		snapshot: false,
+		exec: true,
+		networking: true,
+		concurrentRestore: false,
+	},
+	workloadFixtures: {
+		minimal: fixturePath("workload-k8s-minimal.workload.ts"),
+		httpserver: fixturePath("workload-k8s-httpserver.workload.ts"),
+		openclaw: fixturePath("workload-k8s-openclaw.workload.ts"),
+		wsecho: fixturePath("workload-k8s-wsecho.workload.ts"),
+	},
+	brokenWorkloadFixture: fixturePath("workload-k8s-broken.workload.ts"),
+	verifyCleanup: async () => {
+		const result = Bun.spawnSync([
+			"kubectl", "--context", "boilerhouse-test",
+			"-n", "boilerhouse",
+			"get", "pods",
+			"-l", "boilerhouse.dev/managed=true",
+			"-o", "name",
+		]);
+		const output = result.stdout.toString().trim();
+		if (output.length > 0) {
+			throw new Error(`Orphaned K8s pods found: ${output}`);
+		}
+	},
+	isInstanceRunning: async (instanceId: string) => {
+		const result = Bun.spawnSync([
+			"kubectl", "--context", "boilerhouse-test",
+			"-n", "boilerhouse",
+			"get", "pod", instanceId,
+			"-o", "jsonpath={.status.phase}",
+		]);
+		return result.stdout.toString().trim() === "Running";
+	},
+};
+
 const ALL_ENTRIES: Record<string, RuntimeEntry> = {
 	fake: fakeEntry,
 	docker: dockerEntry,
 	podman: podmanEntry,
+	kubernetes: kubernetesEntry,
 };
 
 /**
  * Runtimes that have a working Runtime implementation wired into startE2EServer.
  */
-const IMPLEMENTED_RUNTIMES = new Set(["fake", "podman"]);
+const IMPLEMENTED_RUNTIMES = new Set(["fake", "podman", "kubernetes"]);
 
 /**
  * Returns runtime entries filtered to only those available on this system.
@@ -205,4 +245,5 @@ export const E2E_TIMEOUTS = {
 	fake: { operation: 2_000, connect: 1_000 },
 	docker: { operation: 30_000, connect: 10_000 },
 	podman: { operation: 60_000, connect: 10_000 },
+	kubernetes: { operation: 60_000, connect: 10_000 },
 } as const;

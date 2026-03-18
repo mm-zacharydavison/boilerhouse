@@ -20,7 +20,8 @@ describe("node types", () => {
 
 	test("runtime types are exhaustive", () => {
 		expect(RUNTIME_TYPES).toContain("podman");
-		expect(RUNTIME_TYPES).toHaveLength(1);
+		expect(RUNTIME_TYPES).toContain("kubernetes");
+		expect(RUNTIME_TYPES).toHaveLength(2);
 	});
 
 	describe("capacity validation", () => {

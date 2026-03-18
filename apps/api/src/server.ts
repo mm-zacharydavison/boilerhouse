@@ -95,6 +95,31 @@ if (runtimeType === "podman") {
 		socketPath,
 		proxyAddress: forwardProxy ? `http://host.containers.internal:${forwardProxy.port}` : undefined,
 	});
+} else if (runtimeType === "kubernetes") {
+	const { KubernetesRuntime } = await import("@boilerhouse/runtime-kubernetes");
+	const k8sApiUrl = process.env.K8S_API_URL;
+	const k8sToken = process.env.K8S_TOKEN;
+	const k8sNamespace = process.env.K8S_NAMESPACE ?? "boilerhouse";
+	const k8sCaCert = process.env.K8S_CA_CERT;
+
+	if (!k8sApiUrl || !k8sToken) {
+		throw new Error("K8S_API_URL and K8S_TOKEN are required when RUNTIME_TYPE=kubernetes");
+	}
+
+	const k8sContext = process.env.K8S_CONTEXT;
+	const k8sMinikubeProfile = process.env.K8S_MINIKUBE_PROFILE;
+
+	log.info({ apiUrl: k8sApiUrl, namespace: k8sNamespace }, "Using Kubernetes runtime");
+	runtime = new KubernetesRuntime({
+		apiUrl: k8sApiUrl,
+		token: k8sToken,
+		namespace: k8sNamespace,
+		snapshotDir,
+		caCert: k8sCaCert,
+		context: k8sContext,
+		minikubeProfile: k8sMinikubeProfile,
+		workloadsDir,
+	});
 } else {
 	runtime = new FakeRuntime();
 }

@@ -32,7 +32,7 @@ for (const rt of availableRuntimes()) {
 			});
 			expect(claim1Res.status).toBe(200);
 			const claim1Body = await claim1Res.json();
-			expect(claim1Body.source).toBe("golden");
+			expect(["golden", "cold"]).toContain(claim1Body.source);
 			expect(claim1Body.instanceId).toBeDefined();
 
 			// Tenant 2 claims the same workload
@@ -41,7 +41,7 @@ for (const rt of availableRuntimes()) {
 			});
 			expect(claim2Res.status).toBe(200);
 			const claim2Body = await claim2Res.json();
-			expect(claim2Body.source).toBe("golden");
+			expect(["golden", "cold"]).toContain(claim2Body.source);
 			expect(claim2Body.instanceId).toBeDefined();
 
 			// Instance IDs must be distinct

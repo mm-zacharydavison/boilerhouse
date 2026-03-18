@@ -28,14 +28,16 @@ for (const rt of availableRuntimes()) {
 			if (server) await server.cleanup();
 		});
 
-		test("full claim/release cycle with snapshot restore", async () => {
-			// Step 2: Verify golden snapshot exists
-			const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
-			expect(snapshotsRes.status).toBe(200);
-			const snapshotsList = await snapshotsRes.json();
-			expect(snapshotsList.length).toBeGreaterThanOrEqual(1);
-			const goldenSnapshot = snapshotsList.find((s: { type: string }) => s.type === "golden");
-			expect(goldenSnapshot).toBeDefined();
+		test("full claim/release cycle with re-claim", async () => {
+			// Step 2: Verify golden snapshot exists (only for snapshot-capable runtimes)
+			if (rt.capabilities.snapshot) {
+				const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
+				expect(snapshotsRes.status).toBe(200);
+				const snapshotsList = await snapshotsRes.json();
+				expect(snapshotsList.length).toBeGreaterThanOrEqual(1);
+				const goldenSnapshot = snapshotsList.find((s: { type: string }) => s.type === "golden");
+				expect(goldenSnapshot).toBeDefined();
+			}
 
 			// Step 3: First claim
 			const claim1Res = await api(server, "POST", "/api/v1/tenants/e2e-tenant-1/claim", {
@@ -43,7 +45,7 @@ for (const rt of availableRuntimes()) {
 			});
 			expect(claim1Res.status).toBe(200);
 			const claim1Body = await claim1Res.json();
-			expect(claim1Body.source).toBe("golden");
+			expect(["golden", "cold"]).toContain(claim1Body.source);
 			expect(claim1Body.endpoint).toBeDefined();
 			const firstInstanceId = claim1Body.instanceId as string;
 
@@ -84,7 +86,7 @@ for (const rt of availableRuntimes()) {
 				expect(tenant2Body.lastSnapshotId).not.toBeNull();
 			}
 
-			// Step 10: Second claim — should restore from snapshot if capable
+			// Step 10: Second claim — snapshot restore if capable, cold boot otherwise
 			const claim2Res = await api(server, "POST", "/api/v1/tenants/e2e-tenant-1/claim", {
 				workload: workloadName,
 			});
@@ -93,6 +95,8 @@ for (const rt of availableRuntimes()) {
 
 			if (rt.capabilities.snapshot) {
 				expect(claim2Body.source).toBe("snapshot");
+			} else {
+				expect(["golden", "cold"]).toContain(claim2Body.source);
 			}
 			expect(claim2Body.instanceId).not.toBe(firstInstanceId);
 

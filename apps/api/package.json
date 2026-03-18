@@ -13,6 +13,7 @@
 		"@boilerhouse/db": "workspace:*",
 		"@boilerhouse/o11y": "workspace:*",
 		"@boilerhouse/runtime-podman": "workspace:*",
+		"@boilerhouse/runtime-kubernetes": "workspace:*",
 		"@boilerhouse/triggers": "workspace:*",
 		"drizzle-orm": "0.44.7",
 		"elysia": "^1.4.25"
