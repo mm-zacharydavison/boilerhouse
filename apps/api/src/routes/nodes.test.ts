@@ -34,7 +34,7 @@ describe("GET /api/v1/nodes", () => {
 			.insert(nodes)
 			.values({
 				nodeId: secondNodeId,
-				runtimeType: "vz",
+				runtimeType: "podman",
 				capacity: { vcpus: 4, memoryMb: 8192, diskGb: 50 },
 				status: "online",
 				lastHeartbeat: new Date(),

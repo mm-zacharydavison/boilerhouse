@@ -68,7 +68,7 @@ describe("initDatabase", () => {
 		db.insert(nodes)
 			.values({
 				nodeId: "node-file" as NodeId,
-				runtimeType: "vz",
+				runtimeType: "podman",
 				capacity: { vcpus: 8, memoryMb: 2048, diskGb: 20 } satisfies NodeCapacity,
 				lastHeartbeat: now,
 				createdAt: now,
@@ -79,6 +79,6 @@ describe("initDatabase", () => {
 
 		const rows = db.select().from(nodes).all();
 		expect(rows).toHaveLength(1);
-		expect(rows[0]!.runtimeType).toBe("vz");
+		expect(rows[0]!.runtimeType).toBe("podman");
 	});
 });
