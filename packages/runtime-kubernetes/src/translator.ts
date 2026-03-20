@@ -53,6 +53,12 @@ export function workloadToPod(
 	const container: K8sContainer = {
 		name: "main",
 		image: imageRef,
+		securityContext: {
+			capabilities: {
+				drop: ["NET_RAW", "MKNOD", "AUDIT_WRITE"],
+			},
+			allowPrivilegeEscalation: false,
+		},
 	};
 
 	// Resources

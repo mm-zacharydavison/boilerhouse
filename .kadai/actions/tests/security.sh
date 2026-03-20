@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 
 # Check nuclei is installed, offer to install if missing
 if ! command -v nuclei &>/dev/null; then

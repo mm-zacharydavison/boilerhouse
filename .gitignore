@@ -10,3 +10,4 @@ dist/
 *.db-wal
 *.db-shm
 data/
+tests/security/container-breakout/.cache/

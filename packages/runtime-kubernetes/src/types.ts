@@ -92,6 +92,7 @@ export interface K8sContainer {
 	readinessProbe?: K8sProbe;
 	workingDir?: string;
 	volumeMounts?: Array<{ name: string; mountPath: string }>;
+	securityContext?: K8sSecurityContext;
 }
 
 export interface K8sProbe {
@@ -106,6 +107,14 @@ export interface K8sVolume {
 	name: string;
 	emptyDir?: { sizeLimit?: string };
 	configMap?: { name: string };
+}
+
+export interface K8sSecurityContext {
+	capabilities?: {
+		drop?: string[];
+		add?: string[];
+	};
+	allowPrivilegeEscalation?: boolean;
 }
 
 export interface K8sPodSpec {
