@@ -115,7 +115,7 @@ export class TenantManager {
 			return this.claimViaGolden(tenantId, workloadId, tenantRow, start);
 		}
 
-		return this.claimViaColdBoot(tenantId, workloadId, start);
+		return this.claimViaColdBoot(tenantId, workloadId, tenantRow, start);
 	}
 
 	/** Golden snapshot claim path (steps 3–4): overlay restore or fresh golden. */
@@ -137,7 +137,9 @@ export class TenantManager {
 			}
 
 			this.log?.info({ tenantId, workloadId, source: "cold+data", snapshotId: goldenRef.id }, "Claiming via golden + data overlay");
-			return this.restoreAndClaim(goldenRef, tenantId, workloadId, "cold+data", start);
+			const result = await this.restoreAndClaim(goldenRef, tenantId, workloadId, "cold+data", start);
+			await this.instanceManager.injectOverlay(result.instanceId, overlayPath);
+			return result;
 		}
 
 		// 4. Fresh from golden
@@ -154,6 +156,7 @@ export class TenantManager {
 	private async claimViaColdBoot(
 		tenantId: TenantId,
 		workloadId: WorkloadId,
+		tenantRow: { tenantId: TenantId } | undefined,
 		start: number,
 	): Promise<ClaimResult> {
 		const workloadRow = this.db
@@ -166,7 +169,13 @@ export class TenantManager {
 			throw new Error(`Workload not found: ${workloadId}`);
 		}
 
-		this.log?.info({ tenantId, workloadId, source: "cold" }, "Claiming via cold boot");
+		// Check for data overlay (cold boot + data path)
+		const overlayPath = tenantRow
+			? this.tenantDataStore.restoreOverlay(tenantId)
+			: null;
+
+		const source: ClaimSource = overlayPath ? "cold+data" : "cold";
+		this.log?.info({ tenantId, workloadId, source }, `Claiming via ${source}`);
 
 		const handle = await this.instanceManager.create(
 			workloadId,
@@ -177,17 +186,21 @@ export class TenantManager {
 		this.upsertTenant(tenantId, workloadId, handle.instanceId);
 		this.updateInstanceClaimed(handle.instanceId);
 
+		if (overlayPath) {
+			await this.instanceManager.injectOverlay(handle.instanceId, overlayPath);
+		}
+
 		const endpoint = await this.safeGetEndpoint(handle);
 		const latencyMs = performance.now() - start;
 
-		this.logClaim(tenantId, handle.instanceId, workloadId, "cold");
+		this.logClaim(tenantId, handle.instanceId, workloadId, source);
 		this.startIdleWatch(handle.instanceId, workloadId);
 
 		return {
 			tenantId,
 			instanceId: handle.instanceId,
 			endpoint,
-			source: "cold",
+			source,
 			latencyMs,
 		};
 	}
@@ -228,6 +241,17 @@ export class TenantManager {
 			.get();
 
 		const idleAction = workloadRow?.config?.idle?.action ?? "hibernate";
+
+		// Save overlay data from the running container before hibernate/destroy
+		const workloadConfig = workloadRow?.config as Workload | undefined;
+		const overlayDirs = workloadConfig?.filesystem?.overlay_dirs;
+		if (overlayDirs?.length) {
+			const overlayData = await this.instanceManager.extractOverlay(instanceId, overlayDirs);
+			if (overlayData) {
+				this.tenantDataStore.saveOverlayBuffer(tenantId, tenantRow.workloadId, overlayData);
+				this.log?.info({ tenantId, workloadId: tenantRow.workloadId }, "Saved overlay data for tenant");
+			}
+		}
 
 		if (idleAction === "hibernate") {
 			await this.instanceManager.hibernate(instanceId);

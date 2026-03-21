@@ -154,7 +154,7 @@ describe("TenantManager", () => {
 
 			// Save an overlay file
 			const overlayDir = mkdtempSync(join(tmpdir(), "overlay-src-"));
-			const overlayPath = join(overlayDir, "overlay.ext4");
+			const overlayPath = join(overlayDir, "overlay.tar.gz");
 			writeFileSync(overlayPath, "fake-data");
 			tenantDataStore.saveOverlay(tenantId, workloadId, overlayPath);
 

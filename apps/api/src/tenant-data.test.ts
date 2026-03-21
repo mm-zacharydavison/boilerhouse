@@ -78,19 +78,19 @@ beforeEach(() => {
 
 describe("TenantDataStore", () => {
 	describe("saveOverlay()", () => {
-		test("copies overlay file to {storagePath}/{tenantId}/{workloadId}/overlay.ext4", () => {
-			const srcPath = join(overlaySourceDir, "overlay.ext4");
+		test("copies overlay archive to {storagePath}/{tenantId}/{workloadId}/overlay.tar.gz", () => {
+			const srcPath = join(overlaySourceDir, "overlay.tar.gz");
 			writeFileSync(srcPath, "fake-overlay-data");
 
 			store.saveOverlay(tenantId, workloadId, srcPath);
 
-			const destPath = join(storagePath, tenantId, workloadId, "overlay.ext4");
+			const destPath = join(storagePath, tenantId, workloadId, "overlay.tar.gz");
 			expect(existsSync(destPath)).toBe(true);
 			expect(readFileSync(destPath, "utf-8")).toBe("fake-overlay-data");
 		});
 
 		test("records dataOverlayRef on tenant row", () => {
-			const srcPath = join(overlaySourceDir, "overlay.ext4");
+			const srcPath = join(overlaySourceDir, "overlay.tar.gz");
 			writeFileSync(srcPath, "fake-overlay-data");
 
 			store.saveOverlay(tenantId, workloadId, srcPath);
@@ -101,7 +101,7 @@ describe("TenantDataStore", () => {
 				.where(eq(tenants.tenantId, tenantId))
 				.get();
 
-			const expectedPath = join(storagePath, tenantId, workloadId, "overlay.ext4");
+			const expectedPath = join(storagePath, tenantId, workloadId, "overlay.tar.gz");
 			expect(row!.dataOverlayRef).toBe(expectedPath);
 		});
 
@@ -114,20 +114,20 @@ describe("TenantDataStore", () => {
 			writeFileSync(srcPath2, "second-version");
 			store.saveOverlay(tenantId, workloadId, srcPath2);
 
-			const destPath = join(storagePath, tenantId, workloadId, "overlay.ext4");
+			const destPath = join(storagePath, tenantId, workloadId, "overlay.tar.gz");
 			expect(readFileSync(destPath, "utf-8")).toBe("second-version");
 		});
 	});
 
 	describe("restoreOverlay()", () => {
 		test("returns the stored path when overlay exists", () => {
-			const srcPath = join(overlaySourceDir, "overlay.ext4");
+			const srcPath = join(overlaySourceDir, "overlay.tar.gz");
 			writeFileSync(srcPath, "fake-overlay-data");
 			store.saveOverlay(tenantId, workloadId, srcPath);
 
 			const result = store.restoreOverlay(tenantId);
 
-			const expectedPath = join(storagePath, tenantId, workloadId, "overlay.ext4");
+			const expectedPath = join(storagePath, tenantId, workloadId, "overlay.tar.gz");
 			expect(result).toBe(expectedPath);
 		});
 

@@ -1,4 +1,4 @@
-import { mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { mkdirSync, copyFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { TenantId, WorkloadId } from "@boilerhouse/core";
@@ -12,15 +12,33 @@ export class TenantDataStore {
 	) {}
 
 	/**
-	 * Copies an overlay file into tenant storage and records the reference
+	 * Copies an overlay archive into tenant storage and records the reference
 	 * on the tenant row.
 	 */
 	saveOverlay(tenantId: TenantId, workloadId: WorkloadId, overlayPath: string): void {
 		const destDir = join(this.storagePath, tenantId, workloadId);
 		mkdirSync(destDir, { recursive: true });
 
-		const destPath = join(destDir, "overlay.ext4");
+		const destPath = join(destDir, "overlay.tar.gz");
 		copyFileSync(overlayPath, destPath);
+
+		this.db
+			.update(tenants)
+			.set({ dataOverlayRef: destPath })
+			.where(eq(tenants.tenantId, tenantId))
+			.run();
+	}
+
+	/**
+	 * Writes overlay data directly into tenant storage from a buffer
+	 * (e.g. tar archive extracted from a running container).
+	 */
+	saveOverlayBuffer(tenantId: TenantId, workloadId: WorkloadId, data: Buffer): void {
+		const destDir = join(this.storagePath, tenantId, workloadId);
+		mkdirSync(destDir, { recursive: true });
+
+		const destPath = join(destDir, "overlay.tar.gz");
+		writeFileSync(destPath, data);
 
 		this.db
 			.update(tenants)

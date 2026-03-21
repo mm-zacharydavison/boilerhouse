@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import type {
 	Runtime,
@@ -334,6 +335,66 @@ export class InstanceManager {
 		});
 
 		return handle;
+	}
+
+	// ── Overlay helpers ─────────────────────────────────────────────────────
+
+	/**
+	 * Extracts overlay directories from a running instance as a tar.gz archive.
+	 * Returns null if the extraction fails or produces no data.
+	 */
+	async extractOverlay(instanceId: InstanceId, overlayDirs: string[]): Promise<Buffer | null> {
+		if (overlayDirs.length === 0) return null;
+
+		const row = this.db
+			.select({ status: instances.status })
+			.from(instances)
+			.where(eq(instances.instanceId, instanceId))
+			.get();
+
+		if (!row) return null;
+
+		const handle = instanceHandleFrom(instanceId, row.status);
+		const dirs = overlayDirs.map((d) => `'${d}'`).join(" ");
+		const result = await this.runtime.exec(handle, [
+			"sh", "-c", `tar czf - ${dirs} 2>/dev/null | base64`,
+		]);
+
+		if (result.exitCode !== 0 || !result.stdout.trim()) return null;
+
+		return Buffer.from(result.stdout.trim(), "base64");
+	}
+
+	/**
+	 * Injects a tar.gz overlay archive into a running instance by extracting
+	 * it at the root filesystem.
+	 */
+	async injectOverlay(instanceId: InstanceId, overlayArchivePath: string): Promise<void> {
+		const row = this.db
+			.select({ status: instances.status })
+			.from(instances)
+			.where(eq(instances.instanceId, instanceId))
+			.get();
+
+		if (!row) {
+			throw new Error(`Instance not found: ${instanceId}`);
+		}
+
+		const handle = instanceHandleFrom(instanceId, row.status);
+		const overlayData = readFileSync(overlayArchivePath);
+		const b64 = overlayData.toString("base64");
+
+		const result = await this.runtime.exec(handle, [
+			"sh", "-c", `echo '${b64}' | base64 -d | tar xzf - -C /`,
+		]);
+
+		if (result.exitCode !== 0) {
+			this.log?.error(
+				{ instanceId, stderr: result.stderr },
+				"Failed to inject overlay data",
+			);
+			throw new Error(`Overlay injection failed: ${result.stderr}`);
+		}
 	}
 
 	async getEndpoint(handle: InstanceHandle): Promise<Endpoint> {
