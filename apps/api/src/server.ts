@@ -64,15 +64,16 @@ if (!existingNode) {
 const activityLog = new ActivityLog(db);
 const eventBus = new EventBus();
 
-// Optional: encrypted secret store for credential injection
+// Encrypted secret store for credential injection (required in production)
 const secretKey = process.env.BOILERHOUSE_SECRET_KEY;
-let secretStore: SecretStore | undefined;
+if (!secretKey && process.env.NODE_ENV !== "test") {
+	log.fatal("BOILERHOUSE_SECRET_KEY is required. Set it to a hex-encoded 32-byte key.");
+	process.exit(1);
+}
 
-if (secretKey) {
-	secretStore = new SecretStore(db, secretKey);
-	log.info("Secret store initialised — proxy level credential injection available.");
-} else {
-	log.warn("BOILERHOUSE_SECRET_KEY not set — credential injection will not work");
+const secretStore = secretKey ? new SecretStore(db, secretKey) : undefined;
+if (secretStore) {
+	log.info("Secret store initialised.");
 }
 
 let runtime: Runtime;
@@ -88,7 +89,8 @@ if (runtimeType === "podman") {
 	const k8sNamespace = process.env.K8S_NAMESPACE;
 	const k8sContext = process.env.K8S_CONTEXT;
 	const k8sMinikubeProfile = process.env.K8S_MINIKUBE_PROFILE;
-	const common = { namespace: k8sNamespace, snapshotDir, context: k8sContext, minikubeProfile: k8sMinikubeProfile, workloadsDir };
+	const encryptionKey = process.env.BOILERHOUSE_ENCRYPTION_KEY;
+	const common = { namespace: k8sNamespace, snapshotDir, context: k8sContext, minikubeProfile: k8sMinikubeProfile, workloadsDir, encryptionKey };
 
 	if (process.env.K8S_API_URL && process.env.K8S_TOKEN) {
 		log.info({ apiUrl: process.env.K8S_API_URL, namespace: k8sNamespace }, "Using Kubernetes runtime (external auth)");
@@ -213,6 +215,7 @@ const goldenCreator = new GoldenCreator(
 // Start OTEL providers (metrics + tracing)
 const { meter, tracer } = initO11y({
 	metricsPort: Number(process.env.METRICS_PORT ?? 9464),
+	metricsHost: process.env.METRICS_HOST ?? "127.0.0.1",
 });
 
 // Subscribe EventBus → metrics
@@ -248,7 +251,8 @@ const app = createApp({
 	meter,
 });
 
-app.listen(port);
+const listenHost = process.env.LISTEN_HOST ?? "127.0.0.1";
+app.listen({ port, hostname: listenHost });
 
-log.info({ port }, "♨️ Boilerhouse API listening");
+log.info({ port, host: listenHost }, "♨️ Boilerhouse API listening");
 log.info({ metricsPort: Number(process.env.METRICS_PORT ?? 9464) }, "Prometheus metrics endpoint started");

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { FakeRuntime, generateNodeId } from "@boilerhouse/core";
 import { createTestDatabase, ActivityLog } from "@boilerhouse/db";
 import { nodes } from "@boilerhouse/db";
@@ -10,6 +11,7 @@ import { EventBus } from "./event-bus";
 import { ResourceLimiter } from "./resource-limits";
 import { GoldenCreator } from "./golden-creator";
 import { BootstrapLogStore } from "./bootstrap-log-store";
+import { SecretStore } from "./secret-store";
 import { createApp } from "./app";
 import type { RouteDeps } from "./routes/deps";
 
@@ -59,6 +61,7 @@ export function createTestApp(): TestContext {
 	const resourceLimiter = new ResourceLimiter(db, { maxInstances: 100 });
 	const bootstrapLogStore = new BootstrapLogStore(db);
 	const goldenCreator = new GoldenCreator(db, snapshotManager, eventBus, bootstrapLogStore);
+	const secretStore = new SecretStore(db, randomBytes(32).toString("hex"));
 
 	const deps: RouteDeps = {
 		db,
@@ -72,6 +75,7 @@ export function createTestApp(): TestContext {
 		goldenCreator,
 		bootstrapLogStore,
 		resourceLimiter,
+		secretStore,
 		log,
 	};
 

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -27,7 +28,7 @@ for (const rt of availableRuntimes()) {
 
 		test("3 tenants claim and release in parallel", async () => {
 			// Step 2: Claim 3 tenants in parallel
-			const tenantIds = ["e2e-conc-1", "e2e-conc-2", "e2e-conc-3"];
+			const tenantIds = [generateTenantId(), generateTenantId(), generateTenantId()];
 			const claimResults = await Promise.all(
 				tenantIds.map((id) =>
 					api(server, "POST", `/api/v1/tenants/${id}/claim`, {

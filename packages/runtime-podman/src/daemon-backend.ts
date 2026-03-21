@@ -76,6 +76,7 @@ export class DaemonBackend implements ContainerBackend {
 		name: string,
 		publishPorts?: string[],
 		pod?: string,
+		encrypted?: boolean,
 	): Promise<string> {
 		const res = await this.request("POST", "/containers/restore", {
 			archivePath,
@@ -83,6 +84,7 @@ export class DaemonBackend implements ContainerBackend {
 			name,
 			publishPorts,
 			pod,
+			encrypted,
 		});
 		return (res as { id: string }).id;
 	}

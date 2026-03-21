@@ -112,6 +112,7 @@ else
 
 	export LISTEN_SOCKET
 	export SNAPSHOT_DIR
+	export HMAC_KEY="${HMAC_KEY:-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef}"
 	export WORKLOADS_DIR="${WORKLOADS_DIR:-$SCRIPT_DIR/workloads}"
 	if [ -n "$PODMAN_SOCKET" ]; then
 		export PODMAN_SOCKET

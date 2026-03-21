@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -26,8 +27,10 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("destroy active instance, verify cannot operate on it", async () => {
+			const tenantId = generateTenantId();
+
 			// Step 1: Claim tenant
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-destroy-1/claim", {
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claimRes.status).toBe(200);

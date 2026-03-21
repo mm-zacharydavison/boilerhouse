@@ -6,6 +6,8 @@ import { tenants, workloads, instances, snapshots } from "@boilerhouse/db";
 import { NoGoldenSnapshotError } from "../tenant-manager";
 import type { RouteDeps } from "./deps";
 
+const UUID_REGEX = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
 export function tenantRoutes(deps: RouteDeps) {
 	const { db, tenantManager, eventBus, log } = deps;
 
@@ -80,6 +82,7 @@ export function tenantRoutes(deps: RouteDeps) {
 				...(websocketPath ? { websocket: websocketPath } : {}),
 			};
 		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }) }),
 			body: t.Object({
 				workload: t.String({ minLength: 1 }),
 			}),
@@ -111,6 +114,8 @@ export function tenantRoutes(deps: RouteDeps) {
 			}
 
 			return { released: true };
+		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }) }),
 		})
 		.get("/tenants/:id", ({ params, set }) => {
 			const tenantId = params.id as TenantId;
@@ -165,6 +170,8 @@ export function tenantRoutes(deps: RouteDeps) {
 				instance,
 				snapshots: tenantSnapshots,
 			};
+		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }) }),
 		})
 		.get("/tenants", () => {
 			const rows = db.select().from(tenants).all();

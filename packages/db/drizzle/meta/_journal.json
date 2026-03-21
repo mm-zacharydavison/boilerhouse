@@ -57,6 +57,13 @@
       "when": 1773412476125,
       "tag": "0007_jazzy_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1774117110661,
+      "tag": "0008_silent_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }

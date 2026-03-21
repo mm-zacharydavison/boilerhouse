@@ -270,6 +270,7 @@ export class PodmanRuntime implements Runtime {
 			nodeId: generateNodeId(),
 			runtimeMeta,
 			archiveHmac: result.hmac,
+			encrypted: result.encrypted,
 		};
 	}
 
@@ -320,6 +321,7 @@ export class PodmanRuntime implements Runtime {
 			instanceId,
 			undefined,
 			instanceId,
+			ref.encrypted,
 		);
 
 		const ports = await this.resolveHostPorts(instanceId);

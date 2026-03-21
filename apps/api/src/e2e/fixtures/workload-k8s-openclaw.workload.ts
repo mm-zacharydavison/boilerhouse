@@ -18,7 +18,7 @@ export default defineWorkload({
 			headers: { "x-api-key": "${global-secret:ANTHROPIC_API_KEY}" },
 		}],
 	},
-	idle: { timeout_seconds: 600, action: "destroy" },
+	idle: { timeout_seconds: 600, action: "hibernate" },
 	health: {
 		interval_seconds: 2,
 		unhealthy_threshold: 60,

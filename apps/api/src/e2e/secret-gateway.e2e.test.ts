@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import type { TenantId } from "@boilerhouse/core";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, type RuntimeEntry } from "./runtime-matrix";
 import {
 	startE2EServer,
@@ -42,7 +42,7 @@ for (const entry of runtimes) {
 		}, 30_000);
 
 		test("tenant secrets API: set and list secrets", async () => {
-			const tenantId = "sgw-tenant-1";
+			const tenantId = generateTenantId();
 
 			// Set a tenant secret
 			const setRes = await api(
@@ -65,7 +65,7 @@ for (const entry of runtimes) {
 		});
 
 		test("tenant secrets API: delete secret", async () => {
-			const tenantId = "sgw-tenant-2";
+			const tenantId = generateTenantId();
 
 			await api(
 				server,
@@ -91,7 +91,7 @@ for (const entry of runtimes) {
 		});
 
 		test("container does not have secret values in env", async () => {
-			const tenantId = "sgw-tenant-3" as TenantId;
+			const tenantId = generateTenantId();
 
 			const claimRes = await api(
 				server,

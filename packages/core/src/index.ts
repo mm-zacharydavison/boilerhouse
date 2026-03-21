@@ -134,6 +134,13 @@ export {
 } from "./paths";
 
 export {
+	encryptArchive,
+	decryptArchive,
+	isEncryptedArchive,
+	ArchiveDecryptionError,
+} from "./archive-crypto";
+
+export {
 	type WorkloadStatus,
 	type WorkloadEvent,
 	WorkloadStatusSchema,

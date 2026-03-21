@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -35,6 +36,8 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("WebSocket receives domain events during claim/release", async () => {
+			const tenantId = generateTenantId();
+
 			// Step 1: Open WebSocket connection
 			const wsUrl = server.baseUrl.replace("http://", "ws://") + "/ws";
 			const events: DomainEvent[] = [];
@@ -50,7 +53,7 @@ for (const rt of availableRuntimes()) {
 			};
 
 			// Step 3: Claim tenant
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-ws-1/claim", {
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claimRes.status).toBe(200);
@@ -62,11 +65,11 @@ for (const rt of availableRuntimes()) {
 			// Step 4: Verify tenant.claimed event received
 			const claimEvent = events.find((e) => e.type === "tenant.claimed");
 			expect(claimEvent).toBeDefined();
-			expect(claimEvent!.tenantId).toBe("e2e-ws-1");
+			expect(claimEvent!.tenantId).toBe(tenantId);
 			expect(claimEvent!.instanceId).toBe(claimBody.instanceId);
 
 			// Step 5: Release tenant
-			const releaseRes = await api(server, "POST", "/api/v1/tenants/e2e-ws-1/release");
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
 			expect(releaseRes.status).toBe(200);
 
 			// Brief delay for WS events
@@ -75,7 +78,7 @@ for (const rt of availableRuntimes()) {
 			// Step 6: Verify tenant.released event
 			const releaseEvent = events.find((e) => e.type === "tenant.released");
 			expect(releaseEvent).toBeDefined();
-			expect(releaseEvent!.tenantId).toBe("e2e-ws-1");
+			expect(releaseEvent!.tenantId).toBe(tenantId);
 
 			// Step 7: Verify events arrived in correct causal order
 			const claimIdx = events.findIndex((e) => e.type === "tenant.claimed");

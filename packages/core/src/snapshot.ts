@@ -52,6 +52,8 @@ export const SnapshotRefSchema = Type.Object({
 	 * @example "a1b2c3d4e5f6..."
 	 */
 	archiveHmac: Type.Optional(Type.String()),
+	/** Whether the archive on disk is encrypted (AES-256-GCM). */
+	encrypted: Type.Optional(Type.Boolean()),
 });
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -78,6 +80,8 @@ export interface SnapshotRef {
 	 * @example "a1b2c3d4e5f6..."
 	 */
 	archiveHmac?: string;
+	/** Whether the archive on disk is encrypted (AES-256-GCM). */
+	encrypted?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -228,6 +228,7 @@ export class SnapshotManager {
 					vmstatePath: goldenRef.paths.vmstate,
 					memoryPath: goldenRef.paths.memory,
 					archiveHmac: goldenRef.archiveHmac ?? null,
+					encrypted: goldenRef.encrypted ?? false,
 					sizeBytes,
 					runtimeMeta: goldenRef.runtimeMeta as Record<string, unknown>,
 					createdAt: new Date(),

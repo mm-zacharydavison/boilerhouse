@@ -19,7 +19,10 @@ export interface WorkloadFixtures {
 export interface RuntimeEntry {
 	name: string;
 	capabilities: {
-		snapshot: boolean;
+		/** CRIU-based golden snapshots for instant cold starts. */
+		goldenSnapshot: boolean;
+		/** Hibernate a running instance and restore it later (tenant snapshots). */
+		tenantSnapshot: boolean;
 		exec: boolean;
 		networking: boolean;
 		/**
@@ -54,7 +57,8 @@ function fixturePath(name: string): string {
 const fakeEntry: RuntimeEntry = {
 	name: "fake",
 	capabilities: {
-		snapshot: true,
+		goldenSnapshot: true,
+		tenantSnapshot: true,
 		exec: true,
 		networking: false,
 		concurrentRestore: true,
@@ -75,7 +79,8 @@ const fakeEntry: RuntimeEntry = {
 const dockerEntry: RuntimeEntry = {
 	name: "docker",
 	capabilities: {
-		snapshot: false,
+		goldenSnapshot: false,
+		tenantSnapshot: false,
 		exec: true,
 		networking: true,
 		concurrentRestore: true,
@@ -117,7 +122,8 @@ const dockerEntry: RuntimeEntry = {
 const podmanEntry: RuntimeEntry = {
 	name: "podman",
 	capabilities: {
-		snapshot: true,
+		goldenSnapshot: true,
+		tenantSnapshot: true,
 		exec: true,
 		networking: true,
 		concurrentRestore: true,
@@ -159,7 +165,8 @@ const podmanEntry: RuntimeEntry = {
 const kubernetesEntry: RuntimeEntry = {
 	name: "kubernetes",
 	capabilities: {
-		snapshot: false,
+		goldenSnapshot: false,
+		tenantSnapshot: true,
 		exec: true,
 		networking: true,
 		concurrentRestore: false,

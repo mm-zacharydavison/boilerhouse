@@ -14,6 +14,7 @@ import type {
 	Workload,
 	InstanceId,
 } from "@boilerhouse/core";
+import { encryptArchive, decryptArchive } from "@boilerhouse/core";
 import type { KubernetesConfig } from "./types";
 import { KubeClient } from "./client";
 import { workloadToPod, MANAGED_LABEL, ENVOY_IMAGE } from "./translator";
@@ -40,6 +41,7 @@ export class KubernetesRuntime implements Runtime {
 	private readonly namespace: string;
 	private readonly snapshotDir: string | undefined;
 	private readonly context: string | undefined;
+	private readonly encryptionKey: string | undefined;
 	private readonly imageProvider: MinikubeImageProvider | undefined;
 	private readonly pods = new Map<string, ManagedPod>();
 
@@ -63,6 +65,7 @@ export class KubernetesRuntime implements Runtime {
 
 		this.snapshotDir = config.snapshotDir;
 		this.context = config.context;
+		this.encryptionKey = config.encryptionKey;
 
 		const minikubeProfile = config.minikubeProfile ?? config.context;
 		if (minikubeProfile) {
@@ -233,7 +236,13 @@ export class KubernetesRuntime implements Runtime {
 			);
 
 			if (result.exitCode === 0 && result.stdout.trim()) {
-				const tarData = Buffer.from(result.stdout.trim(), "base64");
+				let tarData = Buffer.from(result.stdout.trim(), "base64");
+
+				// Encrypt the overlay archive at rest
+				if (this.encryptionKey) {
+					tarData = encryptArchive(tarData, this.encryptionKey);
+				}
+
 				writeFileSync(join(archiveDir, "overlay.tar.gz"), tarData);
 			}
 		}
@@ -258,6 +267,7 @@ export class KubernetesRuntime implements Runtime {
 			workloadId: generateWorkloadId(),
 			nodeId: generateNodeId(),
 			runtimeMeta,
+			encrypted: !!this.encryptionKey,
 		};
 	}
 
@@ -321,8 +331,18 @@ export class KubernetesRuntime implements Runtime {
 		// Restore overlay data if present
 		const overlayPath = join(snapshotDir, "overlay.tar.gz");
 		try {
-			const overlayData = readFileSync(overlayPath);
+			let overlayData = readFileSync(overlayPath);
 			if (overlayData.length > 0) {
+				// Decrypt if the snapshot was encrypted at rest
+				if (ref.encrypted) {
+					if (!this.encryptionKey) {
+						throw new KubernetesRuntimeError(
+							"Snapshot is encrypted but no encryption key is configured",
+						);
+					}
+					overlayData = decryptArchive(overlayData, this.encryptionKey);
+				}
+
 				const b64 = overlayData.toString("base64");
 				await this.client.exec(
 					this.namespace,
@@ -331,8 +351,10 @@ export class KubernetesRuntime implements Runtime {
 					this.context,
 				);
 			}
-		} catch {
-			// No overlay data to restore
+		} catch (err) {
+			// Re-throw known errors, ignore missing overlay file
+			if (err instanceof KubernetesRuntimeError) throw err;
+			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 		}
 
 		this.pods.set(instanceId, { instanceId, running: true, workload, portForwards: new Map() });

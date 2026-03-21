@@ -5,6 +5,11 @@ import { workloads } from "@boilerhouse/db";
 import { createTestApp, apiRequest } from "../test-helpers";
 import type { DomainEvent } from "../event-bus";
 
+// Fixed UUIDs for deterministic multi-tenant tests
+const ZAC_ID = "00000000-0000-4000-8000-00000000000a" as any;
+const ZAC2_ID = "00000000-0000-4000-8000-00000000000b" as any;
+const NONEXISTENT_ID = "00000000-0000-4000-8000-ffffffffffff";
+
 const MINIMAL_WORKLOAD: Workload = {
 	workload: { name: "tenant-test", version: "1.0.0" },
 	image: { ref: "ghcr.io/test:latest" },
@@ -127,7 +132,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// 3-4. Tenant 'zac' claims → restored from golden
 		const claim1 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/claim",
+			`/api/v1/tenants/${ZAC_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -142,7 +147,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// 5-6. Tenant 'zac' releases → creates tenant snapshot
 		const release1 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/release",
+			`/api/v1/tenants/${ZAC_ID}/release`,
 			{ method: "POST" },
 		);
 		expect(release1.status).toBe(200);
@@ -151,14 +156,14 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		const snapshotsRes1 = await apiRequest(ctx.app, "/api/v1/snapshots");
 		const allSnapshots1 = await snapshotsRes1.json();
 		const zacSnap = allSnapshots1.find(
-			(s: { type: string; tenantId: string }) => s.type === "tenant" && s.tenantId === "zac",
+			(s: { type: string; tenantId: string }) => s.type === "tenant" && s.tenantId === ZAC_ID,
 		);
 		expect(zacSnap).toBeDefined();
 
 		// 7-8. Tenant 'zac' re-claims → restored from tenant snapshot
 		const claim2 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/claim",
+			`/api/v1/tenants/${ZAC_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -173,7 +178,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// 9-10. New tenant 'zac2' claims → restored from golden (not tenant:zac)
 		const claim3 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac2/claim",
+			`/api/v1/tenants/${ZAC2_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -189,15 +194,15 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		const snapshotsRes2 = await apiRequest(ctx.app, "/api/v1/snapshots");
 		const allSnapshots2 = await snapshotsRes2.json();
 		const zac2Snap = allSnapshots2.find(
-			(s: { type: string; tenantId: string }) => s.type === "tenant" && s.tenantId === "zac2",
+			(s: { type: string; tenantId: string }) => s.type === "tenant" && s.tenantId === ZAC2_ID,
 		);
 		expect(zac2Snap).toBeUndefined();
 
 		// Verify both instances are active with correct tenantIds
 		const instancesRes = await apiRequest(ctx.app, "/api/v1/instances?status=active");
 		const activeInstances = await instancesRes.json();
-		const zacInst = activeInstances.find((i: { tenantId: string }) => i.tenantId === "zac");
-		const zac2Inst = activeInstances.find((i: { tenantId: string }) => i.tenantId === "zac2");
+		const zacInst = activeInstances.find((i: { tenantId: string }) => i.tenantId === ZAC_ID);
+		const zac2Inst = activeInstances.find((i: { tenantId: string }) => i.tenantId === ZAC2_ID);
 		expect(zacInst).toBeDefined();
 		expect(zac2Inst).toBeDefined();
 	});
@@ -255,7 +260,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// Claim → hibernate (establish a tenant snapshot)
 		const claim1 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/claim",
+			`/api/v1/tenants/${ZAC_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -270,7 +275,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// Re-claim, then destroy
 		const claim2 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/claim",
+			`/api/v1/tenants/${ZAC_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -289,7 +294,7 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		// Re-claim should succeed
 		const claim3 = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/zac/claim",
+			`/api/v1/tenants/${ZAC_ID}/claim`,
 			{
 				method: "POST",
 				body: JSON.stringify({ workload: "tenant-test" }),
@@ -334,7 +339,7 @@ describe("POST /api/v1/tenants/:id/release", () => {
 
 		const res = await apiRequest(
 			ctx.app,
-			"/api/v1/tenants/nonexistent/release",
+			`/api/v1/tenants/${NONEXISTENT_ID}/release`,
 			{ method: "POST" },
 		);
 
@@ -367,7 +372,7 @@ describe("GET /api/v1/tenants/:id", () => {
 
 	test("returns 404 for nonexistent tenant", async () => {
 		const ctx = createTestApp();
-		const res = await apiRequest(ctx.app, "/api/v1/tenants/ghost");
+		const res = await apiRequest(ctx.app, `/api/v1/tenants/${NONEXISTENT_ID}`);
 
 		expect(res.status).toBe(404);
 	});

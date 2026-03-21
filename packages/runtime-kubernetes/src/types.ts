@@ -32,6 +32,13 @@ interface KubernetesCommonConfig {
 	 * @example "/home/user/project/workloads"
 	 */
 	workloadsDir?: string;
+
+	/**
+	 * Hex-encoded 32-byte key for encrypting snapshot archives at rest.
+	 * When set, overlay tars are encrypted with AES-256-GCM before writing
+	 * to disk and decrypted on restore.
+	 */
+	encryptionKey?: string;
 }
 
 /** Explicit API URL + bearer token (minikube, external clusters). */

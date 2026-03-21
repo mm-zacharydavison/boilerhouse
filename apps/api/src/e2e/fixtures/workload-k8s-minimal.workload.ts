@@ -6,7 +6,7 @@ export default defineWorkload({
 	image: { ref: "docker.io/library/alpine:3.21" },
 	resources: { vcpus: 1, memory_mb: 128, disk_gb: 1 },
 	network: { access: "none" },
-	idle: { timeout_seconds: 300, action: "destroy" },
+	idle: { timeout_seconds: 300, action: "hibernate" },
 	entrypoint: {
 		cmd: "/bin/sh",
 		args: ["-c", "while true; do sleep 1; done"],

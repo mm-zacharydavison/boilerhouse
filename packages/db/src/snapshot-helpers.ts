@@ -29,5 +29,6 @@ export function snapshotRefFrom(row: SnapshotRow): SnapshotRef | null {
 		nodeId: row.nodeId,
 		runtimeMeta: meta as unknown as SnapshotMetadata,
 		archiveHmac: row.archiveHmac ?? undefined,
+		encrypted: row.encrypted ?? false,
 	};
 }

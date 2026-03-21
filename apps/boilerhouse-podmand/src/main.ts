@@ -24,6 +24,8 @@ export interface DaemonConfig {
 	snapshotDir: string;
 	/** Hex-encoded HMAC key for archive signing. */
 	hmacKey?: string;
+	/** Hex-encoded 32-byte key for encrypting snapshot archives at rest. */
+	encryptionKey?: string;
 	/** Base directory for resolving workload Dockerfiles. */
 	workloadsDir?: string;
 	/**
@@ -457,6 +459,7 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		const { rewriteCheckpointPorts, computeArchiveHmac } = await import(
 			"@boilerhouse/runtime-podman"
 		);
+		const { encryptArchive } = await import("@boilerhouse/core");
 		const { chmodSync } = await import("node:fs");
 		const { join } = await import("node:path");
 
@@ -471,12 +474,18 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		const { archive: rewrittenArchive, containerPorts } =
 			await rewriteCheckpointPorts(archiveBuffer);
 
-		await Bun.write(archivePath, rewrittenArchive);
-		chmodSync(archivePath, 0o600);
-
+		// HMAC is computed over the plaintext archive (before encryption)
 		const hmac = config.hmacKey
 			? computeArchiveHmac(rewrittenArchive, config.hmacKey)
 			: undefined;
+
+		// Encrypt the archive at rest if an encryption key is configured
+		const dataToWrite = config.encryptionKey
+			? encryptArchive(rewrittenArchive, config.encryptionKey)
+			: rewrittenArchive;
+
+		await Bun.write(archivePath, dataToWrite);
+		chmodSync(archivePath, 0o600);
 
 		// Container is stopped/destroyed by podman after checkpoint,
 		// but stays in the registry until the caller explicitly DELETEs it.
@@ -485,6 +494,7 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 			archivePath,
 			hmac,
 			exposedPorts: containerPorts,
+			encrypted: !!config.encryptionKey,
 		});
 	}
 
@@ -495,14 +505,30 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 			name: string;
 			publishPorts?: string[];
 			pod?: string;
+			encrypted?: boolean;
 		};
 
 		const { verifyArchiveHmac } = await import("@boilerhouse/runtime-podman");
+		const { decryptArchive } = await import("@boilerhouse/core");
 
 		const archiveData = await Bun.file(body.archivePath).arrayBuffer();
-		const archive = Buffer.from(archiveData);
+		let archive = Buffer.from(archiveData);
 
-		// Verify HMAC if key is configured
+		// Decrypt if the archive was encrypted at rest
+		if (body.encrypted) {
+			if (!config.encryptionKey) {
+				return jsonResponse(403, {
+					error: "Archive is encrypted but daemon has no encryption key configured",
+				});
+			}
+			try {
+				archive = decryptArchive(archive, config.encryptionKey);
+			} catch {
+				return jsonResponse(403, { error: "Archive decryption failed" });
+			}
+		}
+
+		// Verify HMAC over the plaintext archive
 		if (config.hmacKey) {
 			if (!body.hmac) {
 				return jsonResponse(403, {
@@ -673,6 +699,11 @@ if (import.meta.main) {
 	const listenSocketPath = process.env.LISTEN_SOCKET ?? DEFAULT_RUNTIME_SOCKET;
 	const snapshotDir = process.env.SNAPSHOT_DIR ?? DEFAULT_SNAPSHOT_DIR;
 	const hmacKey = process.env.HMAC_KEY;
+	if (!hmacKey) {
+		console.error("HMAC_KEY is required. Set it to a hex-encoded key for snapshot archive signing.");
+		process.exit(1);
+	}
+	const encryptionKey = process.env.BOILERHOUSE_ENCRYPTION_KEY;
 	const workloadsDir = process.env.WORKLOADS_DIR;
 
 	let daemon: { stop: () => void };
@@ -682,6 +713,7 @@ if (import.meta.main) {
 			listenSocketPath,
 			snapshotDir,
 			hmacKey,
+			encryptionKey,
 			workloadsDir,
 			managePodman: true,
 		});

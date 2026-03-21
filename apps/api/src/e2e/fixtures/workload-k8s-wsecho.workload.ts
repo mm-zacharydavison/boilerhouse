@@ -85,7 +85,7 @@ export default defineWorkload({
 		],
 		websocket: "/ws",
 	},
-	idle: { timeout_seconds: 300, action: "destroy" },
+	idle: { timeout_seconds: 300, action: "hibernate" },
 	health: {
 		interval_seconds: 2,
 		unhealthy_threshold: 30,

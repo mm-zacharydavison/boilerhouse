@@ -14,6 +14,11 @@ export interface InitOptions {
 	 */
 	metricsPort?: number;
 	/**
+	 * Host to bind the Prometheus metrics endpoint to.
+	 * @default "127.0.0.1"
+	 */
+	metricsHost?: string;
+	/**
 	 * OTLP collector URL for trace export.
 	 * @default "http://localhost:4318/v1/traces"
 	 */
@@ -41,6 +46,7 @@ export function initO11y(opts: InitOptions = {}): O11yProviders {
 	// Metrics — Prometheus exporter serves /metrics
 	const prometheusExporter = new PrometheusExporter({
 		port: opts.metricsPort ?? 9464,
+		host: opts.metricsHost ?? "127.0.0.1",
 	});
 	const meterProvider = new MeterProvider({
 		resource,

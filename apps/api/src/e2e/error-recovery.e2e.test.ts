@@ -1,4 +1,5 @@
 import { describe, test, expect, afterEach } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -40,7 +41,8 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 2: Claim a tenant — should fail (workload not ready)
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-err-1/claim", {
+			const tenantId1 = generateTenantId();
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId1}/claim`, {
 				workload: brokenWorkloadName,
 			});
 			// Workload is in "error" status, so claim returns 503
@@ -71,7 +73,8 @@ for (const rt of availableRuntimes()) {
 
 			await waitForWorkloadReady(server, workingBody.name);
 
-			const claimRecoverRes = await api(server, "POST", "/api/v1/tenants/e2e-err-recover/claim", {
+			const tenantId2 = generateTenantId();
+			const claimRecoverRes = await api(server, "POST", `/api/v1/tenants/${tenantId2}/claim`, {
 				workload: workingBody.name,
 			});
 			expect(claimRecoverRes.status).toBe(200);
@@ -79,7 +82,7 @@ for (const rt of availableRuntimes()) {
 			expect(recoverBody.instanceId).toBeDefined();
 
 			// Step 7: Clean teardown
-			const releaseRes = await api(server, "POST", "/api/v1/tenants/e2e-err-recover/release");
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`);
 			expect(releaseRes.status).toBe(200);
 		}, timeouts.operation);
 	});

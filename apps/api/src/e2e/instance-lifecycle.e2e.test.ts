@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { eq } from "drizzle-orm";
+import { generateTenantId } from "@boilerhouse/core";
 import type { InstanceId } from "@boilerhouse/core";
 import { activityLog } from "@boilerhouse/db";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
@@ -30,8 +31,10 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("full lifecycle: register, claim, verify, release, cleanup", async () => {
+			const tenantId = generateTenantId();
+
 			// Step 2: Claim tenant
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-test-1/claim", {
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claimRes.status).toBe(200);
@@ -63,7 +66,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 6: Release tenant
-			const releaseRes = await api(server, "POST", "/api/v1/tenants/e2e-test-1/release");
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
 			expect(releaseRes.status).toBe(200);
 
 			// Step 7: Verify instance is no longer active

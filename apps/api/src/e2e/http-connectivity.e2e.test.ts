@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -26,8 +27,10 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("claim tenant and verify HTTP response body", async () => {
+			const tenantId = generateTenantId();
+
 			// Claim tenant
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-http-1/claim", {
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claimRes.status).toBe(200);
@@ -62,7 +65,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Release tenant
-			const releaseRes = await api(server, "POST", "/api/v1/tenants/e2e-http-1/release");
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
 			expect(releaseRes.status).toBe(200);
 		}, timeouts.operation);
 	});

@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, setDefaultTimeout } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import {
 	startE2EServer,
@@ -39,7 +40,8 @@ for (const rt of availableRuntimes()) {
 		 * Helper: claim a tenant and return the instanceId.
 		 * Relies on the workload already being registered and ready in beforeAll.
 		 */
-		async function setupActiveInstance(tenantId: string) {
+		async function setupActiveInstance() {
+			const tenantId = generateTenantId();
 			const claimRes = await api(
 				server,
 				"POST",
@@ -60,15 +62,15 @@ for (const rt of availableRuntimes()) {
 			expect(instanceRes.status).toBe(200);
 			expect((await instanceRes.json()).status).toBe("active");
 
-			return { workloadName, instanceId };
+			return { workloadName, instanceId, tenantId };
 		}
 
 		// ── Hibernate ────────────────────────────────────────────────────
 
-		test.skipIf(!rt.capabilities.snapshot)(
+		test.skipIf(!rt.capabilities.tenantSnapshot)(
 			"hibernate active instance directly",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-hib-1");
+				const { instanceId, tenantId } = await setupActiveInstance();
 
 				// Hibernate
 				const hibRes = await api(
@@ -93,7 +95,7 @@ for (const rt of availableRuntimes()) {
 				const tenantRes = await api(
 					server,
 					"GET",
-					"/api/v1/tenants/e2e-hib-1",
+					`/api/v1/tenants/${tenantId}`,
 				);
 				expect(tenantRes.status).toBe(200);
 				const tenant = await tenantRes.json();
@@ -119,7 +121,7 @@ for (const rt of availableRuntimes()) {
 		test(
 			"destroy active instance directly",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-dest-1");
+				const { instanceId, tenantId } = await setupActiveInstance();
 
 				// Destroy
 				const destroyRes = await api(
@@ -143,7 +145,7 @@ for (const rt of availableRuntimes()) {
 				const tenantRes = await api(
 					server,
 					"GET",
-					"/api/v1/tenants/e2e-dest-1",
+					`/api/v1/tenants/${tenantId}`,
 				);
 				expect(tenantRes.status).toBe(200);
 				expect((await tenantRes.json()).instanceId).toBeNull();
@@ -154,10 +156,10 @@ for (const rt of availableRuntimes()) {
 			},
 		);
 
-		test.skipIf(!rt.capabilities.snapshot)(
+		test.skipIf(!rt.capabilities.tenantSnapshot)(
 			"destroy hibernated instance",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-dest-hib-1");
+				const { instanceId } = await setupActiveInstance();
 
 				// First hibernate
 				const hibRes = await api(
@@ -189,10 +191,10 @@ for (const rt of availableRuntimes()) {
 
 		// ── Invalid transitions (409) ────────────────────────────────────
 
-		test.skipIf(!rt.capabilities.snapshot)(
+		test.skipIf(!rt.capabilities.tenantSnapshot)(
 			"hibernate already-hibernated instance returns 409",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-hib-dup-1");
+				const { instanceId } = await setupActiveInstance();
 
 				// First hibernate succeeds
 				const hib1 = await api(
@@ -215,7 +217,7 @@ for (const rt of availableRuntimes()) {
 		test(
 			"destroy already-destroyed instance returns 409",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-dest-dup-1");
+				const { instanceId } = await setupActiveInstance();
 
 				// First destroy succeeds
 				const dest1 = await api(
@@ -240,7 +242,7 @@ for (const rt of availableRuntimes()) {
 		test(
 			"get endpoint for active instance",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-ep-1");
+				const { instanceId } = await setupActiveInstance();
 
 				const epRes = await api(
 					server,
@@ -267,7 +269,7 @@ for (const rt of availableRuntimes()) {
 		test(
 			"get endpoint for destroyed instance returns 409",
 			async () => {
-				const { instanceId } = await setupActiveInstance("e2e-ep-dead-1");
+				const { instanceId } = await setupActiveInstance();
 
 				// Destroy first
 				const destroyRes = await api(

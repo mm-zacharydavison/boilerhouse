@@ -8,6 +8,8 @@ export interface CheckpointResult {
 	hmac?: string;
 	/** Container ports extracted from the checkpoint's config.dump. */
 	exposedPorts: number[];
+	/** Whether the archive on disk is encrypted at rest. */
+	encrypted?: boolean;
 }
 
 /** Result of an ensureImage operation. */
@@ -72,6 +74,7 @@ export interface ContainerBackend {
 	 * Handles HMAC verification and archive reading.
 	 *
 	 * @param pod - Optional pod name to restore the container into.
+	 * @param encrypted - Whether the archive on disk is encrypted.
 	 * @returns The new container ID.
 	 */
 	restore(
@@ -80,6 +83,7 @@ export interface ContainerBackend {
 		name: string,
 		publishPorts?: string[],
 		pod?: string,
+		encrypted?: boolean,
 	): Promise<string>;
 
 	/**

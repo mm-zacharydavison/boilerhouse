@@ -22,7 +22,7 @@ export interface RouteDeps {
 	goldenCreator: GoldenCreator;
 	bootstrapLogStore: BootstrapLogStore;
 	resourceLimiter?: ResourceLimiter;
-	secretStore?: SecretStore;
+	secretStore: SecretStore;
 	log?: Logger;
 	tracer?: Tracer;
 	meter?: Meter;

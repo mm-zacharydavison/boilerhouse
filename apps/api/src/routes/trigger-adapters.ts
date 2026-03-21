@@ -20,6 +20,7 @@ import type {
 	CronConfig,
 } from "@boilerhouse/triggers";
 import type { RouteDeps } from "./deps";
+import { rateLimit } from "./rate-limit";
 
 /**
  * Creates DispatcherDeps that wire directly into the API server's managers.
@@ -150,7 +151,8 @@ export function triggerAdapterPlugin(deps: RouteDeps) {
 	}
 
 	// Mount all adapter routes as Elysia routes
-	const app = new Elysia({ name: "trigger-adapters" });
+	const app = new Elysia({ name: "trigger-adapters" })
+		.use(rateLimit({ max: 60, windowMs: 60_000 }));
 
 	const allRoutes = { ...webhookRoutes, ...slackRoutes, ...telegramRoutes };
 	for (const [path, handler] of Object.entries(allRoutes)) {

@@ -266,21 +266,23 @@ SystemCallFilter=@system-service
 WantedBy=multi-user.target
 ```
 
-### 10. Snapshot archive encryption at rest
+### 10. Snapshot archive encryption at rest ✅
 
 **Problem:** CRIU snapshots contain full process memory. If the VM disk is
 compromised (Hetzner rescue mode, snapshot download, decommissioned disk),
 credentials in checkpoint images are exposed. HMAC protects integrity, not
 confidentiality.
 
-**Fix:** Either:
-- **Encrypt snapshot archives** before writing to disk (AES-256-GCM using a
-  dedicated key, similar to the secret store).
-- **Use LUKS full-disk encryption** on the data partition. Hetzner supports
-  this via installimage or manual setup. This protects all data at rest
-  (SQLite DB, snapshots, env files).
+**Fix (implemented):** Application-level encryption using AES-256-GCM via
+`BOILERHOUSE_ENCRYPTION_KEY`. All runtimes (Podman, Kubernetes) encrypt
+snapshot archives before writing to disk and decrypt on restore. Set the
+key in the environment:
 
-LUKS is simpler to deploy and covers everything:
+```sh
+export BOILERHOUSE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+```
+
+For additional defense-in-depth, LUKS full-disk encryption can also be used:
 
 ```sh
 # During Hetzner installimage or rescue setup
@@ -337,7 +339,7 @@ loses all state and encrypted secrets.
 
 ```
 Pre-deployment:
-[ ] Generate BOILERHOUSE_SECRET_KEY and BOILERHOUSE_HMAC_KEY
+[ ] Generate BOILERHOUSE_SECRET_KEY, BOILERHOUSE_HMAC_KEY, and BOILERHOUSE_ENCRYPTION_KEY
 [ ] Store keys in /etc/boilerhouse/env (chmod 0600, owned by boilerhouse user)
 [ ] Make both keys required at startup (fail if missing)
 [ ] Bind API server to 127.0.0.1:3000

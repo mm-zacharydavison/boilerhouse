@@ -3,17 +3,13 @@ import type { TenantId } from "@boilerhouse/core";
 import type { RouteDeps } from "./deps";
 
 const SAFE_SECRET_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const UUID_REGEX = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 export function secretRoutes(deps: RouteDeps) {
 	const { secretStore } = deps;
 
 	return new Elysia({ name: "secrets" })
 		.put("/tenants/:id/secrets/:name", ({ params, body, set }) => {
-			if (!secretStore) {
-				set.status = 501;
-				return { error: "Secret store not configured" };
-			}
-
 			if (!SAFE_SECRET_NAME.test(params.name)) {
 				set.status = 400;
 				return { error: "Invalid secret name" };
@@ -24,27 +20,22 @@ export function secretRoutes(deps: RouteDeps) {
 			set.status = 201;
 			return { stored: true };
 		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }), name: t.String() }),
 			body: t.Object({
 				value: t.String({ minLength: 1 }),
 			}),
 		})
-		.get("/tenants/:id/secrets", ({ params, set }) => {
-			if (!secretStore) {
-				set.status = 501;
-				return { error: "Secret store not configured" };
-			}
-
+		.get("/tenants/:id/secrets", ({ params }) => {
 			const tenantId = params.id as TenantId;
 			return { secrets: secretStore.list(tenantId) };
+		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }) }),
 		})
-		.delete("/tenants/:id/secrets/:name", ({ params, set }) => {
-			if (!secretStore) {
-				set.status = 501;
-				return { error: "Secret store not configured" };
-			}
-
+		.delete("/tenants/:id/secrets/:name", ({ params }) => {
 			const tenantId = params.id as TenantId;
 			secretStore.delete(tenantId, params.name);
 			return { deleted: true };
+		}, {
+			params: t.Object({ id: t.String({ pattern: UUID_REGEX }), name: t.String() }),
 		});
 }

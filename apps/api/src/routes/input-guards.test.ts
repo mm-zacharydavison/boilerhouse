@@ -56,7 +56,7 @@ describe("input-guards middleware", () => {
 	});
 
 	test("allows valid params through", async () => {
-		const res = await apiRequest(ctx.app, "/api/v1/tenants/valid-tenant-123");
+		const res = await apiRequest(ctx.app, "/api/v1/tenants/00000000-0000-4000-8000-000000000099");
 		// 404 = passed the guard, tenant doesn't exist
 		expect(res.status).toBe(404);
 	});

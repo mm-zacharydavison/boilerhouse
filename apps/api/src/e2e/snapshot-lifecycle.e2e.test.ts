@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -25,25 +26,29 @@ for (const rt of availableRuntimes()) {
 			if (server) await server.cleanup();
 		});
 
-		test.skipIf(!rt.capabilities.snapshot)("release hibernates, re-claim restores from snapshot", async () => {
-			// Step 2: Verify golden snapshot exists
-			const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
-			expect(snapshotsRes.status).toBe(200);
-			const snapshotsList = await snapshotsRes.json();
-			const golden = snapshotsList.find((s: { type: string }) => s.type === "golden");
-			expect(golden).toBeDefined();
+		test.skipIf(!rt.capabilities.tenantSnapshot)("release hibernates, re-claim restores from snapshot", async () => {
+			const tenantId = generateTenantId();
+
+			// Step 2: Verify golden snapshot exists (only for golden-capable runtimes)
+			if (rt.capabilities.goldenSnapshot) {
+				const snapshotsRes = await api(server, "GET", `/api/v1/workloads/${workloadName}/snapshots`);
+				expect(snapshotsRes.status).toBe(200);
+				const snapshotsList = await snapshotsRes.json();
+				const golden = snapshotsList.find((s: { type: string }) => s.type === "golden");
+				expect(golden).toBeDefined();
+			}
 
 			// Step 3: Claim tenant
-			const claimRes = await api(server, "POST", "/api/v1/tenants/e2e-snap-1/claim", {
+			const claimRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claimRes.status).toBe(200);
 			const claimBody = await claimRes.json();
 			const instanceId = claimBody.instanceId as string;
-			expect(claimBody.source).toBe("golden");
+			expect(["golden", "cold"]).toContain(claimBody.source);
 
 			// Step 4: Release tenant (workload idle.action = "hibernate", so this hibernates)
-			const releaseRes = await api(server, "POST", "/api/v1/tenants/e2e-snap-1/release");
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
 			expect(releaseRes.status).toBe(200);
 
 			// Step 5: Verify instance is hibernated
@@ -57,12 +62,12 @@ for (const rt of availableRuntimes()) {
 			const allSnapshots = await allSnapshotsRes.json();
 			const tenantSnap = allSnapshots.find(
 				(s: { type: string; tenantId: string | null }) =>
-					s.type === "tenant" && s.tenantId === "e2e-snap-1",
+					s.type === "tenant" && s.tenantId === tenantId,
 			);
 			expect(tenantSnap).toBeDefined();
 
 			// Step 7: Re-claim — should restore from snapshot
-			const claim2Res = await api(server, "POST", "/api/v1/tenants/e2e-snap-1/claim", {
+			const claim2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {
 				workload: workloadName,
 			});
 			expect(claim2Res.status).toBe(200);
@@ -85,7 +90,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 10: Clean teardown
-			const release2Res = await api(server, "POST", "/api/v1/tenants/e2e-snap-1/release");
+			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
 			expect(release2Res.status).toBe(200);
 		}, timeouts.operation);
 	});

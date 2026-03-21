@@ -9,7 +9,7 @@ export default defineWorkload({
 		access: "outbound",
 		expose: [{ guest: 8080, host_range: [0, 0] }],
 	},
-	idle: { timeout_seconds: 300, action: "destroy" },
+	idle: { timeout_seconds: 300, action: "hibernate" },
 	health: {
 		interval_seconds: 2,
 		unhealthy_threshold: 30,

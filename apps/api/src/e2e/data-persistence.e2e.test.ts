@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 import type { Workload } from "@boilerhouse/core";
@@ -47,7 +48,7 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("files written to overlay dir survive release and re-claim", async () => {
-			const tenantId = "e2e-persist-1";
+			const tenantId = generateTenantId();
 
 			// 1. Claim tenant
 			const claim1Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/claim`, {

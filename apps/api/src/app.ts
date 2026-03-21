@@ -1,8 +1,11 @@
 import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
 import { httpTracing } from "@boilerhouse/o11y";
 import type { RouteDeps } from "./routes/deps";
 import { errorHandler } from "./routes/errors";
+import { securityHeaders } from "./routes/security-headers";
 import { inputGuards } from "./routes/input-guards";
+import { accessLog } from "./routes/access-log";
 import { systemRoutes } from "./routes/system";
 import { workloadRoutes } from "./routes/workloads";
 import { instanceRoutes } from "./routes/instances";
@@ -15,8 +18,23 @@ import { triggerRoutes } from "./routes/triggers";
 import { wsPlugin } from "./routes/ws";
 
 export function createApp(deps: RouteDeps) {
-	const app = new Elysia()
-		.use(errorHandler)
+	const corsOrigin = process.env.CORS_ORIGIN;
+	const app = new Elysia();
+
+	// Access logging — mount first so it wraps all downstream handlers
+	if (deps.log) {
+		app.use(accessLog(deps.log));
+	}
+
+	app.use(errorHandler)
+		.use(securityHeaders)
+		.use(cors({
+			origin: corsOrigin
+				? corsOrigin.split(",").map((o) => o.trim())
+				: false,
+			methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+			credentials: true,
+		}))
 		.use(inputGuards);
 
 	// Add HTTP tracing/metrics if OTEL providers are available

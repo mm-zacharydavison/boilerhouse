@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { generateTenantId } from "@boilerhouse/core";
 import { availableRuntimes, E2E_TIMEOUTS } from "./runtime-matrix";
 import { startE2EServer, api, readFixture, waitForWorkloadReady, type E2EServer } from "./e2e-helpers";
 
@@ -26,8 +27,11 @@ for (const rt of availableRuntimes()) {
 		});
 
 		test("two different tenants can claim the same workload sequentially", async () => {
+			const tenantId1 = generateTenantId();
+			const tenantId2 = generateTenantId();
+
 			// Tenant 1 claims
-			const claim1Res = await api(server, "POST", "/api/v1/tenants/e2e-zac/claim", {
+			const claim1Res = await api(server, "POST", `/api/v1/tenants/${tenantId1}/claim`, {
 				workload: workloadName,
 			});
 			expect(claim1Res.status).toBe(200);
@@ -36,7 +40,7 @@ for (const rt of availableRuntimes()) {
 			expect(claim1Body.instanceId).toBeDefined();
 
 			// Tenant 2 claims the same workload
-			const claim2Res = await api(server, "POST", "/api/v1/tenants/e2e-zac2/claim", {
+			const claim2Res = await api(server, "POST", `/api/v1/tenants/${tenantId2}/claim`, {
 				workload: workloadName,
 			});
 			expect(claim2Res.status).toBe(200);
@@ -48,12 +52,12 @@ for (const rt of availableRuntimes()) {
 			expect(claim2Body.instanceId).not.toBe(claim1Body.instanceId);
 
 			// Both tenants should have active instances
-			const tenant1Res = await api(server, "GET", "/api/v1/tenants/e2e-zac");
+			const tenant1Res = await api(server, "GET", `/api/v1/tenants/${tenantId1}`);
 			expect(tenant1Res.status).toBe(200);
 			const tenant1 = await tenant1Res.json();
 			expect(tenant1.instanceId).toBe(claim1Body.instanceId);
 
-			const tenant2Res = await api(server, "GET", "/api/v1/tenants/e2e-zac2");
+			const tenant2Res = await api(server, "GET", `/api/v1/tenants/${tenantId2}`);
 			expect(tenant2Res.status).toBe(200);
 			const tenant2 = await tenant2Res.json();
 			expect(tenant2.instanceId).toBe(claim2Body.instanceId);
@@ -65,10 +69,10 @@ for (const rt of availableRuntimes()) {
 			expect(activeInstances.length).toBe(2);
 
 			// Release both
-			const release1 = await api(server, "POST", "/api/v1/tenants/e2e-zac/release");
+			const release1 = await api(server, "POST", `/api/v1/tenants/${tenantId1}/release`);
 			expect(release1.status).toBe(200);
 
-			const release2 = await api(server, "POST", "/api/v1/tenants/e2e-zac2/release");
+			const release2 = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`);
 			expect(release2.status).toBe(200);
 		}, timeouts.operation);
 	});
