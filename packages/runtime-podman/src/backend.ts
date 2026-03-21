@@ -103,6 +103,22 @@ export interface ContainerBackend {
 	 */
 	logs(id: string, tail?: number): Promise<string>;
 
+	// ── Network operations ───────────────────────────────────────────────────
+
+	/**
+	 * Create an isolated bridge network with the given CIDR subnet.
+	 * Used to provision a dedicated /30 network per container instance.
+	 *
+	 * @param name - Network name, e.g. `"bh-<instanceId>"`.
+	 * @param subnet - CIDR string, e.g. `"10.89.0.0/30"`.
+	 */
+	createNetwork(name: string, subnet: string): Promise<void>;
+
+	/**
+	 * Remove a network by name. Idempotent — no-op if already removed.
+	 */
+	removeNetwork(name: string): Promise<void>;
+
 	// ── Pod operations ──────────────────────────────────────────────────────
 
 	/** Create a podman pod. Containers in the pod share a network namespace. */

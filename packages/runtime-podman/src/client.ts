@@ -1,6 +1,17 @@
 import * as http from "node:http";
 import { PodmanRuntimeError } from "./errors";
 
+/**
+ * Returns the gateway address for a CIDR subnet (base address + 1).
+ * @example subnetGateway("10.89.0.0/30") → "10.89.0.1"
+ */
+function subnetGateway(cidr: string): string {
+	const base = cidr.split("/")[0]!;
+	const octets = base.split(".").map(Number);
+	octets[3]! += 1;
+	return octets.join(".");
+}
+
 /** Parsed response from the Podman API. */
 export interface PodmanResponse {
 	status: number;
@@ -78,6 +89,12 @@ export interface PodCreateSpec {
 		protocol?: string;
 	}>;
 	netns?: { nsmode: string };
+	/**
+	 * Networks to attach the pod to (keyed by network name).
+	 * When set, overrides the default bridge; the pod joins only these networks.
+	 * @example { "bh-abc123": {} }
+	 */
+	networks?: Record<string, { aliases?: string[] }>;
 }
 
 /** Subset of the container inspect response we use. */
@@ -329,6 +346,41 @@ export class PodmanClient {
 		}
 		const id = (res.body as { Id: string }).Id;
 		return id;
+	}
+
+	/**
+	 * Create an isolated bridge network with a specific subnet.
+	 *
+	 * @param name - Network name (e.g. `"bh-<instanceId>"`).
+	 * @param subnet - CIDR for the network (e.g. `"10.89.0.0/30"`).
+	 *   The gateway is derived as the first usable address (base + 1).
+	 */
+	async createNetwork(name: string, subnet: string): Promise<void> {
+		const gateway = subnetGateway(subnet);
+		const res = await this.post("/libpod/networks/create", {
+			name,
+			subnets: [{ subnet, gateway }],
+			driver: "bridge",
+		});
+		if (res.status !== 200 && res.status !== 201) {
+			const msg =
+				(res.body as Record<string, unknown>)?.message ?? "unknown error";
+			throw new PodmanRuntimeError(`Failed to create network ${name}: ${msg}`);
+		}
+	}
+
+	/**
+	 * Remove a network by name. Idempotent — ignores 404.
+	 */
+	async removeNetwork(name: string): Promise<void> {
+		const res = await this.del(
+			`/libpod/networks/${encodeURIComponent(name)}`,
+		);
+		if (res.status !== 200 && res.status !== 404) {
+			const msg =
+				(res.body as Record<string, unknown>)?.message ?? "unknown error";
+			throw new PodmanRuntimeError(`Failed to remove network ${name}: ${msg}`);
+		}
 	}
 
 	/**

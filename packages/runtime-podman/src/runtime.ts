@@ -13,6 +13,7 @@ import type { ContainerCreateSpec } from "./client";
 import { resolveTemplates, assertNoSecretRefs } from "./templates";
 import { DaemonBackend } from "./daemon-backend";
 import { HARDENED_CAP_ADD } from "./hardening";
+import { SubnetAllocator } from "./subnet-allocator";
 
 /** Envoy sidecar image used for per-instance proxy containers. */
 const ENVOY_IMAGE = "docker.io/envoyproxy/envoy:v1.32-latest";
@@ -25,6 +26,8 @@ interface ManagedInstance {
 	ports: number[];
 	/** Whether this instance has an Envoy proxy sidecar for network restriction. */
 	hasEnvoyProxySidecar: boolean;
+	/** Name of the dedicated per-container Podman network, if one was created. */
+	networkName?: string;
 }
 
 export class PodmanRuntime implements Runtime {
@@ -33,6 +36,7 @@ export class PodmanRuntime implements Runtime {
 	private readonly snapshotDir: string;
 	private readonly backend: ContainerBackend;
 	private readonly seccompProfilePath?: string;
+	private readonly subnets = new SubnetAllocator();
 
 	constructor(config: PodmanConfig) {
 		this.snapshotDir = config.snapshotDir;
@@ -99,10 +103,20 @@ export class PodmanRuntime implements Runtime {
 
 		const hasEnvoyProxySidecar = !!proxyConfig;
 
+		// Create an isolated per-container network for all networked containers.
+		// Containers with access "none" skip this and get an isolated netns instead.
+		let networkName: string | undefined;
+		if (workload.network.access !== "none") {
+			networkName = `bh-${instanceId}`;
+			const subnet = this.subnets.allocate(instanceId);
+			await this.backend.createNetwork(networkName, subnet);
+		}
+
 		// Always create a podman pod — containers share the pod's network namespace
 		await this.backend.createPod(instanceId, {
 			portmappings,
 			netns: workload.network.access === "none" ? { nsmode: "none" } : undefined,
+			networks: networkName ? { [networkName]: {} } : undefined,
 		});
 
 		// Add Envoy sidecar if proxy config is provided
@@ -197,6 +211,7 @@ export class PodmanRuntime implements Runtime {
 			running: false,
 			ports: [],
 			hasEnvoyProxySidecar,
+			networkName,
 		});
 
 		return { instanceId, running: false };
@@ -222,6 +237,12 @@ export class PodmanRuntime implements Runtime {
 
 		if (instance?.hasEnvoyProxySidecar) {
 			await this.backend.removeFile(`${handle.instanceId}-envoy.yaml`);
+		}
+
+		// Remove the per-container network (no-op if already gone)
+		if (instance?.networkName) {
+			await this.backend.removeNetwork(instance.networkName);
+			this.subnets.free(handle.instanceId);
 		}
 
 		this.instances.delete(handle.instanceId);
@@ -287,6 +308,16 @@ export class PodmanRuntime implements Runtime {
 
 		const containerPorts = ref.runtimeMeta?.exposedPorts;
 
+		// Create a dedicated network if the original instance was networked.
+		// Networked containers always have at least one exposed port (default 8080),
+		// so the presence of exposedPorts reliably indicates network access.
+		let networkName: string | undefined;
+		if (containerPorts && containerPorts.length > 0) {
+			networkName = `bh-${instanceId}`;
+			const subnet = this.subnets.allocate(instanceId);
+			await this.backend.createNetwork(networkName, subnet);
+		}
+
 		// Always create a pod for the restored instance
 		const portmappings = containerPorts?.map((p) => ({
 			container_port: p,
@@ -294,7 +325,10 @@ export class PodmanRuntime implements Runtime {
 			protocol: "tcp",
 		}));
 
-		await this.backend.createPod(instanceId, { portmappings });
+		await this.backend.createPod(instanceId, {
+			portmappings,
+			networks: networkName ? { [networkName]: {} } : undefined,
+		});
 
 		// Add Envoy sidecar if proxy config is provided
 		if (proxyConfig) {
@@ -338,6 +372,7 @@ export class PodmanRuntime implements Runtime {
 			running: true,
 			ports,
 			hasEnvoyProxySidecar,
+			networkName,
 		});
 
 		return { instanceId, running: true };

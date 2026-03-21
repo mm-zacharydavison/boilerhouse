@@ -273,6 +273,19 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 				return await handleExec(execMatch[1]!, req);
 			}
 
+			// ── Network routes ──────────────────────────────────────────
+
+			// POST /networks (create)
+			if (method === "POST" && pathname === "/networks") {
+				return await handleCreateNetwork(req);
+			}
+
+			// DELETE /networks/:name
+			const networkDeleteMatch = pathname.match(/^\/networks\/([^/]+)$/);
+			if (method === "DELETE" && networkDeleteMatch) {
+				return await handleRemoveNetwork(decodeURIComponent(networkDeleteMatch[1]!));
+			}
+
 			// ── Pod routes ──────────────────────────────────────────────
 
 			// POST /pods (create)
@@ -576,6 +589,53 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		return jsonResponse(200, { logs });
 	}
 
+	// ── Network handlers ─────────────────────────────────────────────────────
+
+	async function handleCreateNetwork(req: Request): Promise<Response> {
+		const body = (await readJsonBody(req)) as { name: string; subnet: string };
+
+		if (!body.name || !body.subnet) {
+			return jsonResponse(400, { error: "name and subnet are required" });
+		}
+
+		// Derive gateway: first usable address in the /30 subnet (base + 1)
+		const base = body.subnet.split("/")[0]!;
+		const octets = base.split(".").map(Number);
+		octets[3]! += 1;
+		const gateway = octets.join(".");
+
+		const res = await client.post("/libpod/networks/create", {
+			name: body.name,
+			subnets: [{ subnet: body.subnet, gateway }],
+			driver: "bridge",
+		});
+
+		if (res.status !== 200 && res.status !== 201) {
+			const msg =
+				(res.body as Record<string, unknown>)?.message ?? "unknown error";
+			return jsonResponse(res.status, {
+				error: `Failed to create network ${body.name}: ${msg}`,
+			});
+		}
+
+		return jsonResponse(201, { name: body.name });
+	}
+
+	async function handleRemoveNetwork(name: string): Promise<Response> {
+		const res = await client.del(
+			`/libpod/networks/${encodeURIComponent(name)}`,
+		);
+		// 200 = removed, 404 = already gone
+		if (res.status !== 200 && res.status !== 404) {
+			const msg =
+				(res.body as Record<string, unknown>)?.message ?? "unknown error";
+			return jsonResponse(res.status, {
+				error: `Failed to remove network ${name}: ${msg}`,
+			});
+		}
+		return jsonResponse(204);
+	}
+
 	// ── Pod handlers ────────────────────────────────────────────────────────
 
 	async function handleInspectPod(name: string): Promise<Response> {
@@ -593,6 +653,7 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 			name: string;
 			portmappings?: Array<{ container_port: number; host_port: number; protocol?: string }>;
 			netns?: { nsmode: string };
+			networks?: Record<string, { aliases?: string[] }>;
 		};
 
 		const podSpec: Record<string, unknown> = {
@@ -605,6 +666,10 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 		}
 		if (body.netns) {
 			podSpec.netns = body.netns;
+		}
+		if (body.networks) {
+			// Podman's PodSpecGenerator uses capital-N "Networks"
+			podSpec.Networks = body.networks;
 		}
 
 		const res = await client.post("/libpod/pods/create", podSpec);

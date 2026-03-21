@@ -111,6 +111,16 @@ export class DaemonBackend implements ContainerBackend {
 		return (res as { logs: string }).logs;
 	}
 
+	// ── Network operations ───────────────────────────────────────────────────
+
+	async createNetwork(name: string, subnet: string): Promise<void> {
+		await this.request("POST", "/networks", { name, subnet });
+	}
+
+	async removeNetwork(name: string): Promise<void> {
+		await this.request("DELETE", `/networks/${encodeURIComponent(name)}`);
+	}
+
 	// ── Pod operations ──────────────────────────────────────────────────────
 
 	async inspectPod(name: string): Promise<{ infraContainerId: string }> {
