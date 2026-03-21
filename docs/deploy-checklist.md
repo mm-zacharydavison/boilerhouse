@@ -6,7 +6,7 @@ This tracks what's needed for consumers to deploy it.
 ## Ready
 
 - [x] **Dockerfile** — builds the API image (`oven/bun:1-alpine` based)
-- [x] **CLI binary** — `boilerhouse host install` sets up the VM (systemd units, firewall, secrets)
+- [x] **CLI binary** — `boilerhouse host install --podman` sets up the VM (podmand, firewall, secrets)
 - [x] **Reverse proxy config** — `deploy/Caddyfile` (Caddy, auto-TLS, auth, rate limiting)
 - [x] **Observability** — Prometheus scrape config + Grafana dashboard
 - [x] **Deployment guides** — `docs/deploy-vm.md`, `docs/deploy-kubernetes.md`
@@ -50,7 +50,7 @@ This tracks what's needed for consumers to deploy it.
 ## Deployment model
 
 **VM (recommended)**: Install the `boilerhouse` binary (or run from
-source). `boilerhouse host install` sets up the host and starts podmand.
+source). `boilerhouse host install --podman` sets up the host and starts podmand.
 Then run the API either via the binary, as a systemd service, or as a
 Docker container in your compose stack. See `docs/deploy-vm.md`.
 

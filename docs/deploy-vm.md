@@ -51,8 +51,8 @@ curl -fsSL https://github.com/<org>/boilerhouse/releases/latest/download/boilerh
   -o /usr/local/bin/boilerhouse
 chmod +x /usr/local/bin/boilerhouse
 
-# Install host dependencies + podmand systemd service
-boilerhouse host install
+# Install podman, CRIU, and podmand systemd service
+boilerhouse host install --podman
 ```
 
 This installs podman, CRIU, generates secrets, and starts podmand. It is
@@ -86,34 +86,18 @@ Secrets and environment are in `/etc/boilerhouse/`:
 
 | File | Purpose |
 |------|---------|
-| `podmand.env` | Podmand config (socket paths, HMAC key, snapshot dir) |
-| `api.env` | API config (can be sourced to run the API directly) |
+| `podmand.env` | Podmand config (socket paths, HMAC key, encryption key, snapshot dir) |
+
+The installer prints a `BOILERHOUSE_SECRET_KEY` — add it to your
+application's `.env` file for the API container.
 
 ## Step 2: Run the boilerhouse API
 
-You have three options for running the API.
+The recommended deployment is to run the API in your application's
+docker-compose stack. The API container mounts the podmand socket from
+the host.
 
-### Option A: Run the binary directly
-
-```bash
-# Start the API (reads config from /etc/boilerhouse/api.env)
-boilerhouse api start
-
-# Or install as a systemd service
-boilerhouse api install
-```
-
-### Option B: Run from source
-
-```bash
-# Run directly (foreground)
-set -a && source /etc/boilerhouse/api.env && set +a
-cd /opt/boilerhouse && bun apps/api/src/server.ts
-```
-
-Your application can reach the API at `http://localhost:3000`.
-
-### Option C: Add to your docker-compose
+### Add to your docker-compose
 
 ### Build the image
 
@@ -247,11 +231,11 @@ A Grafana dashboard is available at `deploy/grafana/boilerhouse.json`.
 
 ## Step 5: Firewall
 
-If this VM is internet-facing, the `boilerhouse host install` command
+If this VM is internet-facing, the `boilerhouse host install --podman` command
 configures nftables automatically (allows only SSH 22 and HTTPS 443
-inbound). To skip: `boilerhouse host install --skip-firewall`.
+inbound). To skip: `boilerhouse host install --podman --skip-firewall`.
 
-To uninstall (including firewall rules): `boilerhouse host uninstall`.
+To uninstall (including firewall rules): `boilerhouse host uninstall --podman`.
 
 ## Workload definitions
 

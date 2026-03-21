@@ -7,7 +7,6 @@ const CONFIG_DIR = "/etc/boilerhouse";
 const DATA_DIR = "/var/lib/boilerhouse";
 const RUN_DIR = "/run/boilerhouse";
 const PODMAND_ENV = `${CONFIG_DIR}/podmand.env`;
-const API_ENV = `${CONFIG_DIR}/api.env`;
 const UNIT_PATH = "/etc/systemd/system/boilerhouse-podmand@.service";
 
 function log(msg: string): void {
@@ -122,7 +121,9 @@ export async function hostInstallCommand(opts: HostInstallOptions): Promise<void
 	run(`chown boilerhouse:boilerhouse ${dataDir}/data`);
 	chmodSync(`${dataDir}/snapshots`, 0o700);
 
-	// ── 5. Generate secrets ──────────────────────────────────────────────────
+	// ── 5. Generate podmand secrets ─────────────────────────────────────────
+
+	let secretKeyGenerated: string | undefined;
 
 	if (existsSync(PODMAND_ENV)) {
 		log("podmand.env already exists — skipping secret generation");
@@ -130,7 +131,8 @@ export async function hostInstallCommand(opts: HostInstallOptions): Promise<void
 		log("Generating secrets");
 
 		const hmacKey = randomHex(32);
-		const secretKey = randomHex(32);
+		const encryptionKey = randomHex(32);
+		secretKeyGenerated = randomHex(32);
 
 		writeFileSync(
 			PODMAND_ENV,
@@ -139,31 +141,13 @@ export async function hostInstallCommand(opts: HostInstallOptions): Promise<void
 				`LISTEN_SOCKET=/run/boilerhouse/runtime.sock`,
 				`SNAPSHOT_DIR=${dataDir}/snapshots`,
 				`HMAC_KEY=${hmacKey}`,
+				`BOILERHOUSE_ENCRYPTION_KEY=${encryptionKey}`,
 				``,
 			].join("\n"),
 			{ mode: 0o600 },
 		);
 
-		writeFileSync(
-			API_ENV,
-			[
-				`RUNTIME_TYPE=podman`,
-				`RUNTIME_SOCKET=/run/boilerhouse/runtime.sock`,
-				`SNAPSHOT_DIR=${dataDir}/snapshots`,
-				`STORAGE_PATH=${dataDir}/data`,
-				`DB_PATH=${dataDir}/boilerhouse.db`,
-				`BOILERHOUSE_SECRET_KEY=${secretKey}`,
-				`LISTEN_HOST=127.0.0.1`,
-				`PORT=3000`,
-				`METRICS_PORT=9464`,
-				`METRICS_HOST=127.0.0.1`,
-				`MAX_INSTANCES=100`,
-				``,
-			].join("\n"),
-			{ mode: 0o600 },
-		);
-
-		log(`Secrets written to ${CONFIG_DIR}/`);
+		log(`podmand.env written to ${PODMAND_ENV}`);
 	}
 
 	// ── 6. Install podmand systemd service ────────────────────────────────────
@@ -211,10 +195,15 @@ export async function hostInstallCommand(opts: HostInstallOptions): Promise<void
 	console.log(`  config:     ${CONFIG_DIR}/`);
 	console.log(`  data:       ${dataDir}/`);
 	console.log("");
-	console.log(`  To run the API:`);
-	console.log(`    ${binaryPath} api start`);
-	console.log(`  Or install as a systemd service:`);
-	console.log(`    ${binaryPath} api install`);
+
+	if (secretKeyGenerated) {
+		console.log("  Add these to your application's .env file:");
+		console.log(`    BOILERHOUSE_SECRET_KEY=${secretKeyGenerated}`);
+		console.log("");
+	}
+
+	console.log("  Next: add boilerhouse-api to your docker-compose.yml");
+	console.log("  See docs/deploy-vm.md for the full docker-compose snippet.");
 	console.log("");
 }
 

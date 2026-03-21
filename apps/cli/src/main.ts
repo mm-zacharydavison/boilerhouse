@@ -27,11 +27,18 @@ const host = program.command("host").description("Host VM management");
 
 host
 	.command("install")
-	.description("Set up the VM: install podman/CRIU, create user, generate secrets, start podmand")
+	.description("Install runtime dependencies on the host")
+	.option("--podman", "Install Podman runtime: podman, CRIU, podmand systemd service")
 	.option("--skip-firewall", "Skip nftables firewall configuration")
 	.option("--binary-path <path>", "Path to the boilerhouse binary (default: current executable)")
 	.option("--data-dir <path>", "Data directory (default: /var/lib/boilerhouse)")
-	.action(async (opts: { skipFirewall?: boolean; binaryPath?: string; dataDir?: string }) => {
+	.action(async (opts: { podman?: boolean; skipFirewall?: boolean; binaryPath?: string; dataDir?: string }) => {
+		if (!opts.podman) {
+			console.error("Specify a runtime to install. Currently supported: --podman");
+			console.error("");
+			console.error("Example: boilerhouse host install --podman");
+			process.exit(1);
+		}
 		await hostInstallCommand({
 			skipFirewall: opts.skipFirewall,
 			binaryPath: opts.binaryPath,
@@ -50,18 +57,25 @@ host
 
 host
 	.command("uninstall")
-	.description("Remove systemd services (data preserved)")
-	.action(() => {
+	.description("Remove runtime services from the host (data preserved)")
+	.option("--podman", "Uninstall Podman runtime: podmand service, firewall rules")
+	.action((opts: { podman?: boolean }) => {
+		if (!opts.podman) {
+			console.error("Specify a runtime to uninstall. Currently supported: --podman");
+			console.error("");
+			console.error("Example: boilerhouse host uninstall --podman");
+			process.exit(1);
+		}
 		hostUninstallCommand();
 	});
 
 // ── api ───────────────────────────────────────────────────────────────────────
 
-const api = program.command("api").description("API server management");
+const api = program.command("api").description("API server (use docker-compose for production)");
 
 api
 	.command("start")
-	.description("Run the API server (foreground)")
+	.description("Run the API server on the host (foreground, for dev/testing)")
 	.action(async () => {
 		const { apiStartCommand } = await import("./commands/api-start");
 		await apiStartCommand();
@@ -69,7 +83,7 @@ api
 
 api
 	.command("install")
-	.description("Install the API as a systemd service")
+	.description("Install the API as a systemd service on the host (alternative to Docker)")
 	.option("--binary-path <path>", "Path to the boilerhouse binary (default: current executable)")
 	.option("--data-dir <path>", "Data directory (default: /var/lib/boilerhouse)")
 	.action((opts: { binaryPath?: string; dataDir?: string }) => {

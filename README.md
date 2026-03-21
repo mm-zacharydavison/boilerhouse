@@ -71,8 +71,8 @@ sudo scripts/start-boilerhouse-podmand.sh
 **Production (systemd):**
 
 ```bash
-# Install host deps + podmand systemd service
-sudo boilerhouse host install
+# Install podman, CRIU, and podmand systemd service
+sudo boilerhouse host install --podman
 ```
 
 **Verify the daemon is running:**
