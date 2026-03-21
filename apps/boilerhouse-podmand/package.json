@@ -3,6 +3,9 @@
 	"version": "0.0.1",
 	"private": true,
 	"type": "module",
+	"exports": {
+		".": "./src/main.ts"
+	},
 	"scripts": {
 		"start": "bun src/main.ts",
 		"dev": "bun --hot src/main.ts",

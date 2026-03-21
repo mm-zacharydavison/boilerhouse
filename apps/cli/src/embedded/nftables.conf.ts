@@ -1,6 +1,9 @@
-#!/usr/sbin/nft -f
+/**
+ * nftables firewall configuration for the boilerhouse VM.
+ * Allows SSH + HTTPS inbound, drops everything else.
+ */
+export const NFTABLES_CONF = `#!/usr/sbin/nft -f
 # Boilerhouse VM firewall — allow SSH + HTTPS inbound, drop everything else.
-# Install: cp deploy/nftables.conf /etc/nftables.conf && systemctl enable --now nftables
 
 flush ruleset
 
@@ -35,3 +38,4 @@ table inet filter {
 		type filter hook output priority 0; policy accept;
 	}
 }
+`;

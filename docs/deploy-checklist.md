@@ -6,10 +6,8 @@ This tracks what's needed for consumers to deploy it.
 ## Ready
 
 - [x] **Dockerfile** — builds the API image (`oven/bun:1-alpine` based)
-- [x] **Systemd units** — `deploy/boilerhouse-podmand.service`, `deploy/boilerhouse-api.service`
-- [x] **Host install script** — `deploy/install.sh` (installs deps, podmand, generates secrets)
+- [x] **CLI binary** — `boilerhouse host install --podman` sets up the VM (podmand, firewall, secrets)
 - [x] **Reverse proxy config** — `deploy/Caddyfile` (Caddy, auto-TLS, auth, rate limiting)
-- [x] **Firewall rules** — `deploy/nftables.conf`
 - [x] **Observability** — Prometheus scrape config + Grafana dashboard
 - [x] **Deployment guides** — `docs/deploy-vm.md`, `docs/deploy-kubernetes.md`
 - [x] **docker-compose snippet** — documented in deploy-vm.md for consumers to copy
@@ -19,13 +17,9 @@ This tracks what's needed for consumers to deploy it.
 
 ### High priority
 
-- [ ] **Binary releases** — single `boilerhouse` binary built via GitHub Actions CI,
-  published to GitHub Releases. Should bundle both the API and podmand. Subcommands:
-  - `boilerhouse host install` — runs the host setup (what `deploy/install.sh` does now)
-  - `boilerhouse api start` — runs the API server
-  - `boilerhouse api install` — installs the API as a systemd service
-  - `boilerhouse podmand start` — runs podmand (used by the systemd service)
-  This is the recommended non-Docker way of running boilerhouse.
+- [ ] **Binary releases** — publish the `boilerhouse` binary via GitHub Actions CI
+  to GitHub Releases (linux-amd64, linux-arm64). The binary already bundles
+  `host install`, `api start`, `api install`, and `podmand start`.
 
 - [ ] **Published container image** — publish to ghcr.io via CI so consumers
   don't need to build the Docker image themselves.
@@ -56,7 +50,7 @@ This tracks what's needed for consumers to deploy it.
 ## Deployment model
 
 **VM (recommended)**: Install the `boilerhouse` binary (or run from
-source). `boilerhouse host install` sets up the host and starts podmand.
+source). `boilerhouse host install --podman` sets up the host and starts podmand.
 Then run the API either via the binary, as a systemd service, or as a
 Docker container in your compose stack. See `docs/deploy-vm.md`.
 

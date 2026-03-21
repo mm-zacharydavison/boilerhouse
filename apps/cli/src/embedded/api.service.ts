@@ -1,15 +1,19 @@
-[Unit]
+/**
+ * Systemd unit template for the boilerhouse API server.
+ * The binary path must be an absolute path to the installed boilerhouse binary.
+ */
+export function apiServiceUnit(binaryPath: string, dataDir: string): string {
+	return `[Unit]
 Description=Boilerhouse API
-After=network-online.target boilerhouse-podmand.service
+After=network-online.target boilerhouse-podmand@boilerhouse.service
 Wants=network-online.target
-Requires=boilerhouse-podmand.service
+Requires=boilerhouse-podmand@boilerhouse.service
 
 [Service]
 Type=simple
 User=boilerhouse
 Group=boilerhouse
-WorkingDirectory=/opt/boilerhouse
-ExecStart=/usr/local/bin/bun apps/api/src/server.ts
+ExecStart=${binaryPath} api start
 Restart=on-failure
 RestartSec=5
 
@@ -28,7 +32,9 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 MemoryDenyWriteExecute=no
-ReadWritePaths=/opt/boilerhouse/data
+ReadWritePaths=${dataDir}/data ${dataDir}
 
 [Install]
 WantedBy=multi-user.target
+`;
+}

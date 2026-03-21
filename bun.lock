@@ -35,6 +35,16 @@
         "@boilerhouse/runtime-podman": "workspace:*",
       },
     },
+    "apps/cli": {
+      "name": "@boilerhouse/cli",
+      "version": "0.0.0",
+      "dependencies": {
+        "@boilerhouse/api": "workspace:*",
+        "@boilerhouse/boilerhouse-podmand": "workspace:*",
+        "@boilerhouse/core": "workspace:*",
+        "commander": "^13.1.0",
+      },
+    },
     "apps/dashboard": {
       "name": "@boilerhouse/dashboard",
       "version": "0.0.1",
@@ -142,6 +152,8 @@
     "@boilerhouse/api": ["@boilerhouse/api@workspace:apps/api"],
 
     "@boilerhouse/boilerhouse-podmand": ["@boilerhouse/boilerhouse-podmand@workspace:apps/boilerhouse-podmand"],
+
+    "@boilerhouse/cli": ["@boilerhouse/cli@workspace:apps/cli"],
 
     "@boilerhouse/core": ["@boilerhouse/core@workspace:packages/core"],
 
@@ -348,6 +360,8 @@
     "colorette": ["colorette@2.0.20", "", {}, "sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w=="],
 
     "comma-separated-tokens": ["comma-separated-tokens@2.0.3", "", {}, "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg=="],
+
+    "commander": ["commander@13.1.0", "", {}, "sha512-/rFeCpNJQbhSZjGVwO9RFV3xPqbnERS8MmIQzCtD/zl6gpJuV/bMLuN92oG3F7d8oDEHHRrujSXNUr8fpjntKw=="],
 
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 
