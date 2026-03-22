@@ -52,7 +52,7 @@ export class FakeRuntime implements Runtime {
 	private nextPort = 30000;
 	private readonly latencyMs: number;
 	private readonly failOn: Set<RuntimeOperation>;
-	private readonly execResult: ExecResult;
+	private execResult: ExecResult;
 
 	constructor(options?: FakeRuntimeOptions) {
 		this.latencyMs = options?.latencyMs ?? 0;
@@ -145,6 +145,11 @@ export class FakeRuntime implements Runtime {
 		};
 		this.instances.set(instanceId, instance);
 		return { instanceId, running: true };
+	}
+
+	/** Override the result returned by exec() after construction. Useful in tests. */
+	setExecResult(result: ExecResult): void {
+		this.execResult = result;
 	}
 
 	async exec(handle: InstanceHandle, _command: string[]): Promise<ExecResult> {

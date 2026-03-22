@@ -396,6 +396,44 @@ export class InstanceManager {
 		}
 	}
 
+	/**
+	 * Returns the latest mtime across all files in the given directories.
+	 * Uses `find | xargs stat` so it works in both GNU and busybox (Alpine) containers.
+	 *
+	 * Returns `null` if the exec command fails (non-zero exit or instance not found) —
+	 * the caller should treat this as a lost heartbeat and not call reportActivity.
+	 * Returns `new Date(0)` if exec succeeds but no files are found in the directories.
+	 */
+	async statWatchDirs(instanceId: InstanceId, dirs: string[]): Promise<Date | null> {
+		if (dirs.length === 0) return null;
+
+		const row = this.db
+			.select({ status: instances.status })
+			.from(instances)
+			.where(eq(instances.instanceId, instanceId))
+			.get();
+
+		if (!row) return null;
+
+		const handle = instanceHandleFrom(instanceId, row.status);
+		const dirArgs = dirs.map((d) => `'${d}'`).join(" ");
+		const result = await this.runtime.exec(handle, [
+			"sh", "-c",
+			`find ${dirArgs} -maxdepth 3 2>/dev/null | xargs -r stat -c '%Y' 2>/dev/null | sort -rn | head -1`,
+		]);
+
+		// Non-zero exit means exec itself failed (container unreachable, crashed, etc.)
+		if (result.exitCode !== 0) return null;
+
+		// Zero exit with no output means dirs exist but are empty — container is alive
+		if (!result.stdout.trim()) return new Date(0);
+
+		const seconds = parseInt(result.stdout.trim(), 10);
+		if (isNaN(seconds)) return null;
+
+		return new Date(seconds * 1000);
+	}
+
 	async getEndpoint(handle: InstanceHandle): Promise<Endpoint> {
 		return this.runtime.getEndpoint(handle);
 	}
