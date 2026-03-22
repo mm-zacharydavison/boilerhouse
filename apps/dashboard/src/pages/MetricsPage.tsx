@@ -219,6 +219,39 @@ function CapacitySection({ metrics }: { metrics: PrometheusMetrics }) {
 	);
 }
 
+// ── Instance Transitions Section ─────────────────────────────────────────────
+
+function InstanceTransitionsSection({ metrics }: { metrics: PrometheusMetrics }) {
+	const METRIC = "boilerhouse_instance_transition_duration_seconds";
+	const buckets = metrics.byName.get(METRIC)?.samples.filter((s) => s.name === `${METRIC}_bucket`) ?? [];
+	if (buckets.length === 0) return <NoData />;
+
+	const combos = new Map<string, { from: string; workload: string }>();
+	for (const s of buckets) {
+		const from = s.labels.from ?? "";
+		const workload = s.labels.workload ?? "";
+		const key = `${from}|${workload}`;
+		if (!combos.has(key)) combos.set(key, { from, workload });
+	}
+
+	return (
+		<DataTable headers={["State", "Workload", "p50", "p95"]}>
+			{[...combos.values()].map(({ from, workload }) => {
+				const p50 = computePercentile(metrics, METRIC, 0.5, { from, workload });
+				const p95 = computePercentile(metrics, METRIC, 0.95, { from, workload });
+				return (
+					<DataRow key={`${from}|${workload}`}>
+						<td className="px-4 py-2 text-muted-light">{from}</td>
+						<td className="px-4 py-2 text-accent">{workload || "(none)"}</td>
+						<td className="px-4 py-2">{p50 !== null ? formatDuration(p50) : "--"}</td>
+						<td className="px-4 py-2">{p95 !== null ? formatDuration(p95) : "--"}</td>
+					</DataRow>
+				);
+			})}
+		</DataTable>
+	);
+}
+
 // ── Snapshots Section ───────────────────────────────────────────────────────
 
 function SnapshotsSection({ metrics }: { metrics: PrometheusMetrics }) {
@@ -419,6 +452,9 @@ export function MetricsPage() {
 
 			<SectionHeader>Instances</SectionHeader>
 			<InstancesSection metrics={metrics} />
+
+			<SectionHeader>Instance Transition Times</SectionHeader>
+			<InstanceTransitionsSection metrics={metrics} />
 
 			<SectionHeader>Capacity</SectionHeader>
 			<CapacitySection metrics={metrics} />

@@ -46,7 +46,13 @@ const server = Bun.serve<WsData>({
 				method: req.method,
 				headers,
 				body: req.body,
-			});
+			}).catch(
+				() =>
+					new Response(JSON.stringify({ error: "Cannot reach API server" }), {
+						status: 502,
+						headers: { "Content-Type": "application/json" },
+					}),
+			);
 		}
 
 		// Catch-all: serve index.html for SPA routing
