@@ -126,7 +126,7 @@ for (const entry of runtimes) {
 			}
 
 			// Clean up
-			await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 		}, timeouts.operation * 2);
 	});
 }

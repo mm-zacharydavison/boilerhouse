@@ -43,6 +43,15 @@ export class NoGoldenSnapshotError extends Error {
 }
 
 export class TenantManager {
+	/** Per-tenant+workload lock to prevent duplicate claims from concurrent requests. */
+	private readonly inflightClaims = new Map<string, Promise<ClaimResult>>();
+	/**
+	 * Per-snapshot mutex for CRIU restores.
+	 * CRIU cannot restore the same checkpoint archive concurrently —
+	 * concurrent restores from the same golden snapshot must be serialized.
+	 */
+	private readonly restoreLocks = new Map<string, Promise<void>>();
+
 	constructor(
 		private readonly instanceManager: InstanceManager,
 		private readonly snapshotManager: SnapshotManager,
@@ -71,19 +80,32 @@ export class TenantManager {
 	 * 3. Cold boot from workload definition
 	 */
 	async claim(tenantId: TenantId, workloadId: WorkloadId): Promise<ClaimResult> {
+		const key = `${tenantId}:${workloadId}`;
+		const inflight = this.inflightClaims.get(key);
+		if (inflight) return inflight;
+
+		const promise = this.claimInner(tenantId, workloadId).finally(() => {
+			this.inflightClaims.delete(key);
+		});
+		this.inflightClaims.set(key, promise);
+		return promise;
+	}
+
+	private async claimInner(tenantId: TenantId, workloadId: WorkloadId): Promise<ClaimResult> {
 		const start = performance.now();
 
-		// 1. Check for existing active instance
+		// 1. Check for existing active, starting, or restoring instance for this tenant+workload
 		const existingInstance = this.db
 			.select()
 			.from(instances)
 			.where(
 				and(
 					eq(instances.tenantId, tenantId),
-					eq(instances.status, "active"),
+					eq(instances.workloadId, workloadId),
 				),
 			)
-			.get();
+			.all()
+			.find((r) => r.status === "active" || r.status === "starting" || r.status === "restoring");
 
 		if (existingInstance) {
 			const handle = instanceHandleFrom(existingInstance.instanceId, existingInstance.status);
@@ -102,22 +124,31 @@ export class TenantManager {
 		const tenantRow = this.db
 			.select()
 			.from(tenants)
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.get();
 
-		if (tenantRow?.lastSnapshotId) {
-			const snapshotRef = this.getSnapshotRef(tenantRow.lastSnapshotId);
-			if (snapshotRef) {
-				this.log?.info({ tenantId, workloadId, source: "snapshot", snapshotId: snapshotRef.id }, "Claiming via tenant snapshot");
-				return this.restoreAndClaim(snapshotRef, tenantId, workloadId, "snapshot", start);
+		// Register the tenant as "claiming" immediately so it's visible in the dashboard / API
+		this.markClaiming(tenantId, workloadId, tenantRow);
+
+		try {
+			if (tenantRow?.lastSnapshotId) {
+				const snapshotRef = this.getSnapshotRef(tenantRow.lastSnapshotId);
+				if (snapshotRef) {
+					this.log?.info({ tenantId, workloadId, source: "snapshot", snapshotId: snapshotRef.id }, "Claiming via tenant snapshot");
+					return await this.restoreAndClaim(snapshotRef, tenantId, workloadId, "snapshot", start);
+				}
 			}
-		}
 
-		if (this.snapshotManager.capabilities.goldenSnapshots) {
-			return this.claimViaGolden(tenantId, workloadId, tenantRow, start);
-		}
+			if (this.snapshotManager.capabilities.goldenSnapshots) {
+				return await this.claimViaGolden(tenantId, workloadId, tenantRow, start);
+			}
 
-		return this.claimViaColdBoot(tenantId, workloadId, tenantRow, start);
+			return await this.claimViaColdBoot(tenantId, workloadId, tenantRow, start);
+		} catch (err) {
+			// Restore/create failed — revert tenant to idle
+			this.revertClaiming(tenantId, workloadId);
+			throw err;
+		}
 	}
 
 	/** Golden snapshot claim path (steps 3–4): overlay restore or fresh golden. */
@@ -129,7 +160,7 @@ export class TenantManager {
 	): Promise<ClaimResult> {
 		// 3. Check for data overlay (cold+data path)
 		const overlayPath = tenantRow
-			? this.tenantDataStore.restoreOverlay(tenantId)
+			? this.tenantDataStore.restoreOverlay(tenantId, workloadId)
 			: null;
 
 		if (overlayPath) {
@@ -173,7 +204,7 @@ export class TenantManager {
 
 		// Check for data overlay (cold boot + data path)
 		const overlayPath = tenantRow
-			? this.tenantDataStore.restoreOverlay(tenantId)
+			? this.tenantDataStore.restoreOverlay(tenantId, workloadId)
 			: null;
 
 		const source: ClaimSource = overlayPath ? "cold+data" : "cold";
@@ -185,7 +216,7 @@ export class TenantManager {
 			tenantId,
 		);
 
-		this.upsertTenant(tenantId, workloadId, handle.instanceId);
+		this.completeClaim(tenantId, workloadId, handle.instanceId);
 		this.updateInstanceClaimed(handle.instanceId);
 
 		if (overlayPath) {
@@ -217,11 +248,11 @@ export class TenantManager {
 	 *
 	 * No-op if the tenant has no active instance.
 	 */
-	async release(tenantId: TenantId): Promise<void> {
+	async release(tenantId: TenantId, workloadId: WorkloadId): Promise<void> {
 		const tenantRow = this.db
 			.select()
 			.from(tenants)
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.get();
 
 		if (!tenantRow?.instanceId) return;
@@ -229,7 +260,7 @@ export class TenantManager {
 		const instanceId = tenantRow.instanceId;
 
 		const tenantStatus = tenantRow.status as TenantStatus;
-		applyTenantTransition(this.db, tenantId, tenantStatus, "release");
+		applyTenantTransition(this.db, tenantId, workloadId, tenantStatus, "release");
 
 		if (this.idleMonitor) {
 			this.idleMonitor.unwatch(instanceId);
@@ -261,17 +292,17 @@ export class TenantManager {
 
 		if (idleAction === "hibernate") {
 			await this.instanceManager.hibernate(instanceId);
-			applyTenantTransition(this.db, tenantId, "releasing", "hibernated");
+			applyTenantTransition(this.db, tenantId, workloadId, "releasing", "hibernated");
 		} else {
 			await this.instanceManager.destroy(instanceId);
-			applyTenantTransition(this.db, tenantId, "releasing", "destroyed");
+			applyTenantTransition(this.db, tenantId, workloadId, "releasing", "destroyed");
 		}
 
 		// Clear instanceId on tenant row (lastSnapshotId is preserved by hibernate)
 		this.db
 			.update(tenants)
 			.set({ instanceId: null })
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.run();
 
 		this.activityLog.log({
@@ -290,6 +321,17 @@ export class TenantManager {
 		source: ClaimSource,
 		start: number,
 	): Promise<ClaimResult> {
+		// Create the instance row immediately so it's visible in the UI
+		// while waiting for the CRIU restore mutex.
+		const prepared = this.instanceManager.prepareRestore(ref, tenantId);
+
+		// Link the instance to the tenant row right away (still in "claiming" status)
+		this.db
+			.update(tenants)
+			.set({ instanceId: prepared.instanceId })
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
+			.run();
+
 		this.eventBus?.emit({
 			type: "tenant.claiming",
 			tenantId,
@@ -300,7 +342,9 @@ export class TenantManager {
 
 		let handle;
 		try {
-			handle = await this.instanceManager.restoreFromSnapshot(ref, tenantId);
+			handle = await this.serializedRestore(ref.id, () =>
+				this.instanceManager.executeRestore(ref, prepared.instanceId, prepared.workloadId, tenantId),
+			);
 		} catch (err) {
 			this.log?.error(
 				{ tenantId, workloadId, source, snapshotId: ref.id, err },
@@ -309,7 +353,7 @@ export class TenantManager {
 			throw err;
 		}
 
-		this.upsertTenant(tenantId, workloadId, handle.instanceId);
+		this.completeClaim(tenantId, workloadId, handle.instanceId);
 		this.updateInstanceClaimed(handle.instanceId);
 
 		const endpoint = await this.safeGetEndpoint(handle);
@@ -332,6 +376,35 @@ export class TenantManager {
 		};
 	}
 
+	/**
+	 * Serializes restore operations that share the same snapshot.
+	 * CRIU cannot restore the same checkpoint archive concurrently, and
+	 * needs a brief cooldown between restores for overlay cleanup.
+	 */
+	private async serializedRestore<T>(snapshotId: string, fn: () => Promise<T>): Promise<T> {
+		const tail = this.restoreLocks.get(snapshotId) ?? Promise.resolve();
+
+		let resolve!: () => void;
+		const next = new Promise<void>((r) => { resolve = r; });
+		this.restoreLocks.set(snapshotId, next);
+
+		// Wait for all prior restores of this snapshot to finish
+		await tail.catch(() => {});
+
+		try {
+			return await fn();
+		} catch (err) {
+			// Brief cooldown after failure — CRIU overlay cleanup is async
+			await new Promise((r) => setTimeout(r, 500));
+			throw err;
+		} finally {
+			resolve();
+			if (this.restoreLocks.get(snapshotId) === next) {
+				this.restoreLocks.delete(snapshotId);
+			}
+		}
+	}
+
 	/** Returns the endpoint, or null for containers with no exposed ports. */
 	private async safeGetEndpoint(handle: InstanceHandle): Promise<Endpoint | null> {
 		const endpoint = await this.instanceManager.getEndpoint(handle);
@@ -352,43 +425,60 @@ export class TenantManager {
 	}
 
 	/**
-	 * Inserts or updates the tenant row with the current instance.
-	 * Transitions tenant status through claiming → active.
+	 * Registers the tenant as "claiming" before the restore/create begins.
+	 * Inserts a new row if none exists, or transitions an existing row.
 	 */
-	private upsertTenant(
+	private markClaiming(
 		tenantId: TenantId,
 		workloadId: WorkloadId,
-		instanceId: InstanceId,
+		existing: { tenantId: TenantId; status?: string | null } | undefined,
 	): void {
-		const existing = this.db
-			.select()
-			.from(tenants)
-			.where(eq(tenants.tenantId, tenantId))
-			.get();
-
 		if (existing) {
-			applyTenantTransition(this.db, tenantId, existing.status as TenantStatus, "claim");
-			applyTenantTransition(this.db, tenantId, "claiming", "claimed");
-
-			this.db
-				.update(tenants)
-				.set({ instanceId, lastActivity: new Date() })
-				.where(eq(tenants.tenantId, tenantId))
-				.run();
+			applyTenantTransition(this.db, tenantId, workloadId, existing.status as TenantStatus, "claim");
 		} else {
-			// New tenant: insert directly as "active" (claim + claimed in one step)
 			this.db
 				.insert(tenants)
 				.values({
 					tenantId,
 					workloadId,
-					instanceId,
-					status: "active" as TenantStatus,
-					lastActivity: new Date(),
+					status: "claiming" as TenantStatus,
 					createdAt: new Date(),
 				})
 				.run();
 		}
+	}
+
+	/**
+	 * Reverts the tenant from "claiming" back to "idle" when a claim fails.
+	 */
+	private revertClaiming(tenantId: TenantId, workloadId: WorkloadId): void {
+		try {
+			applyTenantTransition(this.db, tenantId, workloadId, "claiming", "claim_failed");
+			this.db
+				.update(tenants)
+				.set({ instanceId: null })
+				.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
+				.run();
+		} catch {
+			// Best-effort — tenant may have been modified by concurrent operations
+		}
+	}
+
+	/**
+	 * Completes a claim: sets the instance and transitions claiming → active.
+	 */
+	private completeClaim(
+		tenantId: TenantId,
+		workloadId: WorkloadId,
+		instanceId: InstanceId,
+	): void {
+		applyTenantTransition(this.db, tenantId, workloadId, "claiming", "claimed");
+
+		this.db
+			.update(tenants)
+			.set({ instanceId, lastActivity: new Date() })
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
+			.run();
 	}
 
 	/** Sets claimedAt and lastActivity on the instance row. */

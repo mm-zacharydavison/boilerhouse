@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type {
 	Runtime,
 	InstanceHandle,
@@ -17,6 +17,7 @@ import type { DrizzleDb, ActivityLog } from "@boilerhouse/db";
 import { instances, snapshots, tenants, workloads } from "@boilerhouse/db";
 import {
 	applyInstanceTransition,
+	forceInstanceStatus,
 	applySnapshotTransition,
 	applyTenantTransition,
 } from "./transitions";
@@ -28,7 +29,7 @@ import type { CredentialRule } from "@boilerhouse/envoy-config";
 
 /** Derives an InstanceHandle from a DB row's status. */
 export function instanceHandleFrom(instanceId: InstanceId, status: string): InstanceHandle {
-	return { instanceId, running: status === "active" };
+	return { instanceId, running: status === "active" || status === "restoring" };
 }
 
 export class SnapshotNotFoundError extends Error {
@@ -113,17 +114,17 @@ export class InstanceManager {
 			const tenantRow = this.db
 				.select({ status: tenants.status })
 				.from(tenants)
-				.where(eq(tenants.tenantId, row.tenantId))
+				.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 				.get();
 
 			if (tenantRow?.status === "active") {
-				applyTenantTransition(this.db, row.tenantId, "active", "release");
-				applyTenantTransition(this.db, row.tenantId, "releasing", "destroyed");
+				applyTenantTransition(this.db, row.tenantId, row.workloadId, "active", "release");
+				applyTenantTransition(this.db, row.tenantId, row.workloadId, "releasing", "destroyed");
 
 				this.db
 					.update(tenants)
 					.set({ instanceId: null })
-					.where(eq(tenants.tenantId, row.tenantId))
+					.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 					.run();
 			}
 		}
@@ -162,11 +163,29 @@ export class InstanceManager {
 
 		const handle = instanceHandleFrom(instanceId, row.status);
 
+		// Enter hibernating state before starting the checkpoint
+		applyInstanceTransition(this.db, instanceId, row.status, "hibernate");
+
+		this.eventBus?.emit({
+			type: "instance.state",
+			instanceId,
+			status: "hibernating",
+			workloadId: row.workloadId,
+			tenantId: row.tenantId ?? undefined,
+		});
+
 		let ref: SnapshotRef;
 		try {
 			ref = await this.runtime.snapshot(handle);
 		} catch (err) {
-			await this.destroy(instanceId);
+			// Checkpoint failed — transition to destroying and clean up
+			applyInstanceTransition(this.db, instanceId, "hibernating", "hibernating_failed");
+			applyInstanceTransition(this.db, instanceId, "destroying", "destroyed");
+			try {
+				await this.runtime.destroy(handle);
+			} catch {
+				// Best-effort cleanup
+			}
 			throw err;
 		}
 
@@ -200,14 +219,14 @@ export class InstanceManager {
 
 		await this.runtime.destroy(handle);
 
-		applyInstanceTransition(this.db, instanceId, row.status, "hibernate");
+		applyInstanceTransition(this.db, instanceId, "hibernating", "hibernated");
 
 		if (row.tenantId) {
 			// Delete the previous tenant snapshot (keep only the latest)
 			const tenantRow = this.db
 				.select({ lastSnapshotId: tenants.lastSnapshotId, status: tenants.status })
 				.from(tenants)
-				.where(eq(tenants.tenantId, row.tenantId))
+				.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 				.get();
 
 			if (tenantRow?.lastSnapshotId) {
@@ -220,20 +239,20 @@ export class InstanceManager {
 			this.db
 				.update(tenants)
 				.set({ lastSnapshotId: correctedRef.id })
-				.where(eq(tenants.tenantId, row.tenantId))
+				.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 				.run();
 
 			// If tenant is still "active", this hibernate was called directly
 			// (not through the tenant release flow). Transition the tenant to
 			// "released" and clear its instanceId so it can be re-claimed.
 			if (tenantRow?.status === "active") {
-				applyTenantTransition(this.db, row.tenantId, "active", "release");
-				applyTenantTransition(this.db, row.tenantId, "releasing", "hibernated");
+				applyTenantTransition(this.db, row.tenantId, row.workloadId, "active", "release");
+				applyTenantTransition(this.db, row.tenantId, row.workloadId, "releasing", "hibernated");
 
 				this.db
 					.update(tenants)
 					.set({ instanceId: null })
-					.where(eq(tenants.tenantId, row.tenantId))
+					.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 					.run();
 			}
 		}
@@ -258,11 +277,16 @@ export class InstanceManager {
 		return correctedRef;
 	}
 
-	async restoreFromSnapshot(
+	/**
+	 * Creates the instance row and prepares restore options, but does NOT
+	 * execute the CRIU restore. Call {@link executeRestore} to perform the
+	 * actual restore. This split allows the instance to be visible in the
+	 * DB (status: "starting") while waiting for a CRIU restore mutex.
+	 */
+	prepareRestore(
 		ref: SnapshotRef,
 		tenantId: TenantId,
-	): Promise<InstanceHandle> {
-		// Verify the snapshot exists in the DB
+	): { instanceId: InstanceId; workloadId: WorkloadId } {
 		const snapshotRow = this.db
 			.select()
 			.from(snapshots)
@@ -274,11 +298,6 @@ export class InstanceManager {
 		}
 
 		const instanceId = generateInstanceId();
-
-		this.log?.info(
-			{ snapshotId: ref.id, snapshotType: ref.type, instanceId, tenantId },
-			"Restoring instance from snapshot",
-		);
 
 		this.db
 			.insert(instances)
@@ -292,16 +311,36 @@ export class InstanceManager {
 			})
 			.run();
 
-		// Build proxy config for the restored instance
+		return { instanceId, workloadId: snapshotRow.workloadId };
+	}
+
+	/**
+	 * Executes the CRIU restore for a previously prepared instance.
+	 * On failure, cleans up the orphaned pod and marks the instance destroyed.
+	 */
+	async executeRestore(
+		ref: SnapshotRef,
+		instanceId: InstanceId,
+		workloadId: WorkloadId,
+		tenantId: TenantId,
+	): Promise<InstanceHandle> {
+		this.log?.info(
+			{ snapshotId: ref.id, snapshotType: ref.type, instanceId, tenantId },
+			"Restoring instance from snapshot",
+		);
+
 		const workloadRow = this.db
 			.select({ config: workloads.config })
 			.from(workloads)
-			.where(eq(workloads.workloadId, snapshotRow.workloadId))
+			.where(eq(workloads.workloadId, workloadId))
 			.get();
 
 		const restoreOptions = workloadRow
 			? this.buildCreateOptions(workloadRow.config as Workload, tenantId)
 			: undefined;
+
+		// Enter restoring state before the CRIU restore begins
+		applyInstanceTransition(this.db, instanceId, "starting", "restoring");
 
 		let handle: InstanceHandle;
 		try {
@@ -311,10 +350,16 @@ export class InstanceManager {
 				{ snapshotId: ref.id, instanceId, tenantId, err },
 				"Failed to restore instance from snapshot",
 			);
+			try {
+				await this.runtime.destroy({ instanceId, running: false });
+			} catch {
+				// Best-effort — pod may not have been created
+			}
+			forceInstanceStatus(this.db, instanceId, "destroyed");
 			throw err;
 		}
 
-		applyInstanceTransition(this.db, instanceId, "starting", "started");
+		applyInstanceTransition(this.db, instanceId, "restoring", "restored");
 
 		this.log?.info(
 			{ instanceId, tenantId, snapshotId: ref.id },
@@ -325,7 +370,7 @@ export class InstanceManager {
 			event: "instance.restored",
 			instanceId,
 			nodeId: this.nodeId,
-			workloadId: snapshotRow.workloadId,
+			workloadId,
 			tenantId,
 			metadata: {
 				snapshotType: ref.type,
@@ -334,6 +379,18 @@ export class InstanceManager {
 		});
 
 		return handle;
+	}
+
+	/**
+	 * Convenience method that prepares and immediately executes a restore.
+	 * Used by code paths that don't need the split (e.g. direct API calls).
+	 */
+	async restoreFromSnapshot(
+		ref: SnapshotRef,
+		tenantId: TenantId,
+	): Promise<InstanceHandle> {
+		const { instanceId, workloadId } = this.prepareRestore(ref, tenantId);
+		return this.executeRestore(ref, instanceId, workloadId, tenantId);
 	}
 
 	// ── Overlay helpers ─────────────────────────────────────────────────────

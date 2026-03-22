@@ -126,7 +126,7 @@ describe("TenantManager", () => {
 			// Create golden, claim, then release (hibernate creates a tenant snapshot)
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			await tenantManager.claim(tenantId, workloadId);
-			await tenantManager.release(tenantId);
+			await tenantManager.release(tenantId, workloadId);
 
 			// Verify tenant has a lastSnapshotId
 			const tenantRow = db
@@ -224,7 +224,7 @@ describe("TenantManager", () => {
 			expect(first.source).toBe("cold");
 
 			// Release → hibernates (snapshot overlay data, destroy pod)
-			await noGoldenTM.release(tenantId);
+			await noGoldenTM.release(tenantId, workloadId);
 
 			const row = db
 				.select()
@@ -309,6 +309,61 @@ describe("TenantManager", () => {
 			expect(second.source).toBe("existing");
 		});
 
+		test("exclusivity: concurrent claims return same instance (no duplicates)", async () => {
+			const tenantId = generateTenantId();
+
+			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
+
+			// Fire two claims concurrently — the second should not create a duplicate
+			const [first, second] = await Promise.all([
+				tenantManager.claim(tenantId, workloadId),
+				tenantManager.claim(tenantId, workloadId),
+			]);
+
+			expect(first.instanceId).toBe(second.instanceId);
+		});
+
+		test("exclusivity: claim returns starting instance rather than creating duplicate", async () => {
+			const tenantId = generateTenantId();
+
+			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
+
+			// First claim creates the instance
+			const first = await tenantManager.claim(tenantId, workloadId);
+
+			// Manually set instance back to "starting" to simulate a slow start
+			db.update(instances)
+				.set({ status: "starting" })
+				.where(eq(instances.instanceId, first.instanceId))
+				.run();
+
+			// Second claim should return the starting instance, not create a new one
+			const second = await tenantManager.claim(tenantId, workloadId);
+
+			expect(second.instanceId).toBe(first.instanceId);
+			expect(second.source).toBe("existing");
+		});
+
+		test("concurrent claims from different tenants for same workload all succeed (serialized restore)", async () => {
+			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
+
+			const tenants = Array.from({ length: 5 }, () => generateTenantId());
+
+			// Fire all claims concurrently — restores must be serialized
+			const results = await Promise.all(
+				tenants.map((tid) => tenantManager.claim(tid, workloadId)),
+			);
+
+			// Each tenant should get a distinct instance
+			const instanceIds = results.map((r) => r.instanceId);
+			expect(new Set(instanceIds).size).toBe(5);
+
+			// All should succeed (source golden or snapshot, not error)
+			for (const r of results) {
+				expect(["golden", "cold"]).toContain(r.source);
+			}
+		});
+
 		test("returns endpoint with host + ports", async () => {
 			const tenantId = generateTenantId();
 
@@ -351,7 +406,7 @@ describe("TenantManager", () => {
 
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			const claimed = await tenantManager.claim(tenantId, workloadId);
-			await tenantManager.release(tenantId);
+			await tenantManager.release(tenantId, workloadId);
 
 			const row = db
 				.select()
@@ -392,7 +447,7 @@ describe("TenantManager", () => {
 
 			const tenantId = generateTenantId();
 			const claimed = await destroyTenantManager.claim(tenantId, destroyWorkloadId);
-			await destroyTenantManager.release(tenantId);
+			await destroyTenantManager.release(tenantId, destroyWorkloadId);
 
 			const row = db
 				.select()
@@ -408,7 +463,7 @@ describe("TenantManager", () => {
 
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			await tenantManager.claim(tenantId, workloadId);
-			await tenantManager.release(tenantId);
+			await tenantManager.release(tenantId, workloadId);
 
 			const row = db
 				.select()
@@ -424,7 +479,7 @@ describe("TenantManager", () => {
 
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			await tenantManager.claim(tenantId, workloadId);
-			await tenantManager.release(tenantId);
+			await tenantManager.release(tenantId, workloadId);
 
 			const row = db
 				.select()
@@ -443,7 +498,7 @@ describe("TenantManager", () => {
 				.run();
 
 			// Should not throw
-			await expect(tenantManager.release(tenantId)).resolves.toBeUndefined();
+			await expect(tenantManager.release(tenantId, workloadId)).resolves.toBeUndefined();
 		});
 
 		test("logs 'tenant.released' activity", async () => {
@@ -451,7 +506,7 @@ describe("TenantManager", () => {
 
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			await tenantManager.claim(tenantId, workloadId);
-			await tenantManager.release(tenantId);
+			await tenantManager.release(tenantId, workloadId);
 
 			const events = log.queryByTenant(tenantId);
 			const releaseEvent = events.find(

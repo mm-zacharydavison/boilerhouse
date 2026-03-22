@@ -55,12 +55,12 @@ for (const rt of availableRuntimes()) {
 			const tenant1Res = await api(server, "GET", `/api/v1/tenants/${tenantId1}`);
 			expect(tenant1Res.status).toBe(200);
 			const tenant1 = await tenant1Res.json();
-			expect(tenant1.instanceId).toBe(claim1Body.instanceId);
+			expect(tenant1[0].instanceId).toBe(claim1Body.instanceId);
 
 			const tenant2Res = await api(server, "GET", `/api/v1/tenants/${tenantId2}`);
 			expect(tenant2Res.status).toBe(200);
 			const tenant2 = await tenant2Res.json();
-			expect(tenant2.instanceId).toBe(claim2Body.instanceId);
+			expect(tenant2[0].instanceId).toBe(claim2Body.instanceId);
 
 			// Verify 2 active instances exist
 			const activeRes = await api(server, "GET", "/api/v1/instances?status=active");
@@ -69,10 +69,10 @@ for (const rt of availableRuntimes()) {
 			expect(activeInstances.length).toBe(2);
 
 			// Release both
-			const release1 = await api(server, "POST", `/api/v1/tenants/${tenantId1}/release`);
+			const release1 = await api(server, "POST", `/api/v1/tenants/${tenantId1}/release`, { workload: workloadName });
 			expect(release1.status).toBe(200);
 
-			const release2 = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`);
+			const release2 = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`, { workload: workloadName });
 			expect(release2.status).toBe(200);
 		}, timeouts.operation);
 	});

@@ -12,7 +12,9 @@ export { InvalidTransitionError };
 
 export const InstanceStatusSchema = Type.Union([
 	Type.Literal("starting"),
+	Type.Literal("restoring"),
 	Type.Literal("active"),
+	Type.Literal("hibernating"),
 	Type.Literal("hibernated"),
 	Type.Literal("destroying"),
 	Type.Literal("destroyed"),
@@ -20,9 +22,12 @@ export const InstanceStatusSchema = Type.Union([
 
 export const InstanceEventSchema = Type.Union([
 	Type.Literal("started"),
+	Type.Literal("restoring"),
+	Type.Literal("restored"),
 	Type.Literal("hibernate"),
+	Type.Literal("hibernated"),
+	Type.Literal("hibernating_failed"),
 	Type.Literal("destroy"),
-	Type.Literal("restore"),
 	Type.Literal("destroyed"),
 ]);
 
@@ -33,7 +38,9 @@ export type InstanceEvent = Static<typeof InstanceEventSchema>;
 
 export const INSTANCE_STATUSES = [
 	"starting",
+	"restoring",
 	"active",
+	"hibernating",
 	"hibernated",
 	"destroying",
 	"destroyed",
@@ -41,18 +48,23 @@ export const INSTANCE_STATUSES = [
 
 export const INSTANCE_EVENTS = [
 	"started",
+	"restoring",
+	"restored",
 	"hibernate",
+	"hibernated",
+	"hibernating_failed",
 	"destroy",
-	"restore",
 	"destroyed",
 ] as const satisfies readonly InstanceEvent[];
 
 // ── Machine ─────────────────────────────────────────────────────────────────
 
 const transitions: TransitionMap<InstanceStatus, InstanceEvent> = {
-	starting: { started: "active", destroy: "destroying" },
-	active: { hibernate: "hibernated", destroy: "destroying" },
-	hibernated: { restore: "starting", destroy: "destroying" },
+	starting: { started: "active", restoring: "restoring", destroy: "destroying" },
+	restoring: { restored: "active", destroy: "destroying" },
+	active: { hibernate: "hibernating", destroy: "destroying" },
+	hibernating: { hibernated: "hibernated", hibernating_failed: "destroying" },
+	hibernated: { restoring: "restoring", destroy: "destroying" },
 	destroying: { destroyed: "destroyed" },
 	destroyed: {},
 };

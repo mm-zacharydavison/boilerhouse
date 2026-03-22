@@ -79,7 +79,7 @@ for (const rt of availableRuntimes()) {
 			expect(readBody.stdout).toContain("tenant-data-12345");
 
 			// 4. Release tenant (idle.action="hibernate" → snapshots overlay, destroys)
-			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(releaseRes.status).toBe(200);
 
 			// 5. Verify instance is hibernated
@@ -111,7 +111,7 @@ for (const rt of availableRuntimes()) {
 			expect(readBody2.stdout).toContain("tenant-data-12345");
 
 			// 8. Clean up
-			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(release2Res.status).toBe(200);
 		}, timeouts.operation);
 	});

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type { Runtime, NodeId, InstanceStatus, TenantStatus } from "@boilerhouse/core";
 import { instances, tenants } from "@boilerhouse/db";
 import type { DrizzleDb, ActivityLog } from "@boilerhouse/db";
@@ -14,7 +14,7 @@ export interface RecoveryReport {
 }
 
 /** Statuses that indicate an instance should be running in the runtime. */
-const LIVE_STATUSES: InstanceStatus[] = ["active", "starting"];
+const LIVE_STATUSES: InstanceStatus[] = ["active", "starting", "restoring"];
 
 /**
  * Reconciles DB state with the actual runtime after a server restart.
@@ -61,7 +61,7 @@ export async function recoverState(
 			if (row.tenantId) {
 				db.update(tenants)
 					.set({ instanceId: null })
-					.where(eq(tenants.tenantId, row.tenantId))
+					.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 					.run();
 			}
 
@@ -79,13 +79,13 @@ export async function recoverState(
 		}
 	}
 
-	// 3b. Recover instances stuck in "destroying" — cleanup already happened or failed
+	// 3b. Recover instances stuck in "destroying" or "hibernating" — cleanup already happened or failed
 	const destroyingInstances = db
 		.select()
 		.from(instances)
 		.where(eq(instances.nodeId, nodeId))
 		.all()
-		.filter((row) => row.status === "destroying");
+		.filter((row) => row.status === "destroying" || row.status === "hibernating");
 
 	for (const row of destroyingInstances) {
 		forceInstanceStatus(db, row.instanceId, "destroyed");
@@ -113,10 +113,10 @@ export async function recoverState(
 	for (const row of stuckTenants) {
 		if (row.status === "claiming") {
 			// Claim never completed — reset to idle and clear instanceId
-			forceTenantStatus(db, row.tenantId, "idle");
+			forceTenantStatus(db, row.tenantId, row.workloadId, "idle");
 			db.update(tenants)
 				.set({ instanceId: null })
-				.where(eq(tenants.tenantId, row.tenantId))
+				.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 				.run();
 		} else if (row.status === "releasing") {
 			// Check if the instance is still active
@@ -129,13 +129,13 @@ export async function recoverState(
 
 			if (instanceActive && LIVE_STATUSES.includes(instanceActive.status!)) {
 				// Instance still alive — release didn't complete, revert to active
-				forceTenantStatus(db, row.tenantId, "active" as TenantStatus);
+				forceTenantStatus(db, row.tenantId, row.workloadId, "active" as TenantStatus);
 			} else {
 				// Instance destroyed/missing — reset to idle and clear instanceId
-				forceTenantStatus(db, row.tenantId, "idle");
+				forceTenantStatus(db, row.tenantId, row.workloadId, "idle");
 				db.update(tenants)
 					.set({ instanceId: null })
-					.where(eq(tenants.tenantId, row.tenantId))
+					.where(and(eq(tenants.tenantId, row.tenantId), eq(tenants.workloadId, row.workloadId)))
 					.run();
 			}
 		}

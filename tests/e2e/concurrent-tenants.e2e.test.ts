@@ -69,7 +69,7 @@ for (const rt of availableRuntimes()) {
 			// Step 5: Release all 3 in parallel
 			const releaseResults = await Promise.all(
 				tenantIds.map((id) =>
-					api(server, "POST", `/api/v1/tenants/${id}/release`).then(
+					api(server, "POST", `/api/v1/tenants/${id}/release`, { workload: workloadName }).then(
 						async (res) => ({
 							status: res.status,
 							body: await res.json(),

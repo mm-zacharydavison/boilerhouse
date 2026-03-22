@@ -173,7 +173,7 @@ eventBus.on((event) => {
 
 idleMonitor.onIdle(async (instanceId, action) => {
 	const tenantRow = db
-		.select({ tenantId: tenants.tenantId })
+		.select({ tenantId: tenants.tenantId, workloadId: tenants.workloadId })
 		.from(tenants)
 		.where(eq(tenants.instanceId, instanceId))
 		.get();
@@ -183,8 +183,8 @@ idleMonitor.onIdle(async (instanceId, action) => {
 		return;
 	}
 
-	log.info({ instanceId, tenantId: tenantRow.tenantId, action }, "Idle timeout: releasing tenant");
-	await tenantManager.release(tenantRow.tenantId);
+	log.info({ instanceId, tenantId: tenantRow.tenantId, workloadId: tenantRow.workloadId, action }, "Idle timeout: releasing tenant");
+	await tenantManager.release(tenantRow.tenantId, tenantRow.workloadId);
 });
 
 // Recover state before accepting requests

@@ -13,33 +13,53 @@ describe("instance state machine", () => {
 			expect(transition("starting", "started")).toBe("active");
 		});
 
-		test("active → hibernated (via 'hibernate' event)", () => {
-			expect(transition("active", "hibernate")).toBe("hibernated");
+		test("starting → restoring (via 'restoring' event)", () => {
+			expect(transition("starting", "restoring")).toBe("restoring");
+		});
+
+		test("starting → destroying (via 'destroy' event)", () => {
+			expect(transition("starting", "destroy")).toBe("destroying");
+		});
+
+		test("restoring → active (via 'restored' event)", () => {
+			expect(transition("restoring", "restored")).toBe("active");
+		});
+
+		test("restoring → destroying (via 'destroy' event)", () => {
+			expect(transition("restoring", "destroy")).toBe("destroying");
+		});
+
+		test("active → hibernating (via 'hibernate' event)", () => {
+			expect(transition("active", "hibernate")).toBe("hibernating");
 		});
 
 		test("active → destroying (via 'destroy' event)", () => {
 			expect(transition("active", "destroy")).toBe("destroying");
 		});
 
-		test("destroying → destroyed (via 'destroyed' event)", () => {
-			expect(transition("destroying", "destroyed")).toBe("destroyed");
+		test("hibernating → hibernated (via 'hibernated' event)", () => {
+			expect(transition("hibernating", "hibernated")).toBe("hibernated");
 		});
 
-		test("hibernated → starting (via 'restore' event)", () => {
-			expect(transition("hibernated", "restore")).toBe("starting");
+		test("hibernating → destroying (via 'hibernating_failed' event)", () => {
+			expect(transition("hibernating", "hibernating_failed")).toBe("destroying");
+		});
+
+		test("hibernated → restoring (via 'restoring' event)", () => {
+			expect(transition("hibernated", "restoring")).toBe("restoring");
 		});
 
 		test("hibernated → destroying (via 'destroy' event)", () => {
 			expect(transition("hibernated", "destroy")).toBe("destroying");
 		});
 
-		test("starting → destroying (via 'destroy' event)", () => {
-			expect(transition("starting", "destroy")).toBe("destroying");
+		test("destroying → destroyed (via 'destroyed' event)", () => {
+			expect(transition("destroying", "destroyed")).toBe("destroyed");
 		});
 	});
 
 	describe("invalid transitions", () => {
-		test("starting → hibernated throws", () => {
+		test("starting → hibernating throws", () => {
 			expect(() => transition("starting", "hibernate")).toThrow(
 				InvalidTransitionError,
 			);
@@ -47,6 +67,12 @@ describe("instance state machine", () => {
 
 		test("hibernated → active throws", () => {
 			expect(() => transition("hibernated", "started")).toThrow(
+				InvalidTransitionError,
+			);
+		});
+
+		test("restoring → hibernating throws", () => {
+			expect(() => transition("restoring", "hibernate")).toThrow(
 				InvalidTransitionError,
 			);
 		});
@@ -71,20 +97,25 @@ describe("instance state machine", () => {
 
 	test("all states are enumerable", () => {
 		expect(INSTANCE_STATUSES).toContain("starting");
+		expect(INSTANCE_STATUSES).toContain("restoring");
 		expect(INSTANCE_STATUSES).toContain("active");
+		expect(INSTANCE_STATUSES).toContain("hibernating");
 		expect(INSTANCE_STATUSES).toContain("hibernated");
 		expect(INSTANCE_STATUSES).toContain("destroying");
 		expect(INSTANCE_STATUSES).toContain("destroyed");
-		expect(INSTANCE_STATUSES).toHaveLength(5);
+		expect(INSTANCE_STATUSES).toHaveLength(7);
 	});
 
 	test("all events are enumerable", () => {
 		expect(INSTANCE_EVENTS).toContain("started");
+		expect(INSTANCE_EVENTS).toContain("restoring");
+		expect(INSTANCE_EVENTS).toContain("restored");
 		expect(INSTANCE_EVENTS).toContain("hibernate");
+		expect(INSTANCE_EVENTS).toContain("hibernated");
+		expect(INSTANCE_EVENTS).toContain("hibernating_failed");
 		expect(INSTANCE_EVENTS).toContain("destroy");
-		expect(INSTANCE_EVENTS).toContain("restore");
 		expect(INSTANCE_EVENTS).toContain("destroyed");
-		expect(INSTANCE_EVENTS).toHaveLength(5);
+		expect(INSTANCE_EVENTS).toHaveLength(8);
 	});
 
 	test("InvalidTransitionError has structured fields", () => {

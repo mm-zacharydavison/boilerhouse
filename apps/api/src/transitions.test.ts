@@ -146,11 +146,46 @@ describe("applyInstanceTransition", () => {
 		expect(getInstanceStatus(id)).toBe("active");
 	});
 
-	test("transitions active → hibernated on 'hibernate'", () => {
+	test("transitions active → hibernating on 'hibernate'", () => {
 		const id = seedInstance({ status: "active" });
 		const next = applyInstanceTransition(db, id, "active", "hibernate");
+		expect(next).toBe("hibernating");
+		expect(getInstanceStatus(id)).toBe("hibernating");
+	});
+
+	test("transitions hibernating → hibernated on 'hibernated'", () => {
+		const id = seedInstance({ status: "hibernating" as any });
+		const next = applyInstanceTransition(db, id, "hibernating", "hibernated");
 		expect(next).toBe("hibernated");
 		expect(getInstanceStatus(id)).toBe("hibernated");
+	});
+
+	test("transitions starting → restoring on 'restoring'", () => {
+		const id = seedInstance({ status: "starting" });
+		const next = applyInstanceTransition(db, id, "starting", "restoring");
+		expect(next).toBe("restoring");
+		expect(getInstanceStatus(id)).toBe("restoring");
+	});
+
+	test("transitions restoring → active on 'restored'", () => {
+		const id = seedInstance({ status: "restoring" as any });
+		const next = applyInstanceTransition(db, id, "restoring", "restored");
+		expect(next).toBe("active");
+		expect(getInstanceStatus(id)).toBe("active");
+	});
+
+	test("transitions hibernating → destroying on 'hibernating_failed'", () => {
+		const id = seedInstance({ status: "hibernating" as any });
+		const next = applyInstanceTransition(db, id, "hibernating", "hibernating_failed");
+		expect(next).toBe("destroying");
+		expect(getInstanceStatus(id)).toBe("destroying");
+	});
+
+	test("transitions hibernated → restoring on 'restoring'", () => {
+		const id = seedInstance({ status: "hibernated" as any });
+		const next = applyInstanceTransition(db, id, "hibernated", "restoring");
+		expect(next).toBe("restoring");
+		expect(getInstanceStatus(id)).toBe("restoring");
 	});
 
 	test("transitions active → destroying on 'destroy'", () => {
@@ -186,21 +221,21 @@ describe("forceInstanceStatus", () => {
 describe("applyTenantTransition", () => {
 	test("transitions idle → claiming on 'claim'", () => {
 		const id = seedTenant("idle");
-		const next = applyTenantTransition(db, id, "idle", "claim");
+		const next = applyTenantTransition(db, id, workloadId, "idle", "claim");
 		expect(next).toBe("claiming");
 		expect(getTenantStatus(id)).toBe("claiming");
 	});
 
 	test("transitions claiming → active on 'claimed'", () => {
 		const id = seedTenant("claiming");
-		const next = applyTenantTransition(db, id, "claiming", "claimed");
+		const next = applyTenantTransition(db, id, workloadId, "claiming", "claimed");
 		expect(next).toBe("active");
 		expect(getTenantStatus(id)).toBe("active");
 	});
 
 	test("transitions active → releasing on 'release'", () => {
 		const id = seedTenant("active");
-		const next = applyTenantTransition(db, id, "active", "release");
+		const next = applyTenantTransition(db, id, workloadId, "active", "release");
 		expect(next).toBe("releasing");
 		expect(getTenantStatus(id)).toBe("releasing");
 	});
@@ -208,7 +243,7 @@ describe("applyTenantTransition", () => {
 	test("throws InvalidTransitionError for invalid transition", () => {
 		const id = seedTenant("idle");
 		expect(() =>
-			applyTenantTransition(db, id, "idle", "claimed"),
+			applyTenantTransition(db, id, workloadId, "idle", "claimed"),
 		).toThrow(InvalidTransitionError);
 	});
 });
@@ -216,7 +251,7 @@ describe("applyTenantTransition", () => {
 describe("forceTenantStatus", () => {
 	test("writes status directly, bypassing state machine", () => {
 		const id = seedTenant("claiming");
-		forceTenantStatus(db, id, "idle");
+		forceTenantStatus(db, id, workloadId, "idle");
 		expect(getTenantStatus(id)).toBe("idle");
 	});
 });

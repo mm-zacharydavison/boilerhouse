@@ -6,7 +6,7 @@
  * the redundant DB read that the Actor pattern required.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type {
 	InstanceId,
 	InstanceStatus,
@@ -71,13 +71,14 @@ export function forceInstanceStatus(
 export function applyTenantTransition(
 	db: DrizzleDb,
 	tenantId: TenantId,
+	workloadId: WorkloadId,
 	currentStatus: TenantStatus,
 	event: TenantEvent,
 ): TenantStatus {
 	const next = tenantTransition(currentStatus, event);
 	db.update(tenants)
 		.set({ status: next })
-		.where(eq(tenants.tenantId, tenantId))
+		.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 		.run();
 	return next;
 }
@@ -86,11 +87,12 @@ export function applyTenantTransition(
 export function forceTenantStatus(
 	db: DrizzleDb,
 	tenantId: TenantId,
+	workloadId: WorkloadId,
 	status: TenantStatus,
 ): void {
 	db.update(tenants)
 		.set({ status })
-		.where(eq(tenants.tenantId, tenantId))
+		.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 		.run();
 }
 

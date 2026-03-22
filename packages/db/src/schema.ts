@@ -4,6 +4,7 @@ import {
 	integer,
 	index,
 	unique,
+	primaryKey,
 } from "drizzle-orm/sqlite-core";
 import type {
 	NodeId,
@@ -128,7 +129,7 @@ export const snapshots = sqliteTable(
 export const tenants = sqliteTable(
 	"tenants",
 	{
-		tenantId: text("tenant_id").primaryKey().$type<TenantId>(),
+		tenantId: text("tenant_id").notNull().$type<TenantId>(),
 		workloadId: text("workload_id")
 			.notNull()
 			.$type<WorkloadId>()
@@ -142,6 +143,7 @@ export const tenants = sqliteTable(
 		createdAt: timestamp("created_at").notNull(),
 	},
 	(table) => [
+		primaryKey({ columns: [table.tenantId, table.workloadId] }),
 		index("tenants_workload_id_idx").on(table.workloadId),
 		index("tenants_instance_id_idx").on(table.instanceId),
 		index("tenants_status_idx").on(table.status),

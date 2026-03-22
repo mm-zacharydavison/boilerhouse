@@ -120,6 +120,8 @@ export class PodmanRuntime implements Runtime {
 				pod: instanceId,
 				command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"],
 				privileged: false,
+				cap_drop: ["ALL"],
+				no_new_privileges: true,
 				mounts: [{
 					destination: "/etc/envoy/envoy.yaml",
 					type: "bind",
@@ -312,6 +314,8 @@ export class PodmanRuntime implements Runtime {
 				pod: instanceId,
 				command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"],
 				privileged: false,
+				cap_drop: ["ALL"],
+				no_new_privileges: true,
 				mounts: [{
 					destination: "/etc/envoy/envoy.yaml",
 					type: "bind",
@@ -330,6 +334,12 @@ export class PodmanRuntime implements Runtime {
 			instanceId,
 			ref.encrypted,
 		);
+
+		// CRIU restore only starts the workload container — the sidecar
+		// must be started explicitly since it wasn't part of the checkpoint.
+		if (proxyConfig) {
+			await this.backend.startContainer(`${instanceId}-proxy`);
+		}
 
 		const ports = await this.resolveHostPorts(instanceId);
 

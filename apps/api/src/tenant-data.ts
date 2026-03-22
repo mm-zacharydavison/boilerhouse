@@ -1,6 +1,6 @@
 import { mkdirSync, copyFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type { TenantId, WorkloadId } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { tenants } from "@boilerhouse/db";
@@ -25,7 +25,7 @@ export class TenantDataStore {
 		this.db
 			.update(tenants)
 			.set({ dataOverlayRef: destPath })
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.run();
 	}
 
@@ -43,7 +43,7 @@ export class TenantDataStore {
 		this.db
 			.update(tenants)
 			.set({ dataOverlayRef: destPath })
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.run();
 	}
 
@@ -51,11 +51,11 @@ export class TenantDataStore {
 	 * Returns the path to the stored overlay for this tenant+workload,
 	 * or `null` if no overlay exists.
 	 */
-	restoreOverlay(tenantId: TenantId): string | null {
+	restoreOverlay(tenantId: TenantId, workloadId: WorkloadId): string | null {
 		const row = this.db
 			.select({ dataOverlayRef: tenants.dataOverlayRef })
 			.from(tenants)
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.get();
 
 		if (!row?.dataOverlayRef) return null;

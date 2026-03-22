@@ -99,8 +99,8 @@ for (const rt of availableRuntimes()) {
 				);
 				expect(tenantRes.status).toBe(200);
 				const tenant = await tenantRes.json();
-				expect(tenant.instanceId).toBeNull();
-				expect(tenant.lastSnapshotId).toBe(hibBody.snapshotId);
+				expect(tenant[0].instanceId).toBeNull();
+				expect(tenant[0].lastSnapshotId).toBe(hibBody.snapshotId);
 
 				// Snapshot should exist
 				const snapshotsRes = await api(server, "GET", "/api/v1/snapshots");
@@ -148,7 +148,7 @@ for (const rt of availableRuntimes()) {
 					`/api/v1/tenants/${tenantId}`,
 				);
 				expect(tenantRes.status).toBe(200);
-				expect((await tenantRes.json()).instanceId).toBeNull();
+				expect((await tenantRes.json())[0].instanceId).toBeNull();
 
 				// Runtime resources should be cleaned up
 				const isRunning = await rt.isInstanceRunning(instanceId);
