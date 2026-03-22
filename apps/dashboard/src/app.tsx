@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Flame, Package, HardDrive, ScrollText, BarChart3, Zap } from "lucide-react";
+import { Flame, Package, HardDrive, ScrollText, BarChart3, Zap, Camera } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
@@ -9,10 +9,15 @@ import { NodeList } from "./pages/NodeList";
 import { ActivityLog } from "./pages/ActivityLog";
 import { MetricsPage } from "./pages/MetricsPage";
 import { TriggerList } from "./pages/TriggerList";
+import { SnapshotList } from "./pages/SnapshotList";
 
-const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
+const ENTITY_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/workloads", label: "workloads", icon: Package },
 	{ path: "/triggers", label: "triggers", icon: Zap },
+	{ path: "/entities/snapshots", label: "snapshots", icon: Camera },
+];
+
+const INFRA_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/nodes", label: "nodes", icon: HardDrive },
 	{ path: "/metrics", label: "metrics", icon: BarChart3 },
 	{ path: "/logs", label: "logs", icon: ScrollText },
@@ -44,6 +49,8 @@ function App() {
 		content = <MetricsPage key={tick} />;
 	} else if (path === "/logs") {
 		content = <ActivityLog key={tick} />;
+	} else if (path === "/entities/snapshots") {
+		content = <SnapshotList key={tick} />;
 	} else {
 		content = (
 			<div className="text-center py-20 text-muted">
@@ -66,11 +73,36 @@ function App() {
 					</h1>
 				</div>
 				<ul className="flex-1 py-1">
-					{NAV_ITEMS.map((item) => {
+					<li className="px-4 pt-3 pb-1">
+						<span className="text-xs font-tight uppercase tracking-wider text-muted/60">entities</span>
+					</li>
+					{ENTITY_ITEMS.map((item) => {
 						const active =
 							item.path === "/workloads"
 								? path === "/" || path === "/workloads" || path.startsWith("/workloads/")
 								: path === item.path || path.startsWith(item.path + "/");
+						const Icon = item.icon;
+						return (
+							<li key={item.path}>
+								<a
+									href={`#${item.path}`}
+									className={`flex items-center gap-2.5 px-4 py-1.5 font-mono text-sm transition-colors ${
+										active
+											? "bg-surface-3 text-white"
+											: "text-muted-light hover:text-white hover:bg-surface-3/50"
+									}`}
+								>
+									<Icon size={14} className="shrink-0" />
+									{item.label}
+								</a>
+							</li>
+						);
+					})}
+					<li className="px-4 pt-4 pb-1">
+						<span className="text-xs font-tight uppercase tracking-wider text-muted/60">infra</span>
+					</li>
+					{INFRA_ITEMS.map((item) => {
+						const active = path === item.path || path.startsWith(item.path + "/");
 						const Icon = item.icon;
 						return (
 							<li key={item.path}>

@@ -39,7 +39,15 @@ nuke "$DB_PATH-shm"
 # Data directory (snapshots + tenant overlays)
 nuke "$STORAGE_PATH"
 
-# Podman images managed by boilerhouse-podmand
+# Daemon data directories (snapshots + proxy configs)
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  nuke "$HOME/.local/share/boilerhouse/snapshots"
+  nuke "$HOME/.local/share/boilerhouse/proxy-configs"
+else
+  nuke "/var/lib/boilerhouse/snapshots"
+fi
+
+# Kill the boilerhouse-podmand daemon if running
 if [[ "$(uname -s)" == "Darwin" ]]; then
   RUNTIME_SOCKET="${RUNTIME_SOCKET:-$HOME/.local/share/boilerhouse/runtime.sock}"
 else
@@ -47,15 +55,47 @@ else
 fi
 
 if [[ -S "$RUNTIME_SOCKET" ]]; then
-  echo ""
-  read -rp "Also delete podman images? [y/N] " NUKE_IMAGES
-  if [[ "$NUKE_IMAGES" =~ ^[Yy]$ ]]; then
-    sudo BUN="$(command -v bun)" "$SCRIPT_DIR/scripts/nuke-images.sh" "$RUNTIME_SOCKET" "$DRY_RUN"
-  else
-    echo "Skipping image cleanup."
+  DAEMON_PID=$(lsof -t "$RUNTIME_SOCKET" 2>/dev/null || true)
+  if [[ -n "$DAEMON_PID" ]]; then
+    echo ""
+    if $DRY_RUN; then
+      echo "  Would kill boilerhouse-podmand (PID $DAEMON_PID)"
+    else
+      echo "Stopping boilerhouse-podmand (PID $DAEMON_PID)..."
+      kill "$DAEMON_PID" 2>/dev/null || true
+      sleep 0.5
+    fi
   fi
-else
-  echo "Daemon not running — skipping image cleanup."
+  if ! $DRY_RUN; then
+    rm -f "$RUNTIME_SOCKET"
+  fi
+fi
+
+# Remove all podman pods and containers, but keep the machine and cached images
+if command -v podman &>/dev/null && [[ "$(uname -s)" == "Darwin" ]]; then
+  echo ""
+  echo "Removing podman pods and containers..."
+  if $DRY_RUN; then
+    POD_COUNT=$(podman pod ls -q 2>/dev/null | wc -l | tr -d ' ')
+    CONTAINER_COUNT=$(podman ps -aq 2>/dev/null | wc -l | tr -d ' ')
+    echo "  Would remove $POD_COUNT pod(s) and $CONTAINER_COUNT container(s)"
+  else
+    podman pod rm --all --force 2>/dev/null || true
+    podman rm --all --force 2>/dev/null || true
+    echo "All pods and containers removed (images preserved)."
+  fi
+elif command -v podman &>/dev/null; then
+  # Linux: no VM layer, just remove pods directly
+  echo ""
+  echo "Removing podman pods..."
+  if $DRY_RUN; then
+    POD_COUNT=$(podman pod ls -q 2>/dev/null | wc -l | tr -d ' ')
+    echo "  Would remove $POD_COUNT pod(s)"
+  else
+    podman pod rm --all --force 2>/dev/null || true
+    podman system prune --all --force 2>/dev/null || true
+    echo "All pods and images removed."
+  fi
 fi
 
 if ! $DRY_RUN; then

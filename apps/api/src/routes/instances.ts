@@ -75,7 +75,7 @@ export function instanceRoutes(deps: RouteDeps) {
 				return { error: `Instance '${params.id}' not found` };
 			}
 
-			if (row.status === "destroyed" || row.status === "hibernated") {
+			if (row.status === "destroyed" || row.status === "hibernated" || row.status === "hibernating") {
 				set.status = 409;
 				return { error: `Instance '${params.id}' is ${row.status}` };
 			}
@@ -132,7 +132,7 @@ export function instanceRoutes(deps: RouteDeps) {
 				return { error: `Instance '${params.id}' not found` };
 			}
 
-			if (row.status !== "active") {
+			if (row.status !== "active" && row.status !== "restoring") {
 				set.status = 409;
 				return { error: `Instance '${params.id}' is ${row.status}, must be active` };
 			}

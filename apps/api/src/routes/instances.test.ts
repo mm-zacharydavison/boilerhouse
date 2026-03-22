@@ -119,8 +119,11 @@ describe("POST /api/v1/instances/:id/hibernate", () => {
 		expect(body.status).toBe("hibernated");
 		expect(body.snapshotId).toBeDefined();
 
-		expect(events).toHaveLength(1);
+		expect(events).toHaveLength(2);
 		expect(events[0]!.type).toBe("instance.state");
+		expect((events[0] as any).status).toBe("hibernating");
+		expect(events[1]!.type).toBe("instance.state");
+		expect((events[1] as any).status).toBe("hibernated");
 	});
 
 	test("returns 404 for nonexistent instance", async () => {

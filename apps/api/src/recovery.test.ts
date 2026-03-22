@@ -185,7 +185,7 @@ describe("recoverState", () => {
 		const tenantId = generateTenantId();
 		insertTenant(tenantId);
 		insertInstance(instanceId, "active", tenantId);
-		const claimId = insertClaim(tenantId, instanceId, "active");
+		insertClaim(tenantId, instanceId, "active");
 
 		const report = await recoverState(runtime, db, nodeId, log);
 
@@ -199,7 +199,6 @@ describe("recoverState", () => {
 		// marks the instance as destroyed but doesn't directly delete claims.
 		// That's handled by instance-manager.destroy in normal flow.
 		// In recovery we only reset stuck claims (creating/releasing).
-		const claimRow = db.select().from(claims).where(eq(claims.claimId, claimId)).get();
 		// Active claims are not cleaned up in recovery (only creating/releasing)
 		// The important thing is the instance is marked destroyed
 		const instanceRow = db.select().from(instances).where(eq(instances.instanceId, instanceId)).get();

@@ -82,7 +82,7 @@ for (const rt of availableRuntimes()) {
 				expect((await readRes.json()).stdout).toContain(testData);
 
 				// 4. Release tenant (hibernates → saves snapshot + overlay)
-				const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+				const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 				expect(releaseRes.status).toBe(200);
 
 				// 5. Verify snapshot exists
@@ -135,7 +135,7 @@ for (const rt of availableRuntimes()) {
 				expect(readBody2.stdout).toContain(testData);
 
 				// 9. Clean up
-				const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+				const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 				expect(release2Res.status).toBe(200);
 			},
 			timeouts.operation,

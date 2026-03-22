@@ -48,7 +48,7 @@ for (const rt of availableRuntimes()) {
 			expect(["golden", "cold"]).toContain(claimBody.source);
 
 			// Step 4: Release tenant (workload idle.action = "hibernate", so this hibernates)
-			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(releaseRes.status).toBe(200);
 
 			// Step 5: Verify instance is hibernated
@@ -90,7 +90,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 10: Clean teardown
-			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(release2Res.status).toBe(200);
 		}, timeouts.operation);
 	});

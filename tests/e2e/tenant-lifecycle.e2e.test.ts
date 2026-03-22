@@ -55,9 +55,10 @@ for (const rt of availableRuntimes()) {
 			const tenantRes = await api(server, "GET", `/api/v1/tenants/${tenantId}`);
 			expect(tenantRes.status).toBe(200);
 			const tenantBody = await tenantRes.json();
-			expect(tenantBody.instanceId).toBe(firstInstanceId);
-			expect(tenantBody.instance).toBeDefined();
-			expect(tenantBody.instance.status).toBe("active");
+			expect(tenantBody).toHaveLength(1);
+			expect(tenantBody[0].instanceId).toBe(firstInstanceId);
+			expect(tenantBody[0].instance).toBeDefined();
+			expect(tenantBody[0].instance.status).toBe("active");
 
 			// Step 5: Verify instance reachable (only for real runtimes with ports)
 			if (rt.capabilities.networking && claim1Body.endpoint?.ports?.length > 0) {
@@ -67,14 +68,16 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 6: Release tenant
-			const release1Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const release1Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, {
+				workload: workloadName,
+			});
 			expect(release1Res.status).toBe(200);
 
 			// Step 7: Verify tenant instanceId cleared
 			const tenant2Res = await api(server, "GET", `/api/v1/tenants/${tenantId}`);
 			expect(tenant2Res.status).toBe(200);
 			const tenant2Body = await tenant2Res.json();
-			expect(tenant2Body.instanceId).toBeNull();
+			expect(tenant2Body[0].instanceId).toBeNull();
 
 			// Step 8: Verify first instance is no longer active
 			const instance1Res = await api(server, "GET", `/api/v1/instances/${firstInstanceId}`);
@@ -84,8 +87,8 @@ for (const rt of availableRuntimes()) {
 
 			// Step 9: For tenant-snapshot-capable runtimes, verify lastSnapshotId is set
 			if (rt.capabilities.tenantSnapshot) {
-				expect(tenant2Body.lastSnapshotId).toBeDefined();
-				expect(tenant2Body.lastSnapshotId).not.toBeNull();
+				expect(tenant2Body[0].lastSnapshotId).toBeDefined();
+				expect(tenant2Body[0].lastSnapshotId).not.toBeNull();
 			}
 
 			// Step 10: Second claim — snapshot restore if capable, cold boot otherwise
@@ -103,7 +106,9 @@ for (const rt of availableRuntimes()) {
 			expect(claim2Body.instanceId).not.toBe(firstInstanceId);
 
 			// Step 11: Release second claim
-			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const release2Res = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, {
+				workload: workloadName,
+			});
 			expect(release2Res.status).toBe(200);
 
 			// Step 12: Verify activity log trail

@@ -39,7 +39,6 @@ import {
 let db: DrizzleDb;
 let nodeId: NodeId;
 let workloadId: WorkloadId;
-let tenantId: TenantId;
 
 function seedInstance(
 	overrides: Partial<{ instanceId: InstanceId; status: InstanceStatus }> = {},
@@ -59,7 +58,6 @@ function seedInstance(
 
 function seedTenant(): TenantId {
 	const id = generateTenantId();
-	tenantId = id;
 	db.insert(tenants)
 		.values({
 			tenantId: id,
@@ -162,11 +160,46 @@ describe("applyInstanceTransition", () => {
 		expect(getInstanceStatus(id)).toBe("active");
 	});
 
-	test("transitions active → hibernated on 'hibernate'", () => {
+	test("transitions active → hibernating on 'hibernate'", () => {
 		const id = seedInstance({ status: "active" });
 		const next = applyInstanceTransition(db, id, "active", "hibernate");
+		expect(next).toBe("hibernating");
+		expect(getInstanceStatus(id)).toBe("hibernating");
+	});
+
+	test("transitions hibernating → hibernated on 'hibernated'", () => {
+		const id = seedInstance({ status: "hibernating" as any });
+		const next = applyInstanceTransition(db, id, "hibernating", "hibernated");
 		expect(next).toBe("hibernated");
 		expect(getInstanceStatus(id)).toBe("hibernated");
+	});
+
+	test("transitions starting → restoring on 'restoring'", () => {
+		const id = seedInstance({ status: "starting" });
+		const next = applyInstanceTransition(db, id, "starting", "restoring");
+		expect(next).toBe("restoring");
+		expect(getInstanceStatus(id)).toBe("restoring");
+	});
+
+	test("transitions restoring → active on 'restored'", () => {
+		const id = seedInstance({ status: "restoring" as any });
+		const next = applyInstanceTransition(db, id, "restoring", "restored");
+		expect(next).toBe("active");
+		expect(getInstanceStatus(id)).toBe("active");
+	});
+
+	test("transitions hibernating → destroying on 'hibernating_failed'", () => {
+		const id = seedInstance({ status: "hibernating" as any });
+		const next = applyInstanceTransition(db, id, "hibernating", "hibernating_failed");
+		expect(next).toBe("destroying");
+		expect(getInstanceStatus(id)).toBe("destroying");
+	});
+
+	test("transitions hibernated → restoring on 'restoring'", () => {
+		const id = seedInstance({ status: "hibernated" as any });
+		const next = applyInstanceTransition(db, id, "hibernated", "restoring");
+		expect(next).toBe("restoring");
+		expect(getInstanceStatus(id)).toBe("restoring");
 	});
 
 	test("transitions active → destroying on 'destroy'", () => {

@@ -8,8 +8,7 @@ CREATE TABLE `claims` (
 	`tenant_id` text NOT NULL,
 	`instance_id` text,
 	`status` text NOT NULL,
-	`created_at` integer NOT NULL,
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`tenant_id`) ON UPDATE no action ON DELETE no action
+	`created_at` integer NOT NULL
 );--> statement-breakpoint
 CREATE UNIQUE INDEX `claims_tenant_id_unique` ON `claims` (`tenant_id`);--> statement-breakpoint
 CREATE INDEX `claims_instance_id_idx` ON `claims` (`instance_id`);--> statement-breakpoint

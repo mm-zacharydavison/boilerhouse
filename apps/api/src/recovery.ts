@@ -14,7 +14,7 @@ export interface RecoveryReport {
 }
 
 /** Statuses that indicate an instance should be running in the runtime. */
-const LIVE_STATUSES: InstanceStatus[] = ["active", "starting"];
+const LIVE_STATUSES: InstanceStatus[] = ["active", "starting", "restoring"];
 
 /**
  * Reconciles DB state with the actual runtime after a server restart.
@@ -71,13 +71,13 @@ export async function recoverState(
 		}
 	}
 
-	// 3b. Recover instances stuck in "destroying" — cleanup already happened or failed
+	// 3b. Recover instances stuck in "destroying" or "hibernating" — cleanup already happened or failed
 	const destroyingInstances = db
 		.select()
 		.from(instances)
 		.where(eq(instances.nodeId, nodeId))
 		.all()
-		.filter((row) => row.status === "destroying");
+		.filter((row) => row.status === "destroying" || row.status === "hibernating");
 
 	for (const row of destroyingInstances) {
 		applyInstanceTransition(db, row.instanceId, "destroying", "destroyed");

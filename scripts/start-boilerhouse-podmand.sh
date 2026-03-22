@@ -126,8 +126,10 @@ else
 	fi
 	DAEMON_PID=$!
 
-	# Wait for runtime socket to appear (boilerhouse-podmand needs to start podman first)
-	for _ in $(seq 1 100); do
+	# Wait for runtime socket to appear. On macOS, `podman machine start` can
+	# take 30s+ on first boot, so we allow up to 60 seconds.
+	SOCKET_TIMEOUT=600  # iterations × 0.1s = 60s
+	for _ in $(seq 1 $SOCKET_TIMEOUT); do
 		if [ -S "$LISTEN_SOCKET" ]; then
 			break
 		fi
@@ -141,7 +143,7 @@ else
 	done
 
 	if [ ! -S "$LISTEN_SOCKET" ]; then
-		echo "Error: Daemon socket did not appear within 10 seconds." >&2
+		echo "Error: Daemon socket did not appear within 60 seconds." >&2
 		kill "$DAEMON_PID" 2>/dev/null || true
 		exit 1
 	fi

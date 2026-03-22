@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type {
 	InstanceId,
 	InstanceHandle,
@@ -47,6 +47,15 @@ export class NoGoldenSnapshotError extends Error {
 }
 
 export class TenantManager {
+	/** Per-tenant+workload lock to prevent duplicate claims from concurrent requests. */
+	private readonly inflightClaims = new Map<string, Promise<ClaimResult>>();
+	/**
+	 * Per-snapshot mutex for CRIU restores.
+	 * CRIU cannot restore the same checkpoint archive concurrently —
+	 * concurrent restores from the same golden snapshot must be serialized.
+	 */
+	private readonly restoreLocks = new Map<string, Promise<void>>();
+
 	constructor(
 		private readonly instanceManager: InstanceManager,
 		private readonly snapshotManager: SnapshotManager,
@@ -77,6 +86,18 @@ export class TenantManager {
 	 * 3. Cold boot from workload definition
 	 */
 	async claim(tenantId: TenantId, workloadId: WorkloadId): Promise<ClaimResult> {
+		const key = `${tenantId}:${workloadId}`;
+		const inflight = this.inflightClaims.get(key);
+		if (inflight) return inflight;
+
+		const promise = this.claimInner(tenantId, workloadId).finally(() => {
+			this.inflightClaims.delete(key);
+		});
+		this.inflightClaims.set(key, promise);
+		return promise;
+	}
+
+	private async claimInner(tenantId: TenantId, workloadId: WorkloadId): Promise<ClaimResult> {
 		const start = performance.now();
 
 		// 1. Check for existing claim
@@ -90,9 +111,9 @@ export class TenantManager {
 				.where(eq(instances.instanceId, existingClaim.instanceId))
 				.get();
 
-			if (instanceRow?.status === "active") {
-				// Instance is truly active — return it
-				const handle = instanceHandleFrom(existingClaim.instanceId, "active");
+			if (instanceRow?.status === "active" || instanceRow?.status === "starting") {
+				// Instance is active or still starting — return it
+				const handle = instanceHandleFrom(existingClaim.instanceId, instanceRow.status);
 				const endpoint = await this.safeGetEndpoint(handle);
 				return {
 					tenantId,
@@ -223,7 +244,7 @@ export class TenantManager {
 		const tenantRow = this.db
 			.select()
 			.from(tenants)
-			.where(eq(tenants.tenantId, tenantId))
+			.where(and(eq(tenants.tenantId, tenantId), eq(tenants.workloadId, workloadId)))
 			.get();
 
 		if (tenantRow?.lastSnapshotId) {
@@ -251,7 +272,7 @@ export class TenantManager {
 	): Promise<InstanceHandle & { source: ClaimSource }> {
 		// Check for data overlay (cold+data path)
 		const overlayPath = tenantRow
-			? this.tenantDataStore.restoreOverlay(tenantId)
+			? this.tenantDataStore.restoreOverlay(tenantId, workloadId)
 			: null;
 
 		if (overlayPath) {
@@ -297,7 +318,7 @@ export class TenantManager {
 
 		// Check for data overlay (cold boot + data path)
 		const overlayPath = tenantRow
-			? this.tenantDataStore.restoreOverlay(tenantId)
+			? this.tenantDataStore.restoreOverlay(tenantId, workloadId)
 			: null;
 
 		const source: ClaimSource = overlayPath ? "cold+data" : "cold";
@@ -331,9 +352,12 @@ export class TenantManager {
 			snapshotId: ref.id,
 		});
 
+		const prepared = this.instanceManager.prepareRestore(ref, tenantId);
 		let handle: InstanceHandle;
 		try {
-			handle = await this.instanceManager.restoreFromSnapshot(ref, tenantId);
+			handle = await this.serializedRestore(ref.id, () =>
+				this.instanceManager.executeRestore(ref, prepared.instanceId, prepared.workloadId, tenantId),
+			);
 		} catch (err) {
 			this.log?.error(
 				{ tenantId, workloadId: ref.workloadId, snapshotId: ref.id, err },
@@ -343,6 +367,35 @@ export class TenantManager {
 		}
 
 		return handle;
+	}
+
+	/**
+	 * Serializes restore operations that share the same snapshot.
+	 * CRIU cannot restore the same checkpoint archive concurrently, and
+	 * needs a brief cooldown between restores for overlay cleanup.
+	 */
+	private async serializedRestore<T>(snapshotId: string, fn: () => Promise<T>): Promise<T> {
+		const tail = this.restoreLocks.get(snapshotId) ?? Promise.resolve();
+
+		let resolve!: () => void;
+		const next = new Promise<void>((r) => { resolve = r; });
+		this.restoreLocks.set(snapshotId, next);
+
+		// Wait for all prior restores of this snapshot to finish
+		await tail.catch(() => {});
+
+		try {
+			return await fn();
+		} catch (err) {
+			// Brief cooldown after failure — CRIU overlay cleanup is async
+			await new Promise((r) => setTimeout(r, 500));
+			throw err;
+		} finally {
+			resolve();
+			if (this.restoreLocks.get(snapshotId) === next) {
+				this.restoreLocks.delete(snapshotId);
+			}
+		}
 	}
 
 	/** Returns the endpoint, or null for containers with no exposed ports. */

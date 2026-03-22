@@ -84,7 +84,7 @@ for (const rt of availableRuntimes()) {
 			expect(recoverBody.instanceId).toBeDefined();
 
 			// Step 7: Clean teardown
-			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`);
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId2}/release`, { workload: workingBody.name });
 			expect(releaseRes.status).toBe(200);
 		}, timeouts.operation);
 	});

@@ -69,7 +69,7 @@ for (const rt of availableRuntimes()) {
 			expect(claimEvent!.instanceId).toBe(claimBody.instanceId);
 
 			// Step 5: Release tenant
-			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(releaseRes.status).toBe(200);
 
 			// Brief delay for WS events

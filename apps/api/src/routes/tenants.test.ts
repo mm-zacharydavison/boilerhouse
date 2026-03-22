@@ -148,7 +148,11 @@ describe("POST /api/v1/tenants/:id/claim", () => {
 		const release1 = await apiRequest(
 			ctx.app,
 			`/api/v1/tenants/${ZAC_ID}/release`,
-			{ method: "POST" },
+			{
+				method: "POST",
+				body: JSON.stringify({ workload: "tenant-test" }),
+				headers: { "content-type": "application/json" },
+			},
 		);
 		expect(release1.status).toBe(200);
 
@@ -322,25 +326,37 @@ describe("POST /api/v1/tenants/:id/release", () => {
 		const res = await apiRequest(
 			ctx.app,
 			`/api/v1/tenants/${tenantId}/release`,
-			{ method: "POST" },
+			{
+				method: "POST",
+				body: JSON.stringify({ workload: "tenant-test" }),
+				headers: { "content-type": "application/json" },
+			},
 		);
 
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.released).toBe(true);
 
-		expect(events).toHaveLength(2);
+		expect(events).toHaveLength(3);
 		expect(events[0]!.type).toBe("instance.state");
-		expect(events[1]!.type).toBe("tenant.released");
+		expect((events[0] as any).status).toBe("hibernating");
+		expect(events[1]!.type).toBe("instance.state");
+		expect((events[1] as any).status).toBe("hibernated");
+		expect(events[2]!.type).toBe("tenant.released");
 	});
 
 	test("returns 404 for nonexistent tenant", async () => {
 		const ctx = createTestApp();
+		seedWorkload(ctx);
 
 		const res = await apiRequest(
 			ctx.app,
 			`/api/v1/tenants/${NONEXISTENT_ID}/release`,
-			{ method: "POST" },
+			{
+				method: "POST",
+				body: JSON.stringify({ workload: "tenant-test" }),
+				headers: { "content-type": "application/json" },
+			},
 		);
 
 		expect(res.status).toBe(404);
@@ -363,11 +379,12 @@ describe("GET /api/v1/tenants/:id", () => {
 
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.tenantId).toBe(tenantId);
-		expect(body.workloadId).toBe(workloadId);
-		expect(body.instanceId).toBe(claim.instanceId);
-		expect(body.instance).toBeDefined();
-		expect(body.instance.status).toBe("active");
+		expect(body).toHaveLength(1);
+		expect(body[0].tenantId).toBe(tenantId);
+		expect(body[0].workloadId).toBe(workloadId);
+		expect(body[0].instanceId).toBe(claim.instanceId);
+		expect(body[0].instance).toBeDefined();
+		expect(body[0].instance.status).toBe("active");
 	});
 
 	test("returns 404 for nonexistent tenant", async () => {

@@ -142,6 +142,8 @@ export {
 	ArchiveDecryptionError,
 } from "./archive-crypto";
 
+export { WorkQueue, type WorkQueueOptions } from "./work-queue";
+
 export {
 	type WorkloadStatus,
 	type WorkloadEvent,

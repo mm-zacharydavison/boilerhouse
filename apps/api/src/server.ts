@@ -257,7 +257,7 @@ const app = createApp({
 	goldenCreator,
 	bootstrapLogStore,
 	resourceLimiter,
-	secretStore,
+	secretStore: secretStore!,
 	log: createLogger("routes"),
 	tracer,
 	meter,

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { generateTenantId } from "@boilerhouse/core";
-import { availableRuntimes, type RuntimeEntry } from "./runtime-matrix";
+import { availableRuntimes } from "./runtime-matrix";
 import {
 	startE2EServer,
 	waitForWorkloadReady,
@@ -126,7 +126,7 @@ for (const entry of runtimes) {
 			}
 
 			// Clean up
-			await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 		}, timeouts.operation * 2);
 	});
 }

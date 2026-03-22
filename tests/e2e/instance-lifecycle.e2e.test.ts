@@ -66,7 +66,7 @@ for (const rt of availableRuntimes()) {
 			}
 
 			// Step 6: Release tenant
-			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`);
+			const releaseRes = await api(server, "POST", `/api/v1/tenants/${tenantId}/release`, { workload: workloadName });
 			expect(releaseRes.status).toBe(200);
 
 			// Step 7: Verify instance is no longer active

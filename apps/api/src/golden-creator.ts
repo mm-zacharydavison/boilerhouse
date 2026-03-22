@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import type { WorkloadId, Workload, RuntimeCapabilities } from "@boilerhouse/core";
+import type { WorkloadId, Workload } from "@boilerhouse/core";
+import { WorkQueue } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { workloads } from "@boilerhouse/db";
 import type { Logger } from "@boilerhouse/o11y";
@@ -9,12 +10,7 @@ import type { BootstrapLogStore } from "./bootstrap-log-store";
 import { applyWorkloadTransition } from "./transitions";
 
 export class GoldenCreator {
-	/** Insertion-ordered map acts as both FIFO queue and dedup set. */
-	private readonly queue = new Map<WorkloadId, Workload>();
-	private processing = false;
-	private inflight = 0;
-	/** Resolvers waiting for a concurrency slot to free up. */
-	private slotWaiters: Array<() => void> = [];
+	private readonly queue: WorkQueue<{ workloadId: WorkloadId; workload: Workload }>;
 
 	/**
 	 * @param maxConcurrency Maximum number of golden snapshots to create in parallel.
@@ -26,75 +22,30 @@ export class GoldenCreator {
 		private readonly eventBus: EventBus,
 		private readonly bootstrapLogStore?: BootstrapLogStore,
 		private readonly log?: Logger,
-		private readonly maxConcurrency = 5,
-	) {}
+		maxConcurrency = 5,
+	) {
+		this.queue = new WorkQueue({
+			concurrency: maxConcurrency,
+			key: (item) => item.workloadId,
+			process: (item) => this.processItem(item.workloadId, item.workload),
+			onError: (err) => this.log?.error({ err }, "Unexpected queue error"),
+		});
+	}
 
 	/** Enqueue a workload for background golden snapshot creation. */
 	enqueue(workloadId: WorkloadId, workload: Workload): void {
-		if (this.queue.has(workloadId)) return;
 		this.bootstrapLogStore?.clear(workloadId);
-		this.queue.set(workloadId, workload);
-		if (!this.processing) {
-			this.processQueue();
-		}
+		this.queue.enqueue({ workloadId, workload });
 	}
 
 	/** Number of items waiting in the queue (not including the current one). */
 	get pending(): number {
-		return this.queue.size;
+		return this.queue.pending;
 	}
 
 	/** Whether the creator is currently processing an item. */
 	get isProcessing(): boolean {
-		return this.processing;
-	}
-
-	private processQueue(): void {
-		// Fire-and-forget — errors are handled internally per item
-		this.processQueueAsync().catch((err) => {
-			this.log?.error({ err }, "Unexpected queue error");
-		});
-	}
-
-	private releaseSlot(): void {
-		this.inflight--;
-		const waiter = this.slotWaiters.shift();
-		if (waiter) waiter();
-	}
-
-	private waitForSlot(): Promise<void> {
-		if (this.inflight < this.maxConcurrency) return Promise.resolve();
-		return new Promise<void>((resolve) => this.slotWaiters.push(resolve));
-	}
-
-	private async processQueueAsync(): Promise<void> {
-		if (this.processing) return;
-		this.processing = true;
-
-		try {
-			const running: Promise<void>[] = [];
-
-			while (this.queue.size > 0) {
-				await this.waitForSlot();
-
-				// Queue may have been emptied while waiting
-				if (this.queue.size === 0) break;
-
-				const [workloadId, workload] = this.queue.entries().next().value!;
-				this.queue.delete(workloadId);
-				this.inflight++;
-
-				const task = this.processItem(workloadId, workload).finally(() => {
-					this.releaseSlot();
-				});
-				running.push(task);
-			}
-
-			// Wait for all remaining in-flight items
-			await Promise.all(running);
-		} finally {
-			this.processing = false;
-		}
+		return this.queue.isProcessing;
 	}
 
 	private async processItem(workloadId: WorkloadId, workload: Workload): Promise<void> {

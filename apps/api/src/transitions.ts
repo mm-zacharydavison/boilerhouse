@@ -50,6 +50,20 @@ export function applyInstanceTransition(
 	return next;
 }
 
+/**
+ * Force-set an instance status without transition validation.
+ */
+export function forceInstanceStatus(
+	db: DrizzleDb,
+	instanceId: InstanceId,
+	status: InstanceStatus,
+): void {
+	db.update(instances)
+		.set({ status })
+		.where(eq(instances.instanceId, instanceId))
+		.run();
+}
+
 // ── Claim ────────────────────────────────────────────────────────────────────
 
 /**
