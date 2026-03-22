@@ -161,7 +161,7 @@ written or read. Old snapshots accumulate on disk indefinitely.
 
 **Files:** `snapshot-manager.ts`, `schema.ts`
 
-> CONCLUSION: Let's implement it.
+> CONCLUSION: S3 storage plan with LRU cache solves this.
 
 ---
 
