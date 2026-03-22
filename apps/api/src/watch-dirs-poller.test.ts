@@ -190,6 +190,82 @@ describe("WatchDirsPoller", () => {
 		expect(firedEvents).toHaveLength(1);
 	});
 
+	test("skip-if-busy: slow poll does not stack concurrent execs for the same instance", async () => {
+		let concurrentCalls = 0;
+		let maxObservedConcurrent = 0;
+		let totalCalls = 0;
+
+		// Replace statWatchDirs with a slow version that takes 3× the poll interval
+		const slowManager = {
+			statWatchDirs: async (_id: InstanceId, _dirs: string[]) => {
+				totalCalls++;
+				concurrentCalls++;
+				maxObservedConcurrent = Math.max(maxObservedConcurrent, concurrentCalls);
+				await sleep(POLL_INTERVAL * 3);
+				concurrentCalls--;
+				return new Date();
+			},
+		} as unknown as typeof instanceManager;
+
+		const slowPoller = new WatchDirsPoller(slowManager, idleMonitor, POLL_INTERVAL);
+
+		const workloadId = generateWorkloadId() as WorkloadId;
+		seedWorkload(db, workloadId, TEST_WORKLOAD);
+		const handle = await instanceManager.create(workloadId, TEST_WORKLOAD);
+
+		idleMonitor.watch(handle.instanceId, { timeoutMs: 10_000, action: "hibernate" });
+		slowPoller.startPolling(handle.instanceId, ["/data"]);
+
+		// Wait for 5 poll ticks — each tick should skip because the first poll is still running
+		await sleep(POLL_INTERVAL * 5 + 10);
+		slowPoller.stopAll();
+
+		// Concurrent calls for a single instance must never exceed 1 (no stacking)
+		expect(maxObservedConcurrent).toBe(1);
+		// Calls should be far fewer than poll ticks (most ticks were skipped while busy)
+		expect(totalCalls).toBeLessThan(4);
+	});
+
+	test("semaphore: global maxConcurrentExecs limits simultaneous execs across instances", async () => {
+		let activeExecs = 0;
+		let maxObservedActive = 0;
+		const MAX_CONCURRENT = 2;
+
+		// Each poll holds a semaphore slot for 3× the poll interval
+		const slowManager = {
+			statWatchDirs: async (_id: InstanceId, _dirs: string[]) => {
+				activeExecs++;
+				maxObservedActive = Math.max(maxObservedActive, activeExecs);
+				await sleep(POLL_INTERVAL * 3);
+				activeExecs--;
+				return new Date();
+			},
+		} as unknown as typeof instanceManager;
+
+		// 4 instances but only 2 concurrent slots
+		const semPoller = new WatchDirsPoller(slowManager, idleMonitor, POLL_INTERVAL, MAX_CONCURRENT);
+
+		const instanceIds: InstanceId[] = [];
+		for (let i = 0; i < 4; i++) {
+			const wId = generateWorkloadId() as WorkloadId;
+			const w: Workload = { ...TEST_WORKLOAD, workload: { name: `sem-test-${i}`, version: "1.0.0" } };
+			seedWorkload(db, wId, w);
+			const h = await instanceManager.create(wId, w);
+			idleMonitor.watch(h.instanceId, { timeoutMs: 10_000, action: "hibernate" });
+			semPoller.startPolling(h.instanceId, ["/data"]);
+			instanceIds.push(h.instanceId);
+		}
+
+		// Wait long enough for all 4 first-ticks to fire and enter acquireSemaphore
+		await sleep(POLL_INTERVAL + 10);
+		// Give the concurrent execs time to overlap
+		await sleep(POLL_INTERVAL);
+
+		semPoller.stopAll();
+
+		expect(maxObservedActive).toBeLessThanOrEqual(MAX_CONCURRENT);
+	});
+
 	test("stopAll clears all intervals", async () => {
 		const w1: Workload = { ...TEST_WORKLOAD, workload: { name: "poll-test-a", version: "1.0.0" } };
 		const w2: Workload = { ...TEST_WORKLOAD, workload: { name: "poll-test-b", version: "1.0.0" } };
