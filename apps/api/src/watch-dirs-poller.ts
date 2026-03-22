@@ -8,16 +8,49 @@ import type { IdleMonitor } from "./idle-monitor";
  *
  * When watch_dirs are configured on a workload, the idle timeout counts down
  * from the last observed file change rather than from instance creation.
+ *
+ * Two guards prevent runtime saturation:
+ * - Per-instance: if a poll is still in-flight the next tick is skipped.
+ * - Global: at most `maxConcurrentExecs` statWatchDirs calls run at once;
+ *   excess ticks queue and drain as slots free up.
  */
 export class WatchDirsPoller {
 	private readonly intervals = new Map<InstanceId, ReturnType<typeof setInterval>>();
+	/** Instances whose current poll has not yet resolved. */
+	private readonly busy = new Set<InstanceId>();
+	private activeExecs = 0;
+	private readonly waitQueue: Array<() => void> = [];
 
 	constructor(
 		private readonly instanceManager: InstanceManager,
 		private readonly idleMonitor: IdleMonitor,
 		/** How often to exec stat inside each watched instance. */
 		readonly pollIntervalMs: number = 5_000,
+		/** Maximum number of concurrent statWatchDirs execs across all instances. */
+		readonly maxConcurrentExecs: number = 10,
 	) {}
+
+	private acquireSemaphore(): Promise<void> {
+		if (this.activeExecs < this.maxConcurrentExecs) {
+			this.activeExecs++;
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
+			this.waitQueue.push(() => {
+				this.activeExecs++;
+				resolve();
+			});
+		});
+	}
+
+	private releaseSemaphore(): void {
+		const next = this.waitQueue.shift();
+		if (next) {
+			next();
+		} else {
+			this.activeExecs--;
+		}
+	}
 
 	/**
 	 * Starts polling `dirs` inside `instanceId` at `pollIntervalMs`.
@@ -27,6 +60,10 @@ export class WatchDirsPoller {
 		this.stopPolling(instanceId);
 
 		const interval = setInterval(async () => {
+			// Skip if the previous poll for this instance hasn't finished yet.
+			if (this.busy.has(instanceId)) return;
+			this.busy.add(instanceId);
+			await this.acquireSemaphore();
 			try {
 				const mtime = await this.instanceManager.statWatchDirs(instanceId, dirs);
 				// null means exec failed — skip reportActivity so the heartbeat expires
@@ -35,6 +72,9 @@ export class WatchDirsPoller {
 				}
 			} catch {
 				// Unexpected error — heartbeat will expire naturally
+			} finally {
+				this.releaseSemaphore();
+				this.busy.delete(instanceId);
 			}
 		}, this.pollIntervalMs);
 

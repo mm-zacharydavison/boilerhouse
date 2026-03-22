@@ -5,7 +5,8 @@ import { PodmanRuntime } from "@boilerhouse/runtime-podman";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTestDatabase, ActivityLog, nodes } from "@boilerhouse/db";
+import { eq } from "drizzle-orm";
+import { createTestDatabase, ActivityLog, nodes, tenants } from "@boilerhouse/db";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { createLogger } from "@boilerhouse/o11y";
 import { InstanceManager } from "../../apps/api/src/instance-manager";
@@ -17,6 +18,8 @@ import { GoldenCreator } from "../../apps/api/src/golden-creator";
 import { BootstrapLogStore } from "../../apps/api/src/bootstrap-log-store";
 import { ResourceLimiter } from "../../apps/api/src/resource-limits";
 import { SecretStore } from "../../apps/api/src/secret-store";
+import { IdleMonitor } from "../../apps/api/src/idle-monitor";
+import { WatchDirsPoller } from "../../apps/api/src/watch-dirs-poller";
 import { createApp } from "../../apps/api/src/app";
 import { E2E_TIMEOUTS } from "./runtime-matrix";
 
@@ -50,8 +53,15 @@ export interface E2EServer {
 /**
  * Boots the API server with the given runtime wired in.
  * Starts on a random port and returns a handle for tests.
+ *
+ * Pass `idlePollIntervalMs` to enable idle timeout monitoring. When set, an
+ * IdleMonitor and WatchDirsPoller are wired in and instances are automatically
+ * released when their workload's idle timeout elapses.
  */
-export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
+export async function startE2EServer(
+	runtimeName: string,
+	options?: { idlePollIntervalMs?: number },
+): Promise<E2EServer> {
 	const db = createTestDatabase();
 	const nodeId = generateNodeId();
 	const activityLog = new ActivityLog(db);
@@ -129,6 +139,15 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		secretStore,
 	});
 	const tenantDataStore = new TenantDataStore("/tmp/boilerhouse-e2e", db);
+
+	let idleMonitor: IdleMonitor | undefined;
+	let watchDirsPoller: WatchDirsPoller | undefined;
+
+	if (options?.idlePollIntervalMs !== undefined) {
+		idleMonitor = new IdleMonitor({ defaultPollIntervalMs: options.idlePollIntervalMs });
+		watchDirsPoller = new WatchDirsPoller(instanceManager, idleMonitor, options.idlePollIntervalMs);
+	}
+
 	const tenantManager = new TenantManager(
 		instanceManager,
 		snapshotManager,
@@ -136,10 +155,24 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		activityLog,
 		nodeId,
 		tenantDataStore,
-		undefined,
+		idleMonitor,
 		log,
 		eventBus,
+		watchDirsPoller,
 	);
+
+	if (idleMonitor) {
+		idleMonitor.onIdle(async (instanceId, action) => {
+			const tenantRow = db
+				.select({ tenantId: tenants.tenantId })
+				.from(tenants)
+				.where(eq(tenants.instanceId, instanceId))
+				.get();
+
+			if (!tenantRow) return;
+			await tenantManager.release(tenantRow.tenantId);
+		});
+	}
 
 	const resourceLimiter = new ResourceLimiter(db, { maxInstances: 100 });
 	const bootstrapLogStore = new BootstrapLogStore(db);
@@ -173,6 +206,7 @@ export async function startE2EServer(runtimeName: string): Promise<E2EServer> {
 		cleanup: async () => {
 			server.stop();
 			resourceLimiter.dispose();
+			idleMonitor?.stop();
 			// Destroy any remaining containers for real runtimes
 			if (runtimeName !== "fake") {
 				const remaining = await runtime.list();
