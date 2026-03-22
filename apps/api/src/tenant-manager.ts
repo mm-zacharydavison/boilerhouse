@@ -20,6 +20,7 @@ import type { InstanceManager } from "./instance-manager";
 import type { SnapshotManager } from "./snapshot-manager";
 import type { TenantDataStore } from "./tenant-data";
 import type { IdleMonitor } from "./idle-monitor";
+import type { WatchDirsPoller } from "./watch-dirs-poller";
 import type { EventBus } from "./event-bus";
 
 export type ClaimSource = "existing" | "snapshot" | "cold+data" | "golden" | "cold";
@@ -52,6 +53,7 @@ export class TenantManager {
 		private readonly idleMonitor?: IdleMonitor,
 		private readonly log?: Logger,
 		private readonly eventBus?: EventBus,
+		private readonly watchDirsPoller?: WatchDirsPoller,
 	) {}
 
 	/**
@@ -231,6 +233,10 @@ export class TenantManager {
 
 		if (this.idleMonitor) {
 			this.idleMonitor.unwatch(instanceId);
+		}
+
+		if (this.watchDirsPoller) {
+			this.watchDirsPoller.stopPolling(instanceId);
 		}
 
 		// Look up the workload config to determine idle action
@@ -427,5 +433,10 @@ export class TenantManager {
 			timeoutMs: ((idle?.timeout_seconds as number | undefined) ?? 300) * 1000,
 			action: idle?.action ?? "hibernate",
 		});
+
+		const watchDirs = idle?.watch_dirs as string[] | undefined;
+		if (watchDirs?.length && this.watchDirsPoller) {
+			this.watchDirsPoller.startPolling(instanceId, watchDirs);
+		}
 	}
 }
