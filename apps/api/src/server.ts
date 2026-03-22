@@ -19,6 +19,7 @@ import { SnapshotManager } from "./snapshot-manager";
 import { TenantManager } from "./tenant-manager";
 import { TenantDataStore } from "./tenant-data";
 import { IdleMonitor } from "./idle-monitor";
+import { WatchDirsPoller } from "./watch-dirs-poller";
 import { EventBus } from "./event-bus";
 import { GoldenCreator } from "./golden-creator";
 import { BootstrapLogStore } from "./bootstrap-log-store";
@@ -144,6 +145,7 @@ const snapshotManager = new SnapshotManager(runtime, db, nodeId, {
 });
 const tenantDataStore = new TenantDataStore(storagePath, db);
 const idleMonitor = new IdleMonitor({ defaultPollIntervalMs: 5000 });
+const watchDirsPoller = new WatchDirsPoller(instanceManager, idleMonitor);
 const tenantManager = new TenantManager(
 	instanceManager,
 	snapshotManager,
@@ -154,6 +156,7 @@ const tenantManager = new TenantManager(
 	idleMonitor,
 	createLogger("TenantManager"),
 	eventBus,
+	watchDirsPoller,
 );
 
 const resourceLimiter = new ResourceLimiter(db, { maxInstances });
