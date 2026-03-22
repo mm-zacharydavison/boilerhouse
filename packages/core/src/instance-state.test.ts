@@ -36,6 +36,14 @@ describe("instance state machine", () => {
 		test("starting → destroying (via 'destroy' event)", () => {
 			expect(transition("starting", "destroy")).toBe("destroying");
 		});
+
+		test("starting → destroyed (via 'recover' event)", () => {
+			expect(transition("starting", "recover")).toBe("destroyed");
+		});
+
+		test("active → destroyed (via 'recover' event)", () => {
+			expect(transition("active", "recover")).toBe("destroyed");
+		});
 	});
 
 	describe("invalid transitions", () => {
@@ -84,7 +92,8 @@ describe("instance state machine", () => {
 		expect(INSTANCE_EVENTS).toContain("destroy");
 		expect(INSTANCE_EVENTS).toContain("restore");
 		expect(INSTANCE_EVENTS).toContain("destroyed");
-		expect(INSTANCE_EVENTS).toHaveLength(5);
+		expect(INSTANCE_EVENTS).toContain("recover");
+		expect(INSTANCE_EVENTS).toHaveLength(6);
 	});
 
 	test("InvalidTransitionError has structured fields", () => {

@@ -18,9 +18,10 @@ import type {
 	InstanceStatus,
 	SnapshotId,
 	SnapshotType,
-	TenantStatus,
 	SnapshotStatus,
 	TriggerId,
+	ClaimId,
+	ClaimStatus,
 } from "@boilerhouse/core";
 import { timestamp, jsonObject } from "./columns";
 
@@ -133,9 +134,6 @@ export const tenants = sqliteTable(
 			.notNull()
 			.$type<WorkloadId>()
 			.references(() => workloads.workloadId),
-		status: text("status").notNull().default("idle").$type<TenantStatus>(),
-		statusDetail: text("status_detail"),
-		instanceId: text("instance_id").$type<InstanceId>(),
 		lastSnapshotId: text("last_snapshot_id").$type<SnapshotId>(),
 		dataOverlayRef: text("data_overlay_ref"),
 		lastActivity: timestamp("last_activity"),
@@ -143,10 +141,33 @@ export const tenants = sqliteTable(
 	},
 	(table) => [
 		index("tenants_workload_id_idx").on(table.workloadId),
-		index("tenants_instance_id_idx").on(table.instanceId),
-		index("tenants_status_idx").on(table.status),
 	],
 );
+
+// ── claims ────────────────────────────────────────────────────────────────────
+
+export const claims = sqliteTable(
+	"claims",
+	{
+		claimId: text("claim_id").primaryKey().$type<ClaimId>(),
+		tenantId: text("tenant_id")
+			.notNull()
+			.unique()
+			.$type<TenantId>()
+			.references(() => tenants.tenantId),
+		instanceId: text("instance_id").$type<InstanceId>(),
+		status: text("status").notNull().$type<ClaimStatus>(),
+		createdAt: timestamp("created_at").notNull(),
+	},
+	(table) => [
+		index("claims_instance_id_idx").on(table.instanceId),
+		index("claims_status_idx").on(table.status),
+	],
+
+);
+
+export type ClaimRow = typeof claims.$inferSelect;
+export type ClaimInsert = typeof claims.$inferInsert;
 
 // ── activity_log ─────────────────────────────────────────────────────────────
 
@@ -270,6 +291,7 @@ export const schema = {
 	instances,
 	snapshots,
 	tenants,
+	claims,
 	activityLog,
 	buildLogs,
 	tenantSecrets,

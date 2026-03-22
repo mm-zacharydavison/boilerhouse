@@ -18,6 +18,7 @@ import {
 	ActivityLog,
 	instances,
 	tenants,
+	claims,
 	nodes,
 	workloads,
 } from "@boilerhouse/db";
@@ -263,7 +264,7 @@ describe("TenantManager", () => {
 			expect(after!.workloadId).toBe(workloadId);
 		});
 
-		test("updates tenant row if exists (sets instanceId)", async () => {
+		test("creates a claim row with instanceId on successful claim", async () => {
 			const tenantId = generateTenantId();
 
 			db.insert(tenants)
@@ -273,13 +274,15 @@ describe("TenantManager", () => {
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			const result = await tenantManager.claim(tenantId, workloadId);
 
-			const row = db
+			const claimRow = db
 				.select()
-				.from(tenants)
-				.where(eq(tenants.tenantId, tenantId))
+				.from(claims)
+				.where(eq(claims.tenantId, tenantId))
 				.get();
 
-			expect(row!.instanceId).toBe(result.instanceId);
+			expect(claimRow).toBeDefined();
+			expect(claimRow!.instanceId).toBe(result.instanceId);
+			expect(claimRow!.status).toBe("active");
 		});
 
 		test("sets tenantId on instance row", async () => {
@@ -403,20 +406,28 @@ describe("TenantManager", () => {
 			expect(row!.status).toBe("destroyed");
 		});
 
-		test("clears instanceId on tenant row", async () => {
+		test("deletes claim row on release", async () => {
 			const tenantId = generateTenantId();
 
 			await snapshotManager.createGolden(workloadId, TEST_WORKLOAD_HIBERNATE);
 			await tenantManager.claim(tenantId, workloadId);
 			await tenantManager.release(tenantId);
 
-			const row = db
+			const claimRow = db
+				.select()
+				.from(claims)
+				.where(eq(claims.tenantId, tenantId))
+				.get();
+
+			// Claim is deleted after release; tenant identity row persists
+			expect(claimRow).toBeUndefined();
+
+			const tenantRow = db
 				.select()
 				.from(tenants)
 				.where(eq(tenants.tenantId, tenantId))
 				.get();
-
-			expect(row!.instanceId).toBeNull();
+			expect(tenantRow).toBeDefined();
 		});
 
 		test("preserves lastSnapshotId on tenant row after hibernate", async () => {
