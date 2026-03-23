@@ -231,7 +231,7 @@ async function del<T>(path: string): Promise<T> {
 // --- API methods ---
 
 export const api = {
-	fetchActivity: () => get<ActivityLogEntry[]>("/activity"),
+	fetchActivity: () => get<ActivityLogEntry[]>("/audit"),
 
 	fetchStats: () => get<StatsResponse>("/stats"),
 

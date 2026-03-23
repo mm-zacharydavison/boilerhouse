@@ -341,8 +341,8 @@ describe("PodmanClient", () => {
 			return { status: 200, body: { Id: "restored-123" } };
 		});
 
-		const id = await client.restoreContainer(fakeArchive, "new-container");
-		expect(id).toBe("restored-123");
+		const result = await client.restoreContainer(fakeArchive, "new-container");
+		expect(result.id).toBe("restored-123");
 		expect(receivedBody?.toString()).toBe("fake-archive-data");
 	});
 
@@ -354,12 +354,12 @@ describe("PodmanClient", () => {
 			return { status: 200, body: { Id: "restored-456" } };
 		});
 
-		const id = await client.restoreContainer(
+		const result = await client.restoreContainer(
 			Buffer.from("archive"),
 			"new-ctr",
 			["8080", "9090"],
 		);
-		expect(id).toBe("restored-456");
+		expect(result.id).toBe("restored-456");
 	});
 
 	test("restoreContainer() omits publishPorts when not provided", async () => {

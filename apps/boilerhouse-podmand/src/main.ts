@@ -501,73 +501,80 @@ export async function createDaemon(config: DaemonConfig): Promise<{ stop: () => 
 
 		// Extract W3C trace context from incoming headers so daemon spans are
 		// children of the restore.criu span in the API process.
-		const parentContext = propagation.extract(
+		// We pass parentCtx explicitly to each startActiveSpan call for clarity.
+		const parentCtx = propagation.extract(
 			context.active(),
 			Object.fromEntries(req.headers.entries()),
 		);
 		const daemonTracer = trace.getTracer("boilerhouse");
 
-		return context.with(parentContext, async () => {
-			let archive: Buffer;
+		let archive: Buffer;
 
-			archive = await daemonTracer.startActiveSpan("daemon.archive_read", async (span) => {
-				try {
-					const data = await Bun.file(body.archivePath).arrayBuffer();
-					span.setAttribute("archive.size_bytes", data.byteLength);
-					span.setAttribute("archive.encrypted", body.encrypted ?? false);
-					return Buffer.from(data);
-				} catch (err) {
-					span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
-					throw err;
-				} finally {
-					span.end();
-				}
-			});
-
-			// Decrypt if the archive was encrypted at rest
-			if (body.encrypted) {
-				if (!config.encryptionKey) {
-					return jsonResponse(403, {
-						error: "Archive is encrypted but daemon has no encryption key configured",
-					});
-				}
-				try {
-					archive = await daemonTracer.startActiveSpan("daemon.archive_decrypt", async (span) => {
-						span.setAttribute("archive.size_bytes", archive.length);
-						try {
-							const decrypted = await decryptArchive(archive, config.encryptionKey!);
-							span.setAttribute("archive.decrypted_size_bytes", decrypted.length);
-							return decrypted;
-						} catch (err) {
-							span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
-							throw err;
-						} finally {
-							span.end();
-						}
-					});
-				} catch {
-					return jsonResponse(403, { error: "Archive decryption failed" });
-				}
+		archive = await daemonTracer.startActiveSpan("daemon.archive_read", { }, parentCtx, async (span) => {
+			try {
+				const data = await Bun.file(body.archivePath).arrayBuffer();
+				span.setAttribute("archive.size_bytes", data.byteLength);
+				span.setAttribute("archive.encrypted", body.encrypted ?? false);
+				return Buffer.from(data);
+			} catch (err) {
+				span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+				throw err;
+			} finally {
+				span.end();
 			}
-
-			const podmanId = await daemonTracer.startActiveSpan("daemon.podman_restore", async (span) => {
-				span.setAttribute("container.name", body.name);
-				if (body.pod) span.setAttribute("pod.name", body.pod);
-				try {
-					const id = await client.restoreContainer(archive, body.name, body.publishPorts, body.pod);
-					span.setAttribute("container.id", id);
-					return id;
-				} catch (err) {
-					span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
-					throw err;
-				} finally {
-					span.end();
-				}
-			});
-
-			registerContainer(podmanId, body.name);
-			return jsonResponse(200, { id: podmanId });
 		});
+
+		// Decrypt if the archive was encrypted at rest
+		if (body.encrypted) {
+			if (!config.encryptionKey) {
+				return jsonResponse(403, {
+					error: "Archive is encrypted but daemon has no encryption key configured",
+				});
+			}
+			try {
+				archive = await daemonTracer.startActiveSpan("daemon.archive_decrypt", { }, parentCtx, async (span) => {
+					span.setAttribute("archive.size_bytes", archive.length);
+					try {
+						const decrypted = await decryptArchive(archive, config.encryptionKey!);
+						span.setAttribute("archive.decrypted_size_bytes", decrypted.length);
+						return decrypted;
+					} catch (err) {
+						span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+						throw err;
+					} finally {
+						span.end();
+					}
+				});
+			} catch {
+				return jsonResponse(403, { error: "Archive decryption failed" });
+			}
+		}
+
+		const { id: podmanId, stats } = await daemonTracer.startActiveSpan("daemon.podman_restore", { }, parentCtx, async (span) => {
+			span.setAttribute("container.name", body.name);
+			if (body.pod) span.setAttribute("pod.name", body.pod);
+			try {
+				const result = await client.restoreContainer(archive, body.name, body.publishPorts, body.pod);
+				span.setAttribute("container.id", result.id);
+				if (result.stats) {
+					const s = result.stats;
+					if (s.forking_time != null) span.setAttribute("criu.forking_time_us", s.forking_time);
+					if (s.restore_time != null) span.setAttribute("criu.restore_time_us", s.restore_time);
+					if (s.pages_restored != null) span.setAttribute("criu.pages_restored", s.pages_restored);
+					if (s.runtime_restore_duration != null) span.setAttribute("criu.runtime_restore_duration_us", s.runtime_restore_duration);
+					if (s.podman_restore_duration != null) span.setAttribute("criu.podman_restore_duration_us", s.podman_restore_duration);
+				}
+				return result;
+			} catch (err) {
+				span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+				throw err;
+			} finally {
+				span.end();
+			}
+		});
+
+		registerContainer(podmanId, body.name);
+		return jsonResponse(200, { id: podmanId });
 	}
 
 	async function handleExec(identifier: string, req: Request): Promise<Response> {

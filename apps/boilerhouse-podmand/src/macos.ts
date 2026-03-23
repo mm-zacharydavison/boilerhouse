@@ -55,12 +55,41 @@ export async function ensurePodmanMachine(): Promise<void> {
 		}
 	}
 
-	// Verify connectivity
+	// Verify connectivity — if the machine is "running" but the socket is
+	// unreachable (stale SSH tunnel), restart the machine once before failing.
 	const { stdout: pingOk } = await run([
 		"podman", "info", "--format", "{{.Host.RemoteSocket.Exists}}",
 	]);
 	if (pingOk !== "true") {
-		throw new Error("podman machine is running but API socket is not reachable");
+		console.log("podman machine is running but API socket is stale — restarting machine...");
+		await run(["podman", "machine", "stop"], { inherit: true });
+		const { exitCode } = await run(["podman", "machine", "start"], { inherit: true });
+		if (exitCode !== 0) {
+			throw new Error("Failed to restart podman machine");
+		}
+		const { stdout: retryPing } = await run([
+			"podman", "info", "--format", "{{.Host.RemoteSocket.Exists}}",
+		]);
+		if (retryPing !== "true") {
+			throw new Error("podman machine is running but API socket is not reachable (even after restart)");
+		}
+	}
+
+	// Warn if the machine has low memory — the observability stack
+	// (Grafana + Tempo + Prometheus) plus workload containers need ~4GB+.
+	const MIN_MEMORY_MB = 4096;
+	const { stdout: memoryStr } = await run([
+		"podman", "machine", "inspect", "--format", "{{.Resources.Memory}}",
+	]);
+	const memoryMB = parseInt(memoryStr, 10);
+	if (memoryMB && memoryMB < MIN_MEMORY_MB) {
+		console.warn(
+			`⚠ Podman machine has ${memoryMB}MB memory — this may cause crashes when running the observability stack.\n` +
+			`  To increase, run:\n` +
+			`    podman machine stop\n` +
+			`    podman machine set --memory ${MIN_MEMORY_MB}\n` +
+			`    podman machine start`,
+		);
 	}
 
 	// CRIU checkpoint/restore requires rootful podman — check and give

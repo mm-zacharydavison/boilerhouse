@@ -43,6 +43,20 @@ echo ""
 echo "Using runtime: $RUNTIME_TYPE"
 echo ""
 
+# ── Detect observability stack ───────────────────────────────────────────────
+# Must run before daemon start so the daemon inherits OTEL_EXPORTER_OTLP_ENDPOINT.
+
+TEMPO_HTTP_CODE=$(curl --max-time 1 -s -o /dev/null -w '%{http_code}' http://localhost:4318/v1/traces 2>/dev/null || echo "000")
+if [ "$TEMPO_HTTP_CODE" != "000" ]; then
+  export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318/v1/traces"
+  echo "✓ Observability stack detected (Tempo on :4318)"
+  echo "  OTEL_EXPORTER_OTLP_ENDPOINT=$OTEL_EXPORTER_OTLP_ENDPOINT"
+  echo ""
+else
+  echo "ℹ Observability stack not running (start with: podman compose up -d)"
+  echo ""
+fi
+
 # ── Ensure runtime infrastructure ───────────────────────────────────────────
 
 if [ "$RUNTIME_TYPE" = "podman" ]; then

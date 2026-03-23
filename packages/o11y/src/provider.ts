@@ -5,9 +5,10 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { Resource } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
-import { propagation } from "@opentelemetry/api";
+import { context, propagation, trace } from "@opentelemetry/api";
 import type { Meter } from "@opentelemetry/api";
 import type { Tracer } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 
 export interface InitOptions {
 	/**
@@ -66,21 +67,22 @@ export function initO11y(opts: InitOptions = {}): O11yProviders {
 	const meter = meterProvider.getMeter("boilerhouse");
 
 	// Tracing — OTLP exporter sends spans to a collector
-	const tracerProvider = new BasicTracerProvider({ resource });
 	const tracingEnabled = opts.tracingEnabled
 		?? !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
+	const spanProcessors: ConstructorParameters<typeof BasicTracerProvider>[0]["spanProcessors"] = [];
 	if (tracingEnabled) {
 		const otlpExporter = new OTLPTraceExporter({
 			url: opts.otlpEndpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT
 				?? "http://localhost:4318/v1/traces",
 		});
-		tracerProvider.addSpanProcessor(new BatchSpanProcessor(otlpExporter));
+		spanProcessors.push(new BatchSpanProcessor(otlpExporter));
 	}
-	tracerProvider.register();
+	const tracerProvider = new BasicTracerProvider({ resource, spanProcessors });
 
-	// Register W3C trace context propagator globally so span context can be
-	// injected into / extracted from HTTP headers across process boundaries.
+	// SDK v2 requires manual registration of context manager, tracer provider, and propagator.
+	context.setGlobalContextManager(new AsyncLocalStorageContextManager());
+	trace.setGlobalTracerProvider(tracerProvider);
 	propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
 	const tracer = tracerProvider.getTracer("boilerhouse");

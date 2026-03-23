@@ -4,7 +4,7 @@ import type { RouteDeps } from "./deps";
 export function activityRoutes(deps: RouteDeps) {
 	const { activityLog } = deps;
 
-	return new Elysia({ name: "activity" }).get("/activity", ({ query }) => {
+	return new Elysia({ name: "activity" }).get("/audit", ({ query }) => {
 		const rawLimit = Number(query.limit) || 200;
 		const limit = Math.min(Math.max(1, rawLimit), 500);
 

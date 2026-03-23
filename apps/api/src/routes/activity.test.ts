@@ -1,10 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import { createTestApp, apiRequest } from "../test-helpers";
 
-describe("GET /api/v1/activity", () => {
+describe("GET /api/v1/audit", () => {
 	test("returns empty list when no activity exists", async () => {
 		const { app } = createTestApp();
-		const res = await apiRequest(app, "/api/v1/activity");
+		const res = await apiRequest(app, "/api/v1/audit");
 
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual([]);
@@ -16,7 +16,7 @@ describe("GET /api/v1/activity", () => {
 		activityLog.log({ event: "first", instanceId: null, tenantId: null, workloadId: null, nodeId: null, metadata: null });
 		activityLog.log({ event: "second", instanceId: null, tenantId: null, workloadId: null, nodeId: null, metadata: null });
 
-		const res = await apiRequest(app, "/api/v1/activity");
+		const res = await apiRequest(app, "/api/v1/audit");
 		const body = await res.json();
 
 		expect(res.status).toBe(200);
@@ -32,7 +32,7 @@ describe("GET /api/v1/activity", () => {
 			activityLog.log({ event: `event-${i}`, instanceId: null, tenantId: null, workloadId: null, nodeId: null, metadata: null });
 		}
 
-		const res = await apiRequest(app, "/api/v1/activity?limit=2");
+		const res = await apiRequest(app, "/api/v1/audit?limit=2");
 		const body = await res.json();
 
 		expect(res.status).toBe(200);
@@ -43,7 +43,7 @@ describe("GET /api/v1/activity", () => {
 
 	test("clamps limit to 500", async () => {
 		const { app } = createTestApp();
-		const res = await apiRequest(app, "/api/v1/activity?limit=9999");
+		const res = await apiRequest(app, "/api/v1/audit?limit=9999");
 
 		expect(res.status).toBe(200);
 		// Just verify it doesn't error — clamping is internal
@@ -62,7 +62,7 @@ describe("GET /api/v1/activity", () => {
 			metadata: { reason: "OOM", exitCode: 137 },
 		});
 
-		const res = await apiRequest(app, "/api/v1/activity");
+		const res = await apiRequest(app, "/api/v1/audit");
 		const body = await res.json();
 
 		expect(body).toHaveLength(1);

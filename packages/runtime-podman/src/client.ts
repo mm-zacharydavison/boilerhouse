@@ -137,6 +137,15 @@ export interface PodmanClientConfig {
  * Uses `node:http` (implemented by Bun) with the `socketPath` option
  * to communicate with `podman system service`.
  */
+/** Statistics returned by CRIU / podman when `printStats` is enabled on restore. */
+export interface RestoreStats {
+	podman_restore_duration?: number;
+	runtime_restore_duration?: number;
+	forking_time?: number;
+	restore_time?: number;
+	pages_restored?: number;
+}
+
 export class PodmanClient {
 	private readonly socketPath: string;
 	private readonly apiBase: string;
@@ -312,11 +321,11 @@ export class PodmanClient {
 	 *   Podman assigns a random available host port for each.
 	 *   @example `["8080", "9090"]`
 	 */
-	async restoreContainer(archive: Buffer, name: string, publishPorts?: string[], pod?: string): Promise<string> {
+	async restoreContainer(archive: Buffer, name: string, publishPorts?: string[], pod?: string): Promise<{ id: string; stats?: RestoreStats }> {
 		let path =
 			`/libpod/containers/${encodeURIComponent(name)}/restore` +
 			`?import=true&name=${encodeURIComponent(name)}` +
-			`&tcpClose=true`;
+			`&tcpClose=true&printStats=true`;
 
 		if (publishPorts && publishPorts.length > 0) {
 			path += `&publishPorts=${encodeURIComponent(publishPorts.join(" "))}`;
@@ -334,8 +343,10 @@ export class PodmanClient {
 				`Failed to restore container: ${msg}`,
 			);
 		}
-		const id = (res.body as { Id: string }).Id;
-		return id;
+		const body = res.body as Record<string, unknown>;
+		const id = (body.Id ?? body.id) as string;
+		const stats = body as RestoreStats | undefined;
+		return { id, stats };
 	}
 
 	/**

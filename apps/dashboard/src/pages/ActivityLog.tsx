@@ -87,7 +87,7 @@ export function ActivityLog() {
 
 	return (
 		<div>
-			<PageHeader>logs</PageHeader>
+			<PageHeader>audit</PageHeader>
 			{data.length === 0 ? (
 				<p className="text-muted font-mono text-sm">no activity logged yet.</p>
 			) : (

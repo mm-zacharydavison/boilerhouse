@@ -20,7 +20,7 @@ const ENTITY_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 const INFRA_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/nodes", label: "nodes", icon: HardDrive },
 	{ path: "/metrics", label: "metrics", icon: BarChart3 },
-	{ path: "/logs", label: "logs", icon: ScrollText },
+	{ path: "/logs", label: "audit", icon: ScrollText },
 ];
 
 function App() {
