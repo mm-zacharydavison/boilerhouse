@@ -21,6 +21,7 @@ const log = createLogger("PoolManager");
 export class PoolManager {
 	private readonly healthChecker: HealthChecker;
 	private readonly warmingPromises = new Map<InstanceId, Promise<void>>();
+	private readonly eventBus?: EventBus;
 
 	constructor(
 		private readonly runtime: Runtime,
@@ -29,6 +30,7 @@ export class PoolManager {
 		options?: PoolManagerOptions,
 	) {
 		this.healthChecker = options?.healthChecker ?? pollHealth;
+		this.eventBus = options?.eventBus;
 	}
 
 	/**
@@ -40,6 +42,7 @@ export class PoolManager {
 		const workloadRow = this.db.select().from(workloads).where(eq(workloads.workloadId, workloadId)).get();
 		if (!workloadRow) throw new Error(`Workload not found: ${workloadId}`);
 		const workload = workloadRow.config as Workload;
+		const startedAt = performance.now();
 		const handle = await this.startPoolInstance(workloadId, workload);
 		try {
 			await this.runHealthChecks(handle, workload);
@@ -49,6 +52,7 @@ export class PoolManager {
 			throw err;
 		}
 		this.db.update(instances).set({ poolStatus: "ready" }).where(eq(instances.instanceId, handle.instanceId)).run();
+		this.eventBus?.emit({ type: "pool.instance.ready", instanceId: handle.instanceId, workloadId, durationSeconds: (performance.now() - startedAt) / 1000 });
 		applyWorkloadTransition(this.db, workloadId, "creating", "created");
 		await this.replenish(workloadId);
 	}
@@ -157,6 +161,7 @@ export class PoolManager {
 	}
 
 	private async startAndReadyInstance(workloadId: WorkloadId, workload: Workload): Promise<void> {
+		const startedAt = performance.now();
 		const handle = await this.startPoolInstance(workloadId, workload);
 		let resolve!: () => void;
 		let reject!: (err: unknown) => void;
@@ -165,6 +170,7 @@ export class PoolManager {
 		try {
 			await this.runHealthChecks(handle, workload);
 			this.db.update(instances).set({ poolStatus: "ready" }).where(eq(instances.instanceId, handle.instanceId)).run();
+			this.eventBus?.emit({ type: "pool.instance.ready", instanceId: handle.instanceId, workloadId, durationSeconds: (performance.now() - startedAt) / 1000 });
 			resolve();
 		} catch (err) {
 			await this.runtime.destroy(handle).catch(() => {});
