@@ -30,7 +30,7 @@ export function instrumentPool(meter: Meter, deps: PoolMetricsDeps): PoolMetrics
 	const coldStartDuration = meter.createHistogram("boilerhouse.pool.cold_start.duration", {
 		description: "Time from pool instance start to ready (seconds)",
 		unit: "s",
-		advice: { explicitBucketBoundaries: [0.5, 1, 2, 5, 10, 30, 60, 120, 300] },
+		advice: { explicitBucketBoundaries: [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 40, 80, 160, 300] },
 	});
 
 	return { poolDepth, coldStartDuration };
