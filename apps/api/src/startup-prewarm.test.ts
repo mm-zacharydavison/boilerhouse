@@ -1,4 +1,5 @@
 import { test, expect, describe, mock } from "bun:test";
+import { eq } from "drizzle-orm";
 import { createTestDatabase } from "@boilerhouse/db";
 import { workloads } from "@boilerhouse/db";
 import { generateWorkloadId } from "@boilerhouse/core";
@@ -87,5 +88,23 @@ describe("prewarmPools", () => {
 
 		expect(prime).toHaveBeenCalledTimes(1);
 		expect(replenish).toHaveBeenCalledTimes(0);
+	});
+
+	test("transitions workload to error state when prime fails", async () => {
+		const db = createTestDatabase();
+		const w1 = makeWorkload("creating-app", "creating");
+		db.insert(workloads).values([w1]).run();
+
+		const replenish = mock(() => Promise.resolve());
+		const prime = mock(() => Promise.reject(new Error("image pull failed")));
+
+		prewarmPools(db, { replenish, prime });
+
+		// Let the catch handler run as a microtask
+		await Promise.resolve();
+
+		const updated = db.select().from(workloads).where(eq(workloads.workloadId, w1.workloadId)).get();
+		expect(updated?.status).toBe("error");
+		expect(updated?.statusDetail).toContain("image pull failed");
 	});
 });

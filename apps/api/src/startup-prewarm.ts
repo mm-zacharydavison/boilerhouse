@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import type { DrizzleDb } from "@boilerhouse/db";
 import { workloads } from "@boilerhouse/db";
 import type { WorkloadId } from "@boilerhouse/core";
@@ -21,7 +22,13 @@ export function prewarmPools(db: DrizzleDb, poolManager: PoolManagerLike): void 
 		if (row.status === "ready") {
 			poolManager.replenish(row.workloadId).catch(() => {});
 		} else if (row.status === "creating") {
-			poolManager.prime(row.workloadId).catch(() => {});
+			poolManager.prime(row.workloadId).catch((err: unknown) => {
+				const message = err instanceof Error ? err.message : String(err);
+				db.update(workloads)
+					.set({ status: "error", statusDetail: message, updatedAt: new Date() })
+					.where(eq(workloads.workloadId, row.workloadId))
+					.run();
+			});
 		}
 	}
 }
