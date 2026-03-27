@@ -35,5 +35,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           file: ${{ matrix.dockerfile }}
           tags: |
+            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:latest
