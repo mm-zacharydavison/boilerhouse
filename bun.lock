@@ -64,6 +64,7 @@
       "name": "@boilerhouse/trigger-gateway",
       "version": "0.0.3",
       "dependencies": {
+        "@boilerhouse/o11y": "workspace:*",
         "@boilerhouse/triggers": "workspace:*",
         "elysia": "^1.4.25",
       },
