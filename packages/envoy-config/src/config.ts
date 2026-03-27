@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import Handlebars from "handlebars";
 import type { SidecarProxyConfig, SidecarProxyOutput } from "./types";
 import { generateTlsMaterial } from "./tls";
+import templateSource from "./envoy-bootstrap.yaml.hbs" with { type: "text" };
 
 const DEFAULT_PORT = 18080;
 const DEFAULT_TLS_PORT = 18443;
@@ -15,10 +14,6 @@ function safeName(domain: string): string {
 
 Handlebars.registerHelper("safeName", safeName);
 
-const templateSource = readFileSync(
-	join(import.meta.dirname, "envoy-bootstrap.yaml.hbs"),
-	"utf-8",
-);
 const template = Handlebars.compile(templateSource, { noEscape: true });
 
 /**

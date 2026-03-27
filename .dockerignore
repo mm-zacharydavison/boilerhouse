@@ -1,4 +1,8 @@
 node_modules
 .git
 data
+dist
 .env*
+*.db
+*.db-wal
+*.db-shm

@@ -16,6 +16,9 @@ export type DrizzleDb = BunSQLiteDatabase<typeof schema>;
  * const db = initDatabase("/var/lib/boilerhouse/data.db");
  * ```
  */
+const defaultMigrationsFolder = () =>
+	process.env.MIGRATIONS_DIR ?? new URL("../drizzle", import.meta.url).pathname;
+
 export function initDatabase(path: string): DrizzleDb {
 	const sqlite = new Database(path, { create: true });
 	sqlite.run("PRAGMA journal_mode = WAL");
@@ -24,7 +27,7 @@ export function initDatabase(path: string): DrizzleDb {
 	const db = drizzle(sqlite, { schema });
 
 	migrate(db, {
-		migrationsFolder: new URL("../drizzle", import.meta.url).pathname,
+		migrationsFolder: defaultMigrationsFolder(),
 	});
 
 	return db;
