@@ -1,0 +1,29 @@
+packages/core/package.json
+  bb1bbd30e6b50014 3,9-11
+packages/db/src/trigger-loader.ts
+  bb1bbd30e6b50014 17-18,102-103,116,119-120,131-132
+Dockerfile
+  bb1bbd30e6b50014 15-18
+packages/core/.pubz
+  bb1bbd30e6b50014 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "1372cdbae8cee035cd0a0d77059013d57aba9f79",
+  "prompts": {
+    "bb1bbd30e6b50014": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ed3ffb2-d180-47ee-9884-0607d845114e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 6,
+      "accepted_lines": 36,
+      "overriden_lines": 0
+    }
+  }
+}
