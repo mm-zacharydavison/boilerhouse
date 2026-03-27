@@ -15,11 +15,12 @@ FROM gcr.io/distroless/base-nossl-debian12
 
 COPY --from=build /app/boilerhouse /boilerhouse
 COPY --from=build /app/packages/db/drizzle /drizzle
-COPY --from=build /workloads/node_modules /workloads/node_modules
+COPY --from=build /workloads/node_modules /opt/workload-deps/node_modules
 
 EXPOSE 3000 9464
 
 ENV NODE_ENV=production
+ENV NODE_PATH=/opt/workload-deps/node_modules
 ENV MIGRATIONS_DIR=/drizzle
 ENV RUNTIME_TYPE=docker
 ENV LISTEN_HOST=0.0.0.0
