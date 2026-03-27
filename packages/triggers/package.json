@@ -12,6 +12,10 @@
   },
   "dependencies": {
     "@boilerhouse/core": "workspace:*",
+    "@boilerhouse/driver-claude-code": "workspace:*",
+    "@boilerhouse/driver-openclaw": "workspace:*",
+    "@boilerhouse/guard-allowlist": "workspace:*",
+    "@boilerhouse/guard-api": "workspace:*",
     "@boilerhouse/o11y": "workspace:*",
     "bullmq": "^5.71.1",
     "croner": "^10.0.1",

@@ -6,6 +6,7 @@
 import { resolve, dirname } from "node:path";
 import type { Driver } from "./driver";
 import { defaultDriver } from "./drivers/default";
+import { builtinDrivers } from "./builtin-registry";
 
 /**
  * Resolved driver ready to be passed into dispatch calls.
@@ -41,6 +42,12 @@ export async function resolveDriver(
 			driver: defaultDriver,
 			options: options ?? {},
 		};
+	}
+
+	// Check built-in registry first (works in compiled binaries)
+	const builtin = builtinDrivers[driverSpec];
+	if (builtin) {
+		return { driver: builtin, options: options ?? {} };
 	}
 
 	// Resolve the import path. Workspace packages aren't in node_modules

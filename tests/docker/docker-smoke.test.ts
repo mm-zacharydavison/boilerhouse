@@ -115,8 +115,8 @@ describe("docker smoke tests", () => {
             env.push("-e", "RUNTIME_TYPE=fake");
           }
           if (image.name === "trigger-gateway") {
-            // Create a minimal empty triggers config
-            env.push("-e", "TRIGGERS_CONFIG=/dev/null");
+            env.push("-e", "TRIGGERS_CONFIG=/config/triggers.json");
+            env.push("-v", `${import.meta.dir}/test-triggers.json:/config/triggers.json:ro`);
           }
 
           const startResult = await run([
@@ -149,6 +149,15 @@ describe("docker smoke tests", () => {
           }
 
           expect(status).toBe("running");
+
+          // Check logs for runtime errors
+          const logs = await run(["docker", "logs", containerName]);
+          const output = logs.stdout + logs.stderr;
+          expect(output).not.toContain("unable to determine transport target");
+          expect(output).not.toContain("Cannot find module");
+          expect(output).not.toContain("ENOENT");
+          expect(output).not.toContain("GuardResolveError");
+          expect(output).not.toContain("DriverResolveError");
         },
         60_000
       );

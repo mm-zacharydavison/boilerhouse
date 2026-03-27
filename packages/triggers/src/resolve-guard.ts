@@ -5,6 +5,7 @@
 
 import { resolve, dirname } from "node:path";
 import type { Guard } from "./guard";
+import { builtinGuards } from "./builtin-registry";
 
 /**
  * Resolve a guard from a trigger definition.
@@ -26,6 +27,12 @@ export async function resolveGuard(
 ): Promise<Guard | null> {
 	if (!guardSpec) {
 		return null;
+	}
+
+	// Check built-in registry first (works in compiled binaries)
+	const builtin = builtinGuards[guardSpec];
+	if (builtin) {
+		return builtin;
 	}
 
 	let importPath = guardSpec;
