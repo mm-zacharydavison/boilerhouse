@@ -9,7 +9,10 @@
   },
   "scripts": {
     "dev": "bun --hot src/server.ts",
-    "start": "bun src/server.ts"
+    "start": "bun src/server.ts",
+    "build": "bun build --compile src/server.ts --outfile ../../dist/trigger-gateway",
+    "build:linux-amd64": "bun build --compile --target=bun-linux-x64 src/server.ts --outfile ../../dist/trigger-gateway-linux-amd64",
+    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/server.ts --outfile ../../dist/trigger-gateway-linux-arm64"
   },
   "dependencies": {
     "@boilerhouse/triggers": "workspace:*",

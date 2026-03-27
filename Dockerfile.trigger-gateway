@@ -1,0 +1,17 @@
+FROM oven/bun:1.3.9-alpine AS build
+
+WORKDIR /app
+COPY . .
+RUN bun install --frozen-lockfile
+RUN bun build --compile --target=bun-linux-x64 apps/trigger-gateway/src/server.ts --outfile trigger-gateway
+
+FROM gcr.io/distroless/base-nossl-debian12
+
+COPY --from=build /app/trigger-gateway /trigger-gateway
+
+EXPOSE 3002
+
+ENV LISTEN_HOST=0.0.0.0
+ENV PORT=3002
+
+ENTRYPOINT ["/trigger-gateway"]

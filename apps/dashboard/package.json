@@ -10,7 +10,10 @@
   "scripts": {
     "dev": "bun --hot src/server.ts",
     "start": "bun src/server.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "build": "bun build --compile src/server.ts --outfile ../../dist/dashboard",
+    "build:linux-amd64": "bun build --compile --target=bun-linux-x64 src/server.ts --outfile ../../dist/dashboard-linux-amd64",
+    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/server.ts --outfile ../../dist/dashboard-linux-arm64"
   },
   "dependencies": {
     "lucide-react": "^0.575.0",

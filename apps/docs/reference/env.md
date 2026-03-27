@@ -1,0 +1,31 @@
+# Environment Variables
+
+<!-- WRITE: full table — variable, default, description, required? -->
+
+## Core
+
+<!-- WRITE: PORT, LISTEN_HOST, DB_PATH, STORAGE_PATH, RUNTIME_TYPE, MAX_INSTANCES, WORKLOADS_DIR -->
+
+## Security
+
+<!-- WRITE: BOILERHOUSE_API_KEY, BOILERHOUSE_SECRET_KEY -->
+
+## Observability
+
+<!-- WRITE: METRICS_PORT, METRICS_HOST, OTEL_EXPORTER_OTLP_ENDPOINT -->
+
+## S3 Storage
+
+<!-- WRITE: S3_ENABLED, S3_BUCKET, S3_REGION, S3_ENDPOINT, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY -->
+
+## Overlay Cache
+
+<!-- WRITE: OVERLAY_CACHE_DIR, OVERLAY_CACHE_MAX_BYTES -->
+
+## Docker Runtime
+
+<!-- WRITE: DOCKER_SOCKET, SECCOMP_PROFILE_PATH -->
+
+## Kubernetes Runtime
+
+<!-- WRITE: K8S_API_URL, K8S_TOKEN, K8S_CA_CERT, K8S_NAMESPACE, K8S_CONTEXT, K8S_MINIKUBE_PROFILE -->
