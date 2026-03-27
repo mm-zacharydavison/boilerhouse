@@ -1,0 +1,29 @@
+package.json
+  69d66e49be73924c 14
+apps/trigger-gateway/package.json
+  69d66e49be73924c 7
+apps/cli/package.json
+  69d66e49be73924c 7
+apps/dashboard/package.json
+  69d66e49be73924c 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "f32e1c6c06863c2b8bdaebc9bedf12110560be0e",
+  "prompts": {
+    "69d66e49be73924c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dacb5ca1-16e9-4184-95d0-3dac0b4376fc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 1,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
