@@ -1,7 +1,7 @@
+# Standalone build — prefer using `docker build --target=dashboard -f Dockerfile .`
+# to share the install layer with other targets.
 FROM oven/bun:1.3.9-debian AS build
-
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 COPY . .
 RUN bun install
@@ -9,13 +9,7 @@ RUN NODE_ENV=production bun build --compile apps/dashboard/src/server.ts --outfi
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-
 COPY --from=build /app/dashboard /dashboard
-
 EXPOSE 3001
-
-ENV NODE_ENV=production
-ENV LISTEN_HOST=0.0.0.0
-ENV PORT=3001
-
+ENV NODE_ENV=production LISTEN_HOST=0.0.0.0 PORT=3001
 ENTRYPOINT ["/dashboard"]

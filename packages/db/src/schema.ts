@@ -258,10 +258,12 @@ export const triggers = sqliteTable("triggers", {
 	driver: text("driver"),
 	/** Driver-specific options (e.g. `{ gatewayToken: "..." }`). */
 	driverOptions: jsonObject<Record<string, unknown>>("driver_options"),
-	/** Guard package name or path for access control. */
+	/** @deprecated Use `guards` instead. Kept for migration compat. */
 	guard: text("guard"),
-	/** Guard-specific options passed to guard.check() as ctx.options. */
+	/** @deprecated Use `guards` instead. Kept for migration compat. */
 	guardOptions: jsonObject<Record<string, unknown>>("guard_options"),
+	/** Ordered guard chain — each entry has { guard, guardOptions? }. */
+	guards: jsonObject<Array<{ guard: string; guardOptions?: Record<string, unknown> }>>("guards"),
 	enabled: integer("enabled").notNull().default(1),
 	lastInvokedAt: timestamp("last_invoked_at"),
 	createdAt: timestamp("created_at").notNull(),

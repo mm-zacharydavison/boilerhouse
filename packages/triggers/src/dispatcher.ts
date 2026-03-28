@@ -1,6 +1,6 @@
 import type { ClaimResult } from "@boilerhouse/core";
 import type { Driver, DriverConfig } from "./driver";
-import type { Guard } from "./guard";
+import type { ResolvedGuardStep } from "./guard";
 import type { TriggerDefinition, TriggerPayload } from "./config";
 import type { SessionManager } from "./session-manager";
 import type { ReplyContext } from "./reply";
@@ -70,8 +70,8 @@ export interface TriggerEvent {
 	driver?: Driver;
 	/** Configuration passed to the driver (secrets, options). */
 	driverConfig?: DriverConfig;
-	/** Guard to run before claiming. If denied, respond is called and dispatch throws 403. */
-	guard?: Guard;
+	/** Guard chain to run before claiming. If any guard denies, respond is called and dispatch throws 403. */
+	guards?: ResolvedGuardStep[];
 	/** Full trigger definition, required for guard context. */
 	triggerDef?: TriggerDefinition;
 	/** Serializable reply context — used by the queue worker to send responses after dispatch. */
@@ -115,36 +115,38 @@ export class Dispatcher {
 			metadata: { trigger: event.triggerName, workload: event.workload },
 		});
 
-		// 1. Guard check — runs before claim, cron triggers have no guard
-		if (event.guard && event.triggerDef) {
-			let guardResult: import("./guard").GuardResult;
-			try {
-				guardResult = await event.guard.check({
-					tenantId: event.tenantId,
-					payload: event.payload as TriggerPayload,
-					trigger: event.triggerDef,
-					options: event.triggerDef.guardOptions ?? {},
-				});
-			} catch (err) {
-				// Guard threw — fail closed
-				const message = event.triggerDef.guardOptions?.denyMessage as string | undefined
-					?? "Access denied.";
-				await event.respond?.(message);
-				this.deps.logActivity({
-					event: "trigger.denied",
-					tenantId: event.tenantId,
-					metadata: { trigger: event.triggerName, reason: `guard threw: ${err instanceof Error ? err.message : String(err)}` },
-				});
-				throw new DispatchError(message, 403);
-			}
-			if (!guardResult.ok) {
-				await event.respond?.(guardResult.message);
-				this.deps.logActivity({
-					event: "trigger.denied",
-					tenantId: event.tenantId,
-					metadata: { trigger: event.triggerName, reason: guardResult.message },
-				});
-				throw new DispatchError(guardResult.message, 403);
+		// 1. Guard chain — runs before claim, short-circuits on first denial
+		if (event.guards && event.guards.length > 0 && event.triggerDef) {
+			for (const step of event.guards) {
+				let guardResult: import("./guard").GuardResult;
+				try {
+					guardResult = await step.guard.check({
+						tenantId: event.tenantId,
+						payload: event.payload as TriggerPayload,
+						trigger: event.triggerDef,
+						options: step.guardOptions,
+					});
+				} catch (err) {
+					// Guard threw — fail closed
+					const message = step.guardOptions.denyMessage as string | undefined
+						?? "Access denied.";
+					await event.respond?.(message);
+					this.deps.logActivity({
+						event: "trigger.denied",
+						tenantId: event.tenantId,
+						metadata: { trigger: event.triggerName, reason: `guard threw: ${err instanceof Error ? err.message : String(err)}` },
+					});
+					throw new DispatchError(message, 403);
+				}
+				if (!guardResult.ok) {
+					await event.respond?.(guardResult.message);
+					this.deps.logActivity({
+						event: "trigger.denied",
+						tenantId: event.tenantId,
+						metadata: { trigger: event.triggerName, reason: guardResult.message },
+					});
+					throw new DispatchError(guardResult.message, 403);
+				}
 			}
 		}
 

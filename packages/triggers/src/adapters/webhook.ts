@@ -77,7 +77,7 @@ export function createWebhookRoutes(
 
 			try {
 				const resolved = drivers?.get(trigger.name);
-				const guard = guards?.get(trigger.name);
+				const guardChain = guards?.get(trigger.name);
 
 				const triggerPayload: TriggerPayload = {
 					text: typeof payload.text === "string" ? payload.text : "",
@@ -94,8 +94,8 @@ export function createWebhookRoutes(
 						driver: resolved.driver,
 						driverConfig: resolved.driverConfig,
 					}),
-					...(guard && {
-						guard,
+					...(guardChain && guardChain.length > 0 && {
+						guards: guardChain,
 						triggerDef: trigger,
 					}),
 				});

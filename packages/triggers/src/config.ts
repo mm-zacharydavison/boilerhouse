@@ -35,6 +35,14 @@ export type TenantMapping =
 			prefix?: string;
 	  };
 
+/** A single step in a guard chain. */
+export interface GuardStep {
+	/** Guard package name or path. */
+	guard: string;
+	/** Guard-specific options passed to guard.check() as ctx.options. */
+	guardOptions?: Record<string, unknown>;
+}
+
 export interface TriggerDefinition {
 	/** Unique name for this trigger.
 	 * @example "slack-support-agent"
@@ -67,14 +75,17 @@ export interface TriggerDefinition {
 	driverOptions?: Record<string, unknown>;
 
 	/**
-	 * Guard for access control. Runs before the container is claimed.
-	 * Can be a package name or relative file path.
-	 * @example "@boilerhouse/guard-api"
+	 * Guard chain for access control. Runs before the container is claimed.
+	 * Guards execute sequentially; short-circuits on first denial.
+	 * @example
+	 * ```ts
+	 * guards: [
+	 *   { guard: "@boilerhouse/guard-allowlist", guardOptions: { tenantIds: ["tg-admin"] } },
+	 *   { guard: "@boilerhouse/guard-api", guardOptions: { url: "https://auth.example.com/check" } },
+	 * ]
+	 * ```
 	 */
-	guard?: string;
-
-	/** Guard-specific options passed to guard.check() as ctx.options. */
-	guardOptions?: Record<string, unknown>;
+	guards?: GuardStep[];
 }
 
 export interface RateLimitConfig {

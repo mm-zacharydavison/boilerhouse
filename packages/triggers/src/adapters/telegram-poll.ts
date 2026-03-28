@@ -74,7 +74,7 @@ export class TelegramPollAdapter {
 		const allowedUpdates = JSON.stringify(updateTypes);
 		const tgApi = `${apiBaseUrl}/bot${botToken}`;
 		const resolved = drivers?.get(trigger.name);
-		const guard = guards?.get(trigger.name);
+		const guardChain = guards?.get(trigger.name);
 
 		// Clear any existing webhook before starting to poll
 		log.debug({ trigger: trigger.name }, "Clearing webhook");
@@ -187,8 +187,8 @@ export class TelegramPollAdapter {
 								driver: resolved.driver,
 								driverConfig: resolved.driverConfig,
 							}),
-							...(guard && {
-								guard,
+							...(guardChain && guardChain.length > 0 && {
+								guards: guardChain,
 								triggerDef: trigger,
 							}),
 						});

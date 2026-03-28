@@ -13,7 +13,7 @@ export type { Driver, DriverEndpoint, DriverSocket, DriverConfig, DriverMap, Sen
 export { resolveDriver, DriverResolveError } from "./resolve-driver";
 export type { ResolvedDriver } from "./resolve-driver";
 
-export type { Guard, GuardContext, GuardResult, GuardMap } from "./guard";
+export type { Guard, GuardContext, GuardResult, GuardMap, ResolvedGuardStep } from "./guard";
 export { resolveGuard, GuardResolveError } from "./resolve-guard";
 export { DriverSocketImpl, DriverSocketError } from "./driver-socket";
 
@@ -40,6 +40,7 @@ export type {
 	TriggerPayload,
 	TenantMapping,
 	TriggerDefinition,
+	GuardStep,
 	WebhookConfig,
 	SlackConfig,
 	TelegramPollConfig,

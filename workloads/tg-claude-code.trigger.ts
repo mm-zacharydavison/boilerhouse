@@ -12,9 +12,13 @@ export default defineTrigger({
 	},
 	driver: "@boilerhouse/driver-claude-code",
 	driverOptions: {},
-	guard: "@boilerhouse/guard-allowlist",
-	guardOptions: {
-		tenantIds: ["tg-thingsdoer"],
-		denyMessage: "You are not authorised to use this service.",
-	},
+	guards: [
+		{
+			guard: "@boilerhouse/guard-allowlist",
+			guardOptions: {
+				tenantIds: ["tg-thingsdoer"],
+				denyMessage: "You are not authorised to use this service.",
+			},
+		},
+	],
 });

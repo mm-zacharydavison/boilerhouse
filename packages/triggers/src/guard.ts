@@ -15,5 +15,11 @@ export interface Guard {
 	check(ctx: GuardContext): Promise<GuardResult>;
 }
 
-/** Pre-resolved guards keyed by trigger name. Built at startup, passed to adapters. */
-export type GuardMap = Map<string, Guard>;
+/** A resolved guard paired with its options. */
+export interface ResolvedGuardStep {
+	guard: Guard;
+	guardOptions: Record<string, unknown>;
+}
+
+/** Pre-resolved guard chains keyed by trigger name. Built at startup, passed to adapters. */
+export type GuardMap = Map<string, ResolvedGuardStep[]>;

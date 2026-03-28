@@ -36,9 +36,11 @@ export class DockerRuntime implements Runtime {
 	private readonly imageResolver: ImageResolver;
 	private readonly seccompProfilePath?: string;
 	private readonly endpointHost: string;
+	private readonly sharedTmpDir: string;
 
 	constructor(config: DockerConfig = {}) {
 		this.client = new DockerClient({ socketPath: config.socketPath });
+		this.sharedTmpDir = config.sidecarTmpDir ?? tmpdir();
 		this.sidecar = new DockerSidecar(this.client, config.sidecarTmpDir);
 		this.imageResolver = new DockerImageResolver(this.client);
 		this.seccompProfilePath = config.seccompProfilePath;
@@ -146,7 +148,7 @@ export class DockerRuntime implements Runtime {
 			overlayDirMap = new Map();
 			spec.HostConfig.Binds = spec.HostConfig.Binds ?? [];
 			for (const dir of workload.filesystem.overlay_dirs) {
-				const hostDir = mkdtempSync(join(tmpdir(), `boilerhouse-${instanceId}-overlay-`));
+				const hostDir = mkdtempSync(join(this.sharedTmpDir, `boilerhouse-${instanceId}-overlay-`));
 				overlayDirMap.set(dir, hostDir);
 				spec.HostConfig.Binds.push(`${hostDir}:${dir}`);
 			}
@@ -239,7 +241,7 @@ export class DockerRuntime implements Runtime {
 		// layer which gets shadowed by the bind mount at start. Extract overlay
 		// portions directly into the host dirs backing the bind mounts instead.
 		if (instance?.overlayDirMap?.size) {
-			const tmp = mkdtempSync(join(tmpdir(), `boilerhouse-inject-`));
+			const tmp = mkdtempSync(join(this.sharedTmpDir, `boilerhouse-inject-`));
 			try {
 				const tarPath = join(tmp, "overlay.tar.gz");
 				writeFileSync(tarPath, tar);
@@ -271,7 +273,7 @@ export class DockerRuntime implements Runtime {
 		const instance = this.instances.get(instanceId);
 		if (!instance?.overlayDirMap?.size || overlayDirs.length === 0) return null;
 
-		const tmp = mkdtempSync(join(tmpdir(), `boilerhouse-extract-`));
+		const tmp = mkdtempSync(join(this.sharedTmpDir, `boilerhouse-extract-`));
 		try {
 			const staging = join(tmp, "staging");
 			for (const [containerDir, hostDir] of instance.overlayDirMap) {

@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { Dispatcher, DispatchError } from "./dispatcher";
 import type { DispatcherDeps } from "./dispatcher";
-import type { Guard } from "./guard";
+import type { Guard, ResolvedGuardStep } from "./guard";
 import type { TriggerDefinition } from "./config";
 import { SessionManager } from "./session-manager";
 
@@ -581,6 +581,11 @@ function makeThrowingGuard(): Guard {
 	};
 }
 
+/** Wrap a Guard into a single-step guard chain for dispatch. */
+function guardChain(...steps: Array<{ guard: Guard; guardOptions?: Record<string, unknown> }>): ResolvedGuardStep[] {
+	return steps.map((s) => ({ guard: s.guard, guardOptions: s.guardOptions ?? {} }));
+}
+
 test("guard: allow — proceeds to claim and dispatch normally", async () => {
 	claimCount = 0;
 	agentPayloads = [];
@@ -595,7 +600,7 @@ test("guard: allow — proceeds to claim and dispatch normally", async () => {
 		tenantId: "t-1",
 		workload: "my-workload",
 		payload: { text: "hello", source: "webhook", raw: {} },
-		guard: makeAllowGuard(),
+		guards: guardChain({ guard: makeAllowGuard() }),
 		triggerDef: testTriggerDef,
 	});
 
@@ -616,7 +621,7 @@ test("guard: deny — throws DispatchError 403 and does not claim", async () => 
 			tenantId: "t-1",
 			workload: "my-workload",
 			payload: { text: "hello", source: "webhook", raw: {} },
-			guard: makeDenyGuard("Not authorised."),
+			guards: guardChain({ guard: makeDenyGuard("Not authorised.") }),
 			triggerDef: testTriggerDef,
 		});
 		expect(true).toBe(false);
@@ -645,7 +650,7 @@ test("guard: deny — calls respond callback with denial message", async () => {
 			tenantId: "t-1",
 			workload: "my-workload",
 			payload: { text: "hello", source: "webhook", raw: {} },
-			guard: makeDenyGuard("You are blocked."),
+			guards: guardChain({ guard: makeDenyGuard("You are blocked.") }),
 			triggerDef: testTriggerDef,
 			respond: async (msg) => {
 				respondCalledWith = msg;
@@ -670,8 +675,8 @@ test("guard: throwing guard — fails closed with 403", async () => {
 			tenantId: "t-1",
 			workload: "my-workload",
 			payload: { text: "hello", source: "webhook", raw: {} },
-			guard: makeThrowingGuard(),
-			triggerDef: { ...testTriggerDef, guardOptions: { denyMessage: "Service error." } },
+			guards: guardChain({ guard: makeThrowingGuard(), guardOptions: { denyMessage: "Service error." } }),
+			triggerDef: testTriggerDef,
 		});
 		expect(true).toBe(false);
 	} catch (err) {
@@ -700,4 +705,123 @@ test("guard: no guard — dispatches normally without guard check", async () => 
 
 	expect(claimCount).toBe(1);
 	expect(result.instanceId).toBe("i-1");
+});
+
+// ── Guard composition tests ─────────────────────────────────────────────────
+
+test("guard chain: all pass — dispatches normally", async () => {
+	claimCount = 0;
+	agentShouldFail = false;
+	claimShouldFail = false;
+
+	const deps = createTestDeps();
+	const dispatcher = new Dispatcher(deps, { waitForReady: false });
+
+	const result = await dispatcher.dispatch({
+		triggerName: "test-trigger",
+		tenantId: "t-1",
+		workload: "my-workload",
+		payload: { text: "hello", source: "webhook", raw: {} },
+		guards: guardChain(
+			{ guard: makeAllowGuard() },
+			{ guard: makeAllowGuard() },
+		),
+		triggerDef: testTriggerDef,
+	});
+
+	expect(claimCount).toBe(1);
+	expect(result.instanceId).toBe("i-1");
+});
+
+test("guard chain: second guard denies — short-circuits, no claim", async () => {
+	claimCount = 0;
+	activityEvents = [];
+
+	const deps = createTestDeps();
+	const dispatcher = new Dispatcher(deps, { waitForReady: false });
+
+	try {
+		await dispatcher.dispatch({
+			triggerName: "test-trigger",
+			tenantId: "t-1",
+			workload: "my-workload",
+			payload: { text: "hello", source: "webhook", raw: {} },
+			guards: guardChain(
+				{ guard: makeAllowGuard() },
+				{ guard: makeDenyGuard("Second guard denied.") },
+			),
+			triggerDef: testTriggerDef,
+		});
+		expect(true).toBe(false);
+	} catch (err) {
+		expect(err).toBeInstanceOf(DispatchError);
+		expect((err as DispatchError).statusCode).toBe(403);
+		expect((err as DispatchError).message).toBe("Second guard denied.");
+	}
+
+	expect(claimCount).toBe(0);
+});
+
+test("guard chain: first guard denies — second never runs", async () => {
+	claimCount = 0;
+	let secondGuardCalled = false;
+
+	const secondGuard: Guard = {
+		async check() {
+			secondGuardCalled = true;
+			return { ok: true };
+		},
+	};
+
+	const deps = createTestDeps();
+	const dispatcher = new Dispatcher(deps, { waitForReady: false });
+
+	try {
+		await dispatcher.dispatch({
+			triggerName: "test-trigger",
+			tenantId: "t-1",
+			workload: "my-workload",
+			payload: { text: "hello", source: "webhook", raw: {} },
+			guards: guardChain(
+				{ guard: makeDenyGuard("First denied.") },
+				{ guard: secondGuard },
+			),
+			triggerDef: testTriggerDef,
+		});
+	} catch {
+		// expected
+	}
+
+	expect(secondGuardCalled).toBe(false);
+	expect(claimCount).toBe(0);
+});
+
+test("guard chain: each step receives its own guardOptions", async () => {
+	const receivedOptions: Record<string, unknown>[] = [];
+
+	const captureGuard: Guard = {
+		async check(ctx) {
+			receivedOptions.push({ ...ctx.options });
+			return { ok: true };
+		},
+	};
+
+	const deps = createTestDeps();
+	const dispatcher = new Dispatcher(deps, { waitForReady: false });
+
+	await dispatcher.dispatch({
+		triggerName: "test-trigger",
+		tenantId: "t-1",
+		workload: "my-workload",
+		payload: { text: "hello", source: "webhook", raw: {} },
+		guards: guardChain(
+			{ guard: captureGuard, guardOptions: { step: 1, tenantIds: ["a"] } },
+			{ guard: captureGuard, guardOptions: { step: 2, url: "https://example.com" } },
+		),
+		triggerDef: testTriggerDef,
+	});
+
+	expect(receivedOptions).toHaveLength(2);
+	expect(receivedOptions[0]).toEqual({ step: 1, tenantIds: ["a"] });
+	expect(receivedOptions[1]).toEqual({ step: 2, url: "https://example.com" });
 });

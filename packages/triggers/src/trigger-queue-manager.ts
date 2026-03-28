@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DispatchError } from "./dispatcher";
 import type { Dispatcher, DispatchResult, TriggerEvent } from "./dispatcher";
 import type { DriverMap } from "./driver";
-import type { TriggerPayload, TriggerDefinition } from "./config";
+import type { TriggerPayload } from "./config";
 import type { GuardMap } from "./guard";
 import type { ReplyContext } from "./reply";
 import { sendReply } from "./reply";
@@ -205,25 +205,27 @@ export class QueuedDispatcher {
 	) {}
 
 	async dispatch(event: TriggerEvent): Promise<DispatchResult> {
-		// Run guard check before enqueuing — guards can't be serialized into Redis
-		if (event.guard && event.triggerDef) {
-			const denyMessage = event.triggerDef.guardOptions?.denyMessage as string | undefined
-				?? "Access denied.";
-			let guardResult: import("./guard").GuardResult;
-			try {
-				guardResult = await event.guard.check({
-					tenantId: event.tenantId,
-					payload: event.payload as TriggerPayload,
-					trigger: event.triggerDef,
-					options: event.triggerDef.guardOptions ?? {},
-				});
-			} catch {
-				await event.respond?.(denyMessage);
-				throw new DispatchError(denyMessage, 403);
-			}
-			if (!guardResult.ok) {
-				await event.respond?.(guardResult.message);
-				throw new DispatchError(guardResult.message, 403);
+		// Run guard chain before enqueuing — guards can't be serialized into Redis
+		if (event.guards && event.guards.length > 0 && event.triggerDef) {
+			for (const step of event.guards) {
+				const denyMessage = step.guardOptions.denyMessage as string | undefined
+					?? "Access denied.";
+				let guardResult: import("./guard").GuardResult;
+				try {
+					guardResult = await step.guard.check({
+						tenantId: event.tenantId,
+						payload: event.payload as TriggerPayload,
+						trigger: event.triggerDef,
+						options: step.guardOptions,
+					});
+				} catch {
+					await event.respond?.(denyMessage);
+					throw new DispatchError(denyMessage, 403);
+				}
+				if (!guardResult.ok) {
+					await event.respond?.(guardResult.message);
+					throw new DispatchError(guardResult.message, 403);
+				}
 			}
 		}
 

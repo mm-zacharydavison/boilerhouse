@@ -90,17 +90,26 @@ function loadTriggersFromDb(deps: RouteDeps): TriggerDefinition[] {
 		.where(eq(triggers.enabled, 1))
 		.all();
 
-	return rows.map((row) => ({
-		name: row.name,
-		type: row.type as TriggerDefinition["type"],
-		tenant: row.tenant as TriggerDefinition["tenant"],
-		workload: row.workload,
-		config: row.config as unknown as TriggerDefinition["config"],
-		driver: row.driver ?? undefined,
-		driverOptions: row.driverOptions ?? undefined,
-		guard: row.guard ?? undefined,
-		guardOptions: row.guardOptions ?? undefined,
-	}));
+	return rows.map((row) => {
+		// Build guards array from DB: prefer `guards` JSON column, fall back to legacy `guard`/`guardOptions`
+		let guards: TriggerDefinition["guards"];
+		if (row.guards) {
+			guards = row.guards as TriggerDefinition["guards"];
+		} else if (row.guard) {
+			guards = [{ guard: row.guard, guardOptions: row.guardOptions ?? undefined }];
+		}
+
+		return {
+			name: row.name,
+			type: row.type as TriggerDefinition["type"],
+			tenant: row.tenant as TriggerDefinition["tenant"],
+			workload: row.workload,
+			config: row.config as unknown as TriggerDefinition["config"],
+			driver: row.driver ?? undefined,
+			driverOptions: row.driverOptions ?? undefined,
+			guards,
+		};
+	});
 }
 
 /**
@@ -144,7 +153,7 @@ async function resolveDriversForTriggers(
 }
 
 /**
- * Resolve guards for all triggers that declare one.
+ * Resolve guard chains for all triggers that declare guards.
  * Called once at startup — imports happen here, not per-request.
  */
 async function resolveGuardsForTriggers(
@@ -155,17 +164,32 @@ async function resolveGuardsForTriggers(
 
 	for (const trigger of allTriggers) {
 		// Cron triggers skip guards (no user to deny)
-		if (trigger.type === "cron" || !trigger.guard) continue;
-		try {
-			const guard = await resolveGuard(trigger.guard);
-			if (guard) {
-				guardMap.set(trigger.name, guard);
-				log?.info({ trigger: trigger.name, guard: trigger.guard }, "Resolved guard for trigger");
+		if (trigger.type === "cron" || !trigger.guards || trigger.guards.length === 0) continue;
+
+		const chain: import("@boilerhouse/triggers").ResolvedGuardStep[] = [];
+		let failed = false;
+
+		for (const step of trigger.guards) {
+			try {
+				const guard = await resolveGuard(step.guard);
+				if (guard) {
+					chain.push({ guard, guardOptions: step.guardOptions ?? {} });
+				}
+			} catch (err) {
+				log?.error(
+					{ trigger: trigger.name, guard: step.guard, err: err instanceof Error ? err.stack ?? err.message : err },
+					"Failed to resolve guard in chain for trigger",
+				);
+				failed = true;
+				break;
 			}
-		} catch (err) {
-			log?.error(
-				{ trigger: trigger.name, guard: trigger.guard, err: err instanceof Error ? err.stack ?? err.message : err },
-				"Failed to resolve guard for trigger",
+		}
+
+		if (!failed && chain.length > 0) {
+			guardMap.set(trigger.name, chain);
+			log?.info(
+				{ trigger: trigger.name, guards: trigger.guards.map((s) => s.guard) },
+				"Resolved guard chain for trigger",
 			);
 		}
 	}

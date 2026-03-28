@@ -15,9 +15,13 @@ export default defineTrigger({
 	driverOptions: {
 		gatewayToken: GATEWAY_TOKEN,
 	},
-	guard: "@boilerhouse/guard-allowlist",
-	guardOptions: {
-		tenantIds: ["tg-thingsdoer"],
-		denyMessage: "You are not authorised to use this service.",
-	},
+	guards: [
+		{
+			guard: "@boilerhouse/guard-allowlist",
+			guardOptions: {
+				tenantIds: ["tg-thingsdoer"],
+				denyMessage: "You are not authorised to use this service.",
+			},
+		},
+	],
 });
