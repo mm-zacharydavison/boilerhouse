@@ -1,0 +1,45 @@
+packages/triggers/src/dispatcher.test.ts
+  fba09568d0bf2096 597,618,647,672
+packages/triggers/src/trigger-queue-manager.ts
+  fba09568d0bf2096 4,7-8,204,208-229
+packages/triggers/src/adapters/telegram-poll.ts
+  fba09568d0bf2096 152
+packages/triggers/src/adapters/telegram-parse.ts
+  fba09568d0bf2096 15,52,54
+packages/guard-allowlist/src/index.test.ts
+  fba09568d0bf2096 5,16,24-26,31-40,47-48,54-55
+packages/triggers/src/resolve-guard.test.ts
+  fba09568d0bf2096 61
+workloads/tg-claude-code.trigger.ts
+  fba09568d0bf2096 7,15-19
+packages/guard-api/src/index.ts
+  fba09568d0bf2096 16
+packages/driver-openclaw/src/openclaw.test.ts
+  fba09568d0bf2096 124,138,155,172,190
+apps/api/src/routes/trigger-adapters.ts
+  fba09568d0bf2096 16,22,101-102,146-175,233-236,245-246,254,259,261
+packages/guard-allowlist/src/index.ts
+  fba09568d0bf2096 4,6-7,11,17-19,22-23
+workloads/tg-openclaw.trigger.ts
+  fba09568d0bf2096 8,18-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "182c3bcefcaebf7c47b06912ea448bf9b71b6100",
+  "prompts": {
+    "fba09568d0bf2096": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7e5b4e1-753d-4c9b-9b59-400ebf98d262",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 153,
+      "total_deletions": 92,
+      "accepted_lines": 127,
+      "overriden_lines": 0
+    }
+  }
+}
