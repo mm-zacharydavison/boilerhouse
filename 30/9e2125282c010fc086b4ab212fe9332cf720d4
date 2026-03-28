@@ -1,0 +1,27 @@
+workloads/tg-claude-code.trigger.ts
+  fba09568d0bf2096 7
+workloads/tg-openclaw.trigger.ts
+  fba09568d0bf2096 8
+packages/triggers/src/adapters/telegram-poll.ts
+  fba09568d0bf2096 153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "309e2125282c010fc086b4ab212fe9332cf720d4",
+  "prompts": {
+    "fba09568d0bf2096": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7e5b4e1-753d-4c9b-9b59-400ebf98d262",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 2,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
