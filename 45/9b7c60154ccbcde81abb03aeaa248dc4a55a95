@@ -1,0 +1,62 @@
+apps/api/src/routes/triggers.ts
+  52748308e2be55da 67,100
+packages/triggers/src/adapters/telegram-parse.ts
+  52748308e2be55da 2,55-71
+apps/api/src/bootstrap.ts
+  bb1bbd30e6b50014 137,355-356
+packages/db/src/trigger-loader.ts
+  52748308e2be55da 11
+packages/runtime-docker/src/runtime.ts
+  bb1bbd30e6b50014 42
+apps/api/src/routes/trigger-adapters.ts
+  52748308e2be55da 268
+packages/db/src/schema.ts
+  52748308e2be55da 242-243
+packages/db/src/trigger-loader.test.ts
+  52748308e2be55da 14,39,54,216
+packages/triggers/src/config.ts
+  52748308e2be55da 51,60,164
+packages/triggers/src/adapters/telegram-poll.ts
+  52748308e2be55da 14
+apps/dashboard/src/api.ts
+  52748308e2be55da 186
+apps/dashboard/src/pages/TriggerList.tsx
+  52748308e2be55da 17,52,156,225,375,580
+packages/runtime-docker/src/types.ts
+  bb1bbd30e6b50014 13-19
+packages/runtime-docker/src/sidecar.ts
+  bb1bbd30e6b50014 34-38,48,73,80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "459b7c60154ccbcde81abb03aeaa248dc4a55a95",
+  "prompts": {
+    "52748308e2be55da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "862dc4c4-683e-4a6c-bc35-c3cd2ac683fb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 40,
+      "total_deletions": 101,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    },
+    "bb1bbd30e6b50014": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ed3ffb2-d180-47ee-9884-0607d845114e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 6,
+      "accepted_lines": 19,
+      "overriden_lines": 1
+    }
+  }
+}
