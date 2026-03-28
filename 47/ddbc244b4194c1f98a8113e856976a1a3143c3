@@ -1,0 +1,25 @@
+packages/runtime-docker/src/client.ts
+  fba09568d0bf2096 98
+.kadai/actions/presets/_lib.sh
+  fba09568d0bf2096 129-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "47ddbc244b4194c1f98a8113e856976a1a3143c3",
+  "prompts": {
+    "fba09568d0bf2096": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7e5b4e1-753d-4c9b-9b59-400ebf98d262",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Zachary Davison <zac.developer@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
