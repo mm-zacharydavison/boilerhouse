@@ -162,7 +162,7 @@ export class TelegramPollAdapter {
 					// Dispatch
 					try {
 						const payload = telegramUpdateToPayload(parsed, update);
-						const result = await dispatcher.dispatch({
+						await dispatcher.dispatch({
 							triggerName: trigger.name,
 							tenantId,
 							workload: trigger.workload,
@@ -174,6 +174,13 @@ export class TelegramPollAdapter {
 										.catch((sendErr) => log.error({ trigger: trigger.name, chatId: parsed.chatId, err: sendErr }, "Failed to send guard response"));
 								}
 							},
+							...(parsed.chatId && {
+								replyContext: {
+									adapter: "telegram" as const,
+									chatId: parsed.chatId,
+									apiBaseUrl,
+								},
+							}),
 							...(resolved && {
 								driver: resolved.driver,
 								driverConfig: resolved.driverConfig,
@@ -183,17 +190,6 @@ export class TelegramPollAdapter {
 								triggerDef: trigger,
 							}),
 						});
-
-						// Send response back to chat
-						if (parsed.chatId && result.agentResponse) {
-							const responseText =
-								typeof result.agentResponse === "string"
-									? result.agentResponse
-									: (result.agentResponse as Record<string, unknown>).text as string ??
-										JSON.stringify(result.agentResponse);
-							await sendTelegramMessage(botToken, parsed.chatId, responseText, apiBaseUrl)
-							.catch((sendErr) => log.error({ trigger: trigger.name, chatId: parsed.chatId, err: sendErr }, "Failed to send Telegram response"));
-						}
 					} catch (err) {
 						log.error({ trigger: trigger.name, err }, "Dispatch failed");
 					}

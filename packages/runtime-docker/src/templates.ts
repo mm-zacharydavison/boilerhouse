@@ -1,4 +1,5 @@
-const ENV_VAR_RE = /\$\{(\w+)\}/g;
+import { interpolateEnv } from "@boilerhouse/core";
+
 const SECRET_REF_RE = /\$\{(global-secret|tenant-secret):\w+\}/;
 
 /**
@@ -8,15 +9,7 @@ const SECRET_REF_RE = /\$\{(global-secret|tenant-secret):\w+\}/;
  * Unresolved `${VAR}` references are replaced with an empty string.
  */
 export function resolveTemplates(env: Record<string, string>): Record<string, string> {
-	const resolved: Record<string, string> = {};
-	for (const [key, value] of Object.entries(env)) {
-		resolved[key] = value.replace(ENV_VAR_RE, (match, name: string) => {
-			// Preserve secret refs — they'll be resolved by the proxy at request time
-			if (SECRET_REF_RE.test(match)) return match;
-			return process.env[name] ?? "";
-		});
-	}
-	return resolved;
+	return interpolateEnv(env, (match) => SECRET_REF_RE.test(match));
 }
 
 /**

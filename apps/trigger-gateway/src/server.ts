@@ -18,6 +18,7 @@ import {
 	createWebhookRoutes,
 	createSlackRoutes,
 	resolveGuard,
+	interpolateEnvString,
 } from "@boilerhouse/triggers";
 import type {
 	DispatcherDeps,
@@ -51,7 +52,7 @@ async function loadTriggers(): Promise<TriggerDefinition[]> {
 
 	let text = await file.text();
 	// Interpolate ${ENV_VAR} references from process.env
-	text = text.replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] ?? "");
+	text = interpolateEnvString(text);
 	const raw = JSON.parse(text);
 	if (!Array.isArray(raw)) {
 		throw new Error("TRIGGERS_CONFIG must be a JSON array of trigger definitions");

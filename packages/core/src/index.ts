@@ -158,6 +158,8 @@ export {
 	type WorkloadMeta,
 } from "./image-resolver";
 
+export { interpolateEnvString, interpolateEnv } from "./env-interpolate";
+
 export {
 	type WorkloadStatus,
 	type WorkloadEvent,

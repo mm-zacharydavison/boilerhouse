@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { Dispatcher, DispatchResult, TriggerEvent } from "./dispatcher";
 import type { DriverMap } from "./driver";
 import type { TriggerDefinition } from "./config";
+import type { ReplyContext } from "./reply";
+import { sendReply } from "./reply";
 
 export interface QueueJobData {
 	triggerName: string;
@@ -11,6 +13,7 @@ export interface QueueJobData {
 	workload: string;
 	payload: unknown;
 	respondCallbackId: string | null;
+	replyContext: ReplyContext | null;
 }
 
 type RespondFn = (response: unknown) => Promise<void>;
@@ -25,6 +28,7 @@ export interface TriggerQueueDepth {
 export class TriggerQueueManager {
 	private queues = new Map<string, Queue<QueueJobData>>();
 	private workers = new Map<string, Worker<QueueJobData>>();
+	private triggerDefs = new Map<string, TriggerDefinition>();
 	private respondCallbacks = new Map<string, RespondFn>();
 	private cachedDepths: TriggerQueueDepth[] = [];
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -62,6 +66,7 @@ export class TriggerQueueManager {
 	}
 
 	register(trigger: TriggerDefinition): void {
+		this.triggerDefs.set(trigger.name, trigger);
 		const queueName = `trigger-${trigger.name}`;
 
 		const queue = new Queue<QueueJobData>(queueName, {
@@ -97,7 +102,15 @@ export class TriggerQueueManager {
 				}
 
 				try {
-					await this.dispatcher.dispatch(event);
+					const result = await this.dispatcher.dispatch(event);
+
+					// Send agent response back to the originating service
+					if (data.replyContext && result.agentResponse) {
+						const triggerDef = this.triggerDefs.get(data.triggerName);
+						if (triggerDef) {
+							await sendReply(data.replyContext, result.agentResponse, triggerDef);
+						}
+					}
 				} finally {
 					// Clean up callback on completion (success or final failure)
 					if (data.respondCallbackId) {
@@ -135,7 +148,7 @@ export class TriggerQueueManager {
 		this.workers.set(trigger.name, worker);
 	}
 
-	async enqueue(event: TriggerEvent): Promise<void> {
+	async enqueue(event: TriggerEvent, replyContext?: ReplyContext): Promise<void> {
 		const queue = this.queues.get(event.triggerName);
 		if (!queue) {
 			throw new Error(`No queue registered for trigger '${event.triggerName}'`);
@@ -153,6 +166,7 @@ export class TriggerQueueManager {
 			workload: event.workload,
 			payload: event.payload,
 			respondCallbackId,
+			replyContext: replyContext ?? null,
 		};
 
 		await queue.add(event.triggerName, jobData, {
@@ -187,7 +201,7 @@ export class QueuedDispatcher {
 	constructor(private qm: TriggerQueueManager) {}
 
 	async dispatch(event: TriggerEvent): Promise<DispatchResult> {
-		await this.qm.enqueue(event);
+		await this.qm.enqueue(event, event.replyContext ?? undefined);
 		return { agentResponse: null, instanceId: "queued" };
 	}
 }

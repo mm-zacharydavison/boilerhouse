@@ -74,8 +74,7 @@ const server = Bun.serve<WsData>({
 			);
 		}
 
-		// Catch-all: serve index.html for SPA routing
-		return new Response(Bun.file(new URL("./index.html", import.meta.url)));
+		return new Response("Not found", { status: 404 });
 	},
 	websocket: {
 		open(ws) {
@@ -92,10 +91,10 @@ const server = Bun.serve<WsData>({
 			ws.data.upstream.close();
 		},
 	},
-	development: {
+	development: process.env.NODE_ENV !== "production" ? {
 		hmr: true,
 		console: true,
-	},
+	} : false,
 });
 
 console.log(`♨️ Dashboard listening on ${server.url}`);

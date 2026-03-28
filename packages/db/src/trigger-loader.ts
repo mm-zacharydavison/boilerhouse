@@ -1,7 +1,7 @@
 import { Glob } from "bun";
 import { resolve } from "node:path";
 import { eq } from "drizzle-orm";
-import { generateTriggerId } from "@boilerhouse/core";
+import { generateTriggerId, interpolateEnv } from "@boilerhouse/core";
 import type { DrizzleDb } from "./database";
 import { triggers } from "./schema";
 
@@ -70,7 +70,7 @@ export async function loadTriggersFromDir(
 			continue;
 		}
 
-		const def = mod.default;
+		const def = interpolateEnv(mod.default);
 
 		if (!def.name || !def.type || !def.workload || !def.config) {
 			result.errors.push({

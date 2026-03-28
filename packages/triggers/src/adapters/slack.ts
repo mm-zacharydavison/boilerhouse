@@ -29,7 +29,7 @@ async function verifySlackSignature(
 }
 
 /** Post a message to a Slack channel. */
-async function postSlackMessage(
+export async function postSlackMessage(
 	botToken: string,
 	channel: string,
 	text: string,
@@ -141,7 +141,7 @@ export function createSlackRoutes(
 					raw: event,
 				};
 
-				const result = await dispatcher.dispatch({
+				await dispatcher.dispatch({
 					triggerName: trigger.name,
 					tenantId,
 					workload: trigger.workload,
@@ -152,6 +152,12 @@ export function createSlackRoutes(
 							await postSlackMessage(trigger.config.botToken, channel, text);
 						}
 					},
+					...(channel && {
+						replyContext: {
+							adapter: "slack" as const,
+							channelId: channel,
+						},
+					}),
 					...(resolved && {
 						driver: resolved.driver,
 						driverConfig: resolved.driverConfig,
@@ -161,16 +167,6 @@ export function createSlackRoutes(
 						triggerDef: trigger,
 					}),
 				});
-
-				// Post response back to Slack
-				if (channel && result.agentResponse) {
-					const responseText =
-						typeof result.agentResponse === "string"
-							? result.agentResponse
-							: (result.agentResponse as Record<string, unknown>).text as string ??
-								JSON.stringify(result.agentResponse);
-					await postSlackMessage(trigger.config.botToken, channel, responseText);
-				}
 
 				return new Response(null, { status: 200 });
 			} catch (err) {

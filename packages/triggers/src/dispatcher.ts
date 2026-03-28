@@ -3,6 +3,7 @@ import type { Driver, DriverConfig } from "./driver";
 import type { Guard } from "./guard";
 import type { TriggerDefinition, TriggerPayload } from "./config";
 import type { SessionManager } from "./session-manager";
+import type { ReplyContext } from "./reply";
 
 export type { ClaimResult } from "@boilerhouse/core";
 
@@ -73,6 +74,8 @@ export interface TriggerEvent {
 	guard?: Guard;
 	/** Full trigger definition, required for guard context. */
 	triggerDef?: TriggerDefinition;
+	/** Serializable reply context — used by the queue worker to send responses after dispatch. */
+	replyContext?: ReplyContext;
 }
 
 export interface DispatchResult {

@@ -30,6 +30,11 @@ export { CronAdapter } from "./adapters/cron";
 export { TriggerQueueManager, QueuedDispatcher } from "./trigger-queue-manager";
 export type { QueueJobData, TriggerQueueDepth } from "./trigger-queue-manager";
 
+export { sendReply } from "./reply";
+export type { ReplyContext } from "./reply";
+
+export { interpolateEnvString, interpolateEnv } from "@boilerhouse/core";
+
 export { defineTrigger } from "./config";
 export type {
 	TriggerPayload,
