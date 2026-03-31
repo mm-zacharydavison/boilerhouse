@@ -16,6 +16,7 @@ jobs:
         include:
           - name: api
             dockerfile: Dockerfile
+            target: api
           - name: trigger-gateway
             dockerfile: Dockerfile.trigger-gateway
           - name: dashboard
@@ -34,6 +35,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target || '' }}
           tags: |
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.ref_name }}
