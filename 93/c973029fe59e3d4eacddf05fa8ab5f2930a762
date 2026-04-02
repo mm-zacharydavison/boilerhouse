@@ -1,0 +1,27 @@
+apps/api/src/tenant-manager.ts
+  3a3272f54903a1c7 114-116,118-132,138
+apps/api/src/tenant-manager.test.ts
+  3a3272f54903a1c7 374-408
+apps/api/src/bootstrap.test.ts
+  3a3272f54903a1c7 55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "93c973029fe59e3d4eacddf05fa8ab5f2930a762",
+  "prompts": {
+    "3a3272f54903a1c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4eb04749-9593-4165-bb2d-29d1cab1afbc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 64,
+      "total_deletions": 13,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    }
+  }
+}
