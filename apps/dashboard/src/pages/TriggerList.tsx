@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useApi } from "../hooks";
-import { api, type TriggerSummary, type TenantMapping, type CreateTriggerInput, type TriggerTestResult, type WorkloadSummary } from "../api";
+import { api, type TriggerSummary, type TenantMapping, type CreateTriggerInput, type TriggerTestResult, type WorkloadSummary, type GuardStep } from "../api";
 import {
 	LoadingState,
 	ErrorState,
@@ -698,6 +698,35 @@ function TestTriggerModal({
 	);
 }
 
+// --- Guard Detail Modal ---
+
+function guardLabel(guard: string): string {
+	return guard.replace(/^@boilerhouse\/guard-/, "").replace(/^@boilerhouse\//, "");
+}
+
+function GuardDetailModal({ step, onClose }: { step: GuardStep; onClose: () => void }) {
+	return (
+		<Modal title="guard details" onClose={onClose}>
+			<div className="space-y-4 min-w-[360px]">
+				<div>
+					<p className="text-xs text-muted mb-1 font-mono uppercase tracking-wide">package</p>
+					<p className="font-mono text-sm text-gray-200 break-all">{step.guard}</p>
+				</div>
+				<div>
+					<p className="text-xs text-muted mb-1 font-mono uppercase tracking-wide">options</p>
+					{step.guardOptions && Object.keys(step.guardOptions).length > 0 ? (
+						<pre className="bg-surface-3 rounded p-3 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre-wrap break-all">
+							{JSON.stringify(step.guardOptions, null, 2)}
+						</pre>
+					) : (
+						<p className="text-muted text-xs font-mono">none</p>
+					)}
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
 // --- Trigger List ---
 
 export function TriggerList({ tick }: { tick?: number }) {
@@ -705,6 +734,7 @@ export function TriggerList({ tick }: { tick?: number }) {
 
 	const [showCreate, setShowCreate] = useState(false);
 	const [testingTrigger, setTestingTrigger] = useState<TriggerSummary | null>(null);
+	const [guardDetail, setGuardDetail] = useState<GuardStep | null>(null);
 
 	// Refetch when tick changes (WS events) without remounting.
 	// Skip refetch while the test modal is open to avoid flashing loading state.
@@ -760,7 +790,7 @@ export function TriggerList({ tick }: { tick?: number }) {
 			{data.length === 0 ? (
 				<p className="text-muted font-mono text-sm">no triggers configured.</p>
 			) : (
-				<DataTable headers={["Name", "Type", "Workload", "Tenant", "Driver", "Status", "Last Invoked", "Actions"]}>
+				<DataTable headers={["Name", "Type", "Workload", "Tenant", "Driver", "Guards", "Status", "Last Invoked", "Actions"]}>
 					{data.map((t) => (
 						<DataRow key={t.id}>
 							<td className="px-4 py-3 text-gray-200">{t.name}</td>
@@ -775,6 +805,23 @@ export function TriggerList({ tick }: { tick?: number }) {
 								{t.driver
 									? t.driver.replace(/^@boilerhouse\/driver-/, "")
 									: <span className="text-muted/50">default</span>}
+							</td>
+							<td className="px-4 py-3">
+								{t.guards && t.guards.length > 0 ? (
+									<div className="flex flex-wrap gap-1">
+										{t.guards.map((g, i) => (
+											<button
+												key={i}
+												onClick={() => setGuardDetail(g)}
+												className="px-1.5 py-0.5 text-xs font-mono rounded border text-status-yellow bg-status-yellow/10 border-status-yellow/20 hover:bg-status-yellow/20 transition-colors"
+											>
+												{guardLabel(g.guard)}
+											</button>
+										))}
+									</div>
+								) : (
+									<span className="text-muted/50 font-mono text-xs">none</span>
+								)}
 							</td>
 							<td className="px-4 py-3">
 								<span
@@ -822,6 +869,13 @@ export function TriggerList({ tick }: { tick?: number }) {
 				<TestTriggerModal
 					trigger={testingTrigger}
 					onClose={() => setTestingTrigger(null)}
+				/>
+			)}
+
+			{guardDetail && (
+				<GuardDetailModal
+					step={guardDetail}
+					onClose={() => setGuardDetail(null)}
 				/>
 			)}
 		</div>
