@@ -1,0 +1,36 @@
+packages/envoy-config/src/envoy-bootstrap.yaml.hbs
+  3a3272f54903a1c7 14-19,83-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "c3b5c0c277710f0f52a449ff345c24b07f15e316",
+  "prompts": {
+    "2b6cd2584b49ac7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2feb56c-1de8-4256-8531-5881bf115f30",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    },
+    "3a3272f54903a1c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4eb04749-9593-4165-bb2d-29d1cab1afbc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 0,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
