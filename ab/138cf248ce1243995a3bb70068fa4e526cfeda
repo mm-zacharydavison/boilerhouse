@@ -1,0 +1,49 @@
+docs/superpowers/plans/2026-04-02-boilerhouse-operator.md
+  648c08999a339baf 1-3533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "ab138cf248ce1243995a3bb70068fa4e526cfeda",
+  "prompts": {
+    "2b6cd2584b49ac7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2feb56c-1de8-4256-8531-5881bf115f30",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    },
+    "3a3272f54903a1c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4eb04749-9593-4165-bb2d-29d1cab1afbc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 169,
+      "total_deletions": 0,
+      "accepted_lines": 169,
+      "overriden_lines": 0
+    },
+    "648c08999a339baf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e168362e-1805-4182-8589-1a5eeb10b526",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 3535,
+      "total_deletions": 2,
+      "accepted_lines": 3533,
+      "overriden_lines": 0
+    }
+  }
+}
