@@ -28,6 +28,7 @@ beforeEach(() => {
 describe("reconcileWorkload", () => {
   test("new CRD creates workload row, returns phase=Ready", async () => {
     const crd = makeCrd("my-workload", {
+      version: "1.0.0",
       image: { ref: "nginx:latest" },
       resources: { vcpus: 1, memoryMb: 256, diskGb: 2 },
     });
@@ -46,6 +47,7 @@ describe("reconcileWorkload", () => {
 
   test("invalid spec returns phase=Error", async () => {
     const crd = makeCrd("bad-workload", {
+      version: "1.0.0",
       // Missing image ref — image section requires either ref or dockerfile
       image: {} as any,
       resources: { vcpus: 1, memoryMb: 256, diskGb: 2 },

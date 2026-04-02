@@ -8,7 +8,7 @@ export const API_VERSION = "v1alpha1";
 // ── BoilerhouseWorkload ──────────────────────────────────────────────────────
 
 export interface BoilerhouseWorkloadSpec {
-	version?: string;
+	version: string;
 	image: {
 		ref: string;
 	};
@@ -41,6 +41,7 @@ export interface BoilerhouseWorkloadSpec {
 		intervalSeconds?: number;
 		unhealthyThreshold?: number;
 		httpGet?: { path: string; port: number };
+		exec?: { command: string[] };
 	};
 	entrypoint?: {
 		cmd?: string;

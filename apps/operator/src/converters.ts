@@ -9,7 +9,7 @@ import type { BoilerhouseWorkloadSpec } from "@boilerhouse/runtime-kubernetes";
  */
 export function crdToWorkload(name: string, spec: BoilerhouseWorkloadSpec): Workload {
   return {
-    workload: { name, version: spec.version ?? "1.0.0" },
+    workload: { name, version: spec.version },
     image: { ref: spec.image.ref },
     resources: {
       vcpus: spec.resources?.vcpus ?? 1,
@@ -39,6 +39,7 @@ export function crdToWorkload(name: string, spec: BoilerhouseWorkloadSpec): Work
           interval_seconds: spec.health.intervalSeconds ?? 10,
           unhealthy_threshold: spec.health.unhealthyThreshold ?? 3,
           http_get: spec.health.httpGet,
+          exec: spec.health.exec,
         }
       : undefined,
     entrypoint: spec.entrypoint

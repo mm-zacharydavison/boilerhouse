@@ -26,7 +26,7 @@ export async function reconcileTrigger(
         existing.stop();
         deps.adapters.delete(name);
       }
-      return { phase: "Active" };
+      return {};
     }
 
     // 2. Stop existing adapter if updating

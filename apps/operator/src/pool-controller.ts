@@ -26,6 +26,25 @@ export async function reconcilePool(
   const targetSize = crd.spec.size;
 
   try {
+    // 0. Deletion: drain the pool and return
+    if (crd.metadata.deletionTimestamp) {
+      const workloadRow = deps.db
+        .select()
+        .from(workloads)
+        .where(eq(workloads.name, workloadName))
+        .get();
+
+      if (workloadRow) {
+        await deps.poolManager.drain(workloadRow.workloadId as WorkloadId);
+      }
+
+      return {
+        phase: "Healthy",
+        ready: 0,
+        warming: 0,
+      };
+    }
+
     // 1. Look up referenced workload by name
     const workloadRow = deps.db
       .select()

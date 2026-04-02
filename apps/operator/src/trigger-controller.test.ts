@@ -58,7 +58,7 @@ describe("reconcileTrigger", () => {
       { adapters },
     );
 
-    expect(status.phase).toBe("Active");
+    expect(status.phase).toBeUndefined();
     expect(stopped).toBe(true);
     expect(adapters.has("del-trigger")).toBe(false);
   });

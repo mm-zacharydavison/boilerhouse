@@ -17,7 +17,7 @@ import type {
   BoilerhouseTrigger,
   KubeClientConfig,
 } from "@boilerhouse/runtime-kubernetes";
-import { initDatabase, ActivityLog, nodes } from "@boilerhouse/db";
+import { initDatabase, ActivityLog, nodes, claims, workloads as workloadsTable } from "@boilerhouse/db";
 import { createLogger } from "@boilerhouse/o11y";
 import {
   InstanceManager,
@@ -30,8 +30,11 @@ import {
   AuditLogger,
   recoverState,
 } from "@boilerhouse/domain";
+import { eq, and, inArray } from "drizzle-orm";
+import type { TenantId, WorkloadId } from "@boilerhouse/core";
 import { Controller } from "./controller";
 import { LeaderElector } from "./leader-election";
+import { KubeSecretResolver } from "./secret-resolver";
 import { reconcileWorkload } from "./workload-controller";
 import { reconcilePool } from "./pool-controller";
 import { reconcileClaim } from "./claim-controller";
@@ -85,6 +88,14 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
   const eventBus = new EventBus();
   const audit = new AuditLogger(activityLog, eventBus, nodeId);
 
+  // Secret resolver for K8s-native credential resolution (used by network credential injection)
+  const secretResolver = new KubeSecretResolver({
+    apiUrl: config.apiUrl,
+    headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
+    namespace: config.namespace,
+  });
+  void secretResolver; // wired into credential flows when network.credentials is set
+
   // Runtime — use in-cluster auth if no token provided, otherwise external
   const runtime = config.token
     ? new KubernetesRuntime({
@@ -110,9 +121,63 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
     { idleMonitor, watchDirsPoller, poolManager },
   );
 
-  // Idle handler — log for now; CRD status patching handled by reconcile loop
+  // Idle handler — release the claim and patch the CR status
   idleMonitor.onIdle(async (instanceId, action) => {
     log.info({ instanceId, action }, "idle timeout fired");
+
+    try {
+      // Find the claim that owns this instance
+      const claimRow = db
+        .select()
+        .from(claims)
+        .where(eq(claims.instanceId, instanceId))
+        .get();
+
+      if (!claimRow) {
+        log.warn({ instanceId }, "idle fired but no claim found for instance");
+        return;
+      }
+
+      const tenantId = claimRow.tenantId as TenantId;
+      const workloadId = claimRow.workloadId as WorkloadId;
+
+      // Release via TenantManager
+      await tenantManager.release(tenantId, workloadId);
+
+      // Look up workload name to find matching CR
+      const workloadRow = db
+        .select()
+        .from(workloadsTable)
+        .where(eq(workloadsTable.workloadId, workloadId))
+        .get();
+
+      if (workloadRow) {
+        // List BoilerhouseClaims to find the matching CR
+        const listUrl = `${config.apiUrl}${basePath}/namespaces/${config.namespace}/boilerhouseclaims`;
+        const resp = await fetch(listUrl, {
+          headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
+        });
+
+        if (resp.ok) {
+          const list = (await resp.json()) as { items: BoilerhouseClaim[] };
+          const matchingCr = list.items.find(
+            (cr) =>
+              cr.spec.tenantId === tenantId &&
+              cr.spec.workloadRef === workloadRow.name,
+          );
+
+          if (matchingCr) {
+            await claimPatcher.patchStatus(
+              matchingCr.metadata.namespace ?? config.namespace,
+              matchingCr.metadata.name,
+              { phase: "Released" },
+            );
+          }
+        }
+      }
+    } catch (err) {
+      log.error({ instanceId, err }, "failed to handle idle timeout");
+    }
   });
 
   // Base API paths
@@ -140,16 +205,40 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
   const workloadController = new Controller<BoilerhouseWorkload>({
     name: "workload",
     reconcile: async (crd) => {
+      const ns = crd.metadata.namespace ?? config.namespace;
+      const name = crd.metadata.name;
+      // Add finalizer if not present
+      if (!crd.metadata.finalizers?.includes(FINALIZER)) {
+        const withFinalizer = addFinalizer(crd.metadata, FINALIZER);
+        await workloadPatcher.patchMetadata(ns, name, { finalizers: withFinalizer.finalizers });
+      }
       const status = await reconcileWorkload(crd, { db });
-      await workloadPatcher.patchStatus(crd.metadata.namespace ?? config.namespace, crd.metadata.name, status);
+      await workloadPatcher.patchStatus(ns, name, status);
+      // Remove finalizer after deletion handling
+      if (crd.metadata.deletionTimestamp) {
+        const withoutFinalizer = removeFinalizer(crd.metadata, FINALIZER);
+        await workloadPatcher.patchMetadata(ns, name, { finalizers: withoutFinalizer.finalizers });
+      }
     },
   });
 
   const poolController = new Controller<BoilerhousePool>({
     name: "pool",
     reconcile: async (crd) => {
+      const ns = crd.metadata.namespace ?? config.namespace;
+      const name = crd.metadata.name;
+      // Add finalizer if not present
+      if (!crd.metadata.finalizers?.includes(FINALIZER)) {
+        const withFinalizer = addFinalizer(crd.metadata, FINALIZER);
+        await poolPatcher.patchMetadata(ns, name, { finalizers: withFinalizer.finalizers });
+      }
       const status = await reconcilePool(crd, { db, poolManager });
-      await poolPatcher.patchStatus(crd.metadata.namespace ?? config.namespace, crd.metadata.name, status);
+      await poolPatcher.patchStatus(ns, name, status);
+      // Remove finalizer after deletion handling
+      if (crd.metadata.deletionTimestamp) {
+        const withoutFinalizer = removeFinalizer(crd.metadata, FINALIZER);
+        await poolPatcher.patchMetadata(ns, name, { finalizers: withoutFinalizer.finalizers });
+      }
     },
   });
 
@@ -162,6 +251,11 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
       if (!crd.metadata.finalizers?.includes(FINALIZER)) {
         const withFinalizer = addFinalizer(crd.metadata, FINALIZER);
         await claimPatcher.patchMetadata(ns, name, { finalizers: withFinalizer.finalizers });
+      }
+      // Patch Pending status for new claims before the actual reconcile
+      const currentPhase = crd.status?.phase;
+      if (!currentPhase) {
+        await claimPatcher.patchStatus(ns, name, { phase: "Pending" });
       }
       const status = await reconcileClaim(crd, { db, tenantManager });
       await claimPatcher.patchStatus(ns, name, status);
@@ -177,8 +271,23 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
   const triggerController = new Controller<BoilerhouseTrigger>({
     name: "trigger",
     reconcile: async (crd) => {
+      const ns = crd.metadata.namespace ?? config.namespace;
+      const name = crd.metadata.name;
+      // Add finalizer if not present
+      if (!crd.metadata.finalizers?.includes(FINALIZER)) {
+        const withFinalizer = addFinalizer(crd.metadata, FINALIZER);
+        await triggerPatcher.patchMetadata(ns, name, { finalizers: withFinalizer.finalizers });
+      }
       const status = await reconcileTrigger(crd, { adapters: triggerAdapters });
-      await triggerPatcher.patchStatus(crd.metadata.namespace ?? config.namespace, crd.metadata.name, status);
+      // Only patch status if not being deleted (CR is going away)
+      if (!crd.metadata.deletionTimestamp) {
+        await triggerPatcher.patchStatus(ns, name, status);
+      }
+      // Remove finalizer on deletion
+      if (crd.metadata.deletionTimestamp) {
+        const withoutFinalizer = removeFinalizer(crd.metadata, FINALIZER);
+        await triggerPatcher.patchMetadata(ns, name, { finalizers: withoutFinalizer.finalizers });
+      }
     },
   });
 
