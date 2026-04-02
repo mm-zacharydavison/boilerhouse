@@ -1,0 +1,29 @@
+apps/operator/crds/boilerhouse.dev_workloads.yaml
+  648c08999a339baf 1-161
+apps/operator/crds/boilerhouse.dev_pools.yaml
+  648c08999a339baf 1-59
+apps/operator/crds/boilerhouse.dev_claims.yaml
+  648c08999a339baf 1-73
+apps/operator/crds/boilerhouse.dev_triggers.yaml
+  648c08999a339baf 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "ca5cafe0468bb2e9c061c5cb7308f1aa441d8a39",
+  "prompts": {
+    "648c08999a339baf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e168362e-1805-4182-8589-1a5eeb10b526",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 382,
+      "overriden_lines": 0
+    }
+  }
+}
