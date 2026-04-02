@@ -1,0 +1,47 @@
+apps/api/src/test-helpers.ts
+  648c08999a339baf 8-15,21-22
+packages/domain/src/test-helpers.ts
+  648c08999a339baf 1-14
+apps/api/src/routes/ws.test.ts
+  648c08999a339baf 4
+packages/domain/src/index.ts
+  648c08999a339baf 4-75
+apps/api/src/routes/instances.test.ts
+  648c08999a339baf 6
+tests/e2e/e2e-helpers.ts
+  648c08999a339baf 9-19
+apps/api/package.json
+  648c08999a339baf 18
+packages/domain/src/instance-manager.ts
+  648c08999a339baf 25-34,42,224-225
+apps/api/src/bootstrap.ts
+  648c08999a339baf 18-29,33,222-226,230
+apps/api/src/routes/ws.ts
+  648c08999a339baf 3
+apps/api/src/routes/instances.ts
+  648c08999a339baf 6
+apps/api/src/routes/deps.ts
+  648c08999a339baf 4-6,8,10
+apps/api/src/routes/tenants.test.ts
+  648c08999a339baf 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "a33aab43c30fd8af674f4636c07e88e927679318",
+  "prompts": {
+    "648c08999a339baf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e168362e-1805-4182-8589-1a5eeb10b526",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 151,
+      "total_deletions": 50,
+      "accepted_lines": 150,
+      "overriden_lines": 0
+    }
+  }
+}
