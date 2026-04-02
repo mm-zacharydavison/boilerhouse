@@ -32,12 +32,28 @@ export function generateEnvoyConfig(config: SidecarProxyConfig): SidecarProxyOut
 		credentials.map((c) => [c.domain.toLowerCase(), c]),
 	);
 
+	// A bare "*" in the allowlist means "allow all domains" — filter it out
+	// of domain processing but set a flag so the deny_all becomes a passthrough.
+	const allowAll = config.allowlist.includes("*");
+	const filteredAllowlist = config.allowlist.filter((d) => d !== "*");
+
+	// Credential domains covered only by wildcards (e.g. "*") still need
+	// concrete entries so Envoy can intercept TLS and inject their headers.
+	const existingDomains = new Set(filteredAllowlist.map((d) => d.toLowerCase()));
+	for (const cred of credentials) {
+		const lower = cred.domain.toLowerCase();
+		if (!existingDomains.has(lower)) {
+			filteredAllowlist.push(cred.domain);
+			existingDomains.add(lower);
+		}
+	}
+
 	// Non-wildcard domains that need TLS interception
-	const concreteDomains = config.allowlist
+	const concreteDomains = filteredAllowlist
 		.map((d) => d.toLowerCase())
 		.filter((d) => !d.startsWith("*."));
 
-	const domains = config.allowlist.map((d) => {
+	const domains = filteredAllowlist.map((d) => {
 		const lower = d.toLowerCase();
 		const cred = credentialsByDomain.get(lower);
 		return {
@@ -75,6 +91,7 @@ export function generateEnvoyConfig(config: SidecarProxyConfig): SidecarProxyOut
 		clusters,
 		tlsDomains,
 		hasTls: tlsDomains.length > 0,
+		allowAll,
 	});
 
 	return { envoyConfig, tls };

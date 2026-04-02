@@ -54,10 +54,15 @@ static_resources:
               routes:
               - match:
                   prefix: /
+{{#if allowAll}}
+                route:
+                  cluster: passthrough
+{{else}}
                 direct_response:
                   status: 403
                   body:
                     inline_string: "Forbidden: domain not in allowlist"
+{{/if}}
           http_filters:
           - name: envoy.filters.http.router
             typed_config:
@@ -117,12 +122,21 @@ static_resources:
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 {{/each}}
+{{#if allowAll}}
+    - filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: tls_passthrough
+          cluster: passthrough
+{{else}}
     - filters:
       - name: envoy.filters.network.tcp_proxy
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
           stat_prefix: tls_deny
           cluster: deny_cluster
+{{/if}}
 {{/if}}
 
   clusters:
@@ -145,7 +159,13 @@ static_resources:
                 address: {{domain}}
                 port_value: 443
 {{/each}}
+{{#if allowAll}}
+  - name: passthrough
+    type: ORIGINAL_DST
+    lb_policy: CLUSTER_PROVIDED
+{{/if}}
 {{#if hasTls}}
+{{#unless allowAll}}
   - name: deny_cluster
     type: STATIC
     load_assignment:
@@ -157,4 +177,5 @@ static_resources:
               socket_address:
                 address: 127.0.0.1
                 port_value: 1
+{{/unless}}
 {{/if}}

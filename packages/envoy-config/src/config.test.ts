@@ -225,6 +225,49 @@ describe("generateEnvoyConfig", () => {
 		expect(socket.address).toBe("127.0.0.1");
 	});
 
+	test("bare '*' allowlist generates valid YAML with passthrough cluster", () => {
+		const config = generate({
+			allowlist: ["*"],
+			credentials: [{
+				domain: "api.anthropic.com",
+				headers: { "x-api-key": "sk-test" },
+			}],
+		});
+
+		// Credential domain still gets a concrete cluster with header injection
+		const vhosts = getVirtualHosts(config);
+		const anthropicVhost = vhosts.find((v) =>
+			(v.domains as string[]).includes("api.anthropic.com"),
+		);
+		expect(anthropicVhost).toBeDefined();
+		const routes = anthropicVhost!.routes as Record<string, unknown>[];
+		expect(routes[0]!.request_headers_to_add).toBeDefined();
+
+		// Catch-all routes to passthrough instead of returning 403
+		const denyAll = vhosts.find((v) => v.name === "deny_all");
+		expect(denyAll).toBeDefined();
+		const denyRoutes = denyAll!.routes as Record<string, unknown>[];
+		const route = denyRoutes[0]!.route as Record<string, unknown>;
+		expect(route.cluster).toBe("passthrough");
+
+		// Passthrough cluster exists
+		const clusters = getClusters(config);
+		const passthrough = clusters.find((c) => c.name === "passthrough");
+		expect(passthrough).toBeDefined();
+		expect(passthrough!.type).toBe("ORIGINAL_DST");
+	});
+
+	test("bare '*' allowlist without credentials generates valid YAML", () => {
+		const config = generate({ allowlist: ["*"] });
+		const vhosts = getVirtualHosts(config);
+		expect(vhosts).toHaveLength(1);
+		expect(vhosts[0]!.name).toBe("deny_all");
+
+		const clusters = getClusters(config);
+		const passthrough = clusters.find((c) => c.name === "passthrough");
+		expect(passthrough).toBeDefined();
+	});
+
 	test("includes http router filter", () => {
 		const config = generate({ allowlist: ["example.com"] });
 		const hcm = getHcm(config);

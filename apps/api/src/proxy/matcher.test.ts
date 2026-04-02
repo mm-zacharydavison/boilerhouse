@@ -48,4 +48,9 @@ describe("matchesDomain", () => {
 			matchesDomain("evil.com", ["example.com", "*.github.com"]),
 		).toBe(false);
 	});
+
+	test("bare wildcard '*' matches any domain", () => {
+		expect(matchesDomain("api.anthropic.com", ["*"])).toBe(true);
+		expect(matchesDomain("example.com", ["*"])).toBe(true);
+	});
 });

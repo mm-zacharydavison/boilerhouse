@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { matchesDomain } from "./match-domain";
 
 // ── SecretRef ────────────────────────────────────────────────────────────────
 
@@ -262,7 +263,7 @@ function checkCredentialConstraints(raw: Record<string, unknown>): void {
 		const allowlist = (network.allowlist ?? []) as string[];
 		for (const rule of credentials) {
 			const domain = rule.domain as string;
-			if (!allowlist.includes(domain)) {
+			if (!matchesDomain(domain, allowlist)) {
 				throw new WorkloadParseError(
 					`Credential domain '${domain}' is not in the network allowlist`,
 				);

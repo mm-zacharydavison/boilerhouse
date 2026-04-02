@@ -1,7 +1,11 @@
 /**
  * Checks whether a domain matches any entry in an allowlist.
  *
- * Supports exact matches and wildcard entries like `*.example.com`.
+ * Supports:
+ * - Exact matches (`api.example.com`)
+ * - Wildcard subdomains (`*.example.com`)
+ * - Catch-all wildcard (`*`)
+ *
  * Matching is case-insensitive.
  */
 export function matchesDomain(domain: string, allowlist: string[]): boolean {
@@ -9,6 +13,10 @@ export function matchesDomain(domain: string, allowlist: string[]): boolean {
 
 	for (const entry of allowlist) {
 		const pattern = entry.toLowerCase();
+
+		if (pattern === "*") {
+			return true;
+		}
 
 		if (pattern === lower) {
 			return true;

@@ -170,3 +170,5 @@ export {
 	workloadTransition,
 	canWorkloadTransition,
 } from "./workload-state";
+
+export { matchesDomain } from "./match-domain";

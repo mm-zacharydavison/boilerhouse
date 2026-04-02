@@ -299,6 +299,40 @@ describe("validateWorkload()", () => {
 		})).toThrow(/allowlist/i);
 	});
 
+	test("accepts credential domain matched by wildcard '*' in allowlist", () => {
+		const workload = validateWorkload({
+			workload: { name: "my-service", version: "1.0.0" },
+			image: { ref: "test:latest" },
+			resources: { vcpus: 2, memory_mb: 512 },
+			network: {
+				access: "restricted",
+				allowlist: ["*"],
+				credentials: [{
+					domain: "api.anthropic.com",
+					headers: { "x-api-key": "key" },
+				}],
+			},
+		});
+		expect(workload.network.credentials).toHaveLength(1);
+	});
+
+	test("accepts credential domain matched by wildcard '*.example.com' in allowlist", () => {
+		const workload = validateWorkload({
+			workload: { name: "my-service", version: "1.0.0" },
+			image: { ref: "test:latest" },
+			resources: { vcpus: 2, memory_mb: 512 },
+			network: {
+				access: "restricted",
+				allowlist: ["*.anthropic.com"],
+				credentials: [{
+					domain: "api.anthropic.com",
+					headers: { "x-api-key": "key" },
+				}],
+			},
+		});
+		expect(workload.network.credentials).toHaveLength(1);
+	});
+
 	test("accepts credentials with unrestricted access (no allowlist needed)", () => {
 		const workload = validateWorkload({
 			workload: { name: "my-service", version: "1.0.0" },
