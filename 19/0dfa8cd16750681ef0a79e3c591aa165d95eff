@@ -1,0 +1,27 @@
+packages/runtime-kubernetes/src/index.ts
+  648c08999a339baf 25-48
+packages/runtime-kubernetes/src/status.ts
+  648c08999a339baf 1-138
+packages/runtime-kubernetes/src/status.test.ts
+  648c08999a339baf 1-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.4",
+  "base_commit_sha": "190dfa8cd16750681ef0a79e3c591aa165d95eff",
+  "prompts": {
+    "648c08999a339baf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e168362e-1805-4182-8589-1a5eeb10b526",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "deer-agent",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 528,
+      "overriden_lines": 0
+    }
+  }
+}
