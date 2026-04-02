@@ -36,6 +36,11 @@ export class TelegramPollAdapter {
 		drivers?: DriverMap,
 		guards?: GuardMap,
 	): void {
+		// Abort any in-flight loops from a previous start() call to prevent duplicates on reload
+		for (const loop of this.loops) {
+			loop.abort.abort();
+		}
+		this.loops = [];
 		this.running = true;
 
 		for (const trigger of triggers) {

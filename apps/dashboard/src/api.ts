@@ -161,6 +161,11 @@ export type TenantMapping =
 	| { static: string }
 	| { fromField: string; prefix?: string };
 
+export interface GuardStep {
+	guard: string;
+	guardOptions?: Record<string, unknown>;
+}
+
 export interface TriggerSummary {
 	id: string;
 	name: string;
@@ -173,6 +178,8 @@ export interface TriggerSummary {
 	driver?: string;
 	/** Driver-specific options. */
 	driverOptions?: Record<string, unknown>;
+	/** Guard chain for this trigger. */
+	guards?: GuardStep[] | null;
 	/** 1 = enabled, 0 = disabled */
 	enabled: number;
 	/** @example "2026-03-13T15:24:59.634Z" */
