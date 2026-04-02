@@ -111,16 +111,31 @@ export class TenantManager {
 			this.watchDirsPoller.stopPolling(instanceId);
 		}
 
-		// Extract overlay data from the running container, then hibernate or destroy
+		// Extract overlay data from the running container, then hibernate or destroy.
+		// If overlay extraction fails (e.g. S3 error), still destroy the instance
+		// and release the claim — the previous snapshot is preserved for the tenant.
 		const handle: InstanceHandle = { instanceId, running: true };
-		const hasOverlay = await this.tenantDataStore.extractOverlay(handle, tenantId, workloadId);
-		if (hasOverlay) {
+		let hasOverlay = false;
+		let releaseError: Error | undefined;
+		try {
+			hasOverlay = await this.tenantDataStore.extractOverlay(handle, tenantId, workloadId);
+		} catch (err) {
+			releaseError = err instanceof Error ? err : new Error(String(err));
+			this.log?.error({ instanceId, tenantId, err }, "Overlay extraction failed during release — destroying instance without new snapshot");
+			// Set statusDetail on the instance so the error is visible in the API/UI
+			this.db.update(instances)
+				.set({ statusDetail: `Release failed: ${releaseError.message}` })
+				.where(eq(instances.instanceId, instanceId))
+				.run();
+		}
+
+		if (hasOverlay && !releaseError) {
 			await this.instanceManager.hibernate(instanceId);
 		} else {
 			await this.instanceManager.destroy(instanceId);
 		}
 		if (this.poolManager) {
-			this.poolManager.replenish(workloadId).catch(() => {});
+			this.poolManager.replenish(claim.workloadId).catch(() => {});
 		}
 
 		// Delete the claim — tenant identity persists

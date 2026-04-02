@@ -371,6 +371,41 @@ describe("TenantManager", () => {
 			await expect(tenantManager.release(tenantId, workloadId)).resolves.toBeUndefined();
 		});
 
+		test("overlay extraction failure → instance destroyed, claim deleted, statusDetail set", async () => {
+			const tenantId = generateTenantId();
+
+			const claimed = await tenantManager.claim(tenantId, workloadId);
+
+			// Sabotage extractOverlay to simulate an S3 error
+			const originalExtract = tenantDataStore.extractOverlay.bind(tenantDataStore);
+			tenantDataStore.extractOverlay = async () => {
+				throw new Error("NoSuchBucket: The specified bucket does not exist.");
+			};
+
+			// Release should NOT throw — it should handle the error gracefully
+			await tenantManager.release(tenantId, workloadId);
+
+			// Instance should be destroyed (not stuck in releasing)
+			const instanceRow = db
+				.select()
+				.from(instances)
+				.where(eq(instances.instanceId, claimed.instanceId))
+				.get();
+			expect(instanceRow!.status).toBe("destroyed");
+			expect(instanceRow!.statusDetail).toContain("NoSuchBucket");
+
+			// Claim should be deleted (not stuck in releasing)
+			const claimRow = db
+				.select()
+				.from(claims)
+				.where(eq(claims.tenantId, tenantId))
+				.get();
+			expect(claimRow).toBeUndefined();
+
+			// Restore original
+			tenantDataStore.extractOverlay = originalExtract;
+		});
+
 		test("logs 'tenant.released' activity", async () => {
 			const tenantId = generateTenantId();
 

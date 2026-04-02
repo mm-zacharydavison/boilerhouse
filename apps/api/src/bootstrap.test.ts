@@ -52,7 +52,7 @@ describe("configFromEnv", () => {
 		expect(config.port).toBe(3000);
 		expect(config.listenHost).toBe("127.0.0.1");
 		expect(config.dbPath).toBe("boilerhouse.db");
-		expect(config.storagePath).toBe("./data");
+		expect(config.storagePath).toBe(require("node:path").resolve("./data"));
 		expect(config.runtimeType).toBe("docker");
 		expect(config.maxInstances).toBe(100);
 		expect(config.workloadsDir).toBeUndefined();
