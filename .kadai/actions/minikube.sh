@@ -112,12 +112,16 @@ minikube -p "$PROFILE" image pull docker.io/envoyproxy/envoy:v1.32-latest
 # ── Deploy infrastructure services from docker-compose.yml ────────────
 
 echo "Deploying infrastructure services from docker-compose.yml..."
+# Delete previous Jobs (immutable) so apply doesn't fail on re-runs
+kubectl --context="$PROFILE" -n "$NAMESPACE" delete jobs --all --ignore-not-found
 bun run "$SCRIPT_DIR/scripts/compose-to-k8s.ts" \
   | kubectl --context="$PROFILE" -n "$NAMESPACE" apply -f -
 
-echo "Waiting for infrastructure deployments to be ready..."
+echo "Waiting for infrastructure to be ready..."
 kubectl --context="$PROFILE" -n "$NAMESPACE" \
   wait --for=condition=available deployment --all --timeout=120s
+kubectl --context="$PROFILE" -n "$NAMESPACE" \
+  wait --for=condition=complete job --all --timeout=120s
 
 echo ""
 echo "Minikube ready: profile=$PROFILE namespace=$NAMESPACE"

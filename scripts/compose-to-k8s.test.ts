@@ -57,11 +57,6 @@ describe("generateManifests", () => {
     expect(manifests).not.toContain("tempo");
   });
 
-  test("excludes minio-init as standalone deployment", () => {
-    const deploymentNames = [...manifests.matchAll(/name: (\S+)\n\s+labels:/g)].map(m => m[1]);
-    expect(deploymentNames).not.toContain("minio-init");
-  });
-
   test("generates redis deployment and service", () => {
     expect(manifests).toContain("image: redis:7-alpine");
     expect(manifests).toContain("name: redis");
@@ -70,16 +65,15 @@ describe("generateManifests", () => {
     expect(manifests).toContain("kind: Service");
   });
 
-  test("generates minio deployment with init container", () => {
-    expect(manifests).toContain("image: minio/minio:latest");
-    expect(manifests).toContain("initContainers:");
-    expect(manifests).toContain("image: minio/mc:latest");
+  test("generates minio-init as a Job (not init container)", () => {
+    expect(manifests).toContain("kind: Job");
     expect(manifests).toContain("name: minio-init");
-  });
-
-  test("minio init container connects to localhost not minio service name", () => {
-    expect(manifests).toContain("http://localhost:9000");
-    expect(manifests).not.toContain("http://minio:9000");
+    expect(manifests).toContain("image: minio/mc:latest");
+    // Job is a separate pod — reaches minio via k8s Service DNS
+    expect(manifests).toContain("http://minio:9000");
+    expect(manifests).toContain("restartPolicy: OnFailure");
+    // Should NOT be an init container on the minio Deployment
+    expect(manifests).not.toContain("initContainers:");
   });
 
   test("minio has emptyDir volume for /data", () => {
@@ -110,12 +104,13 @@ describe("generateManifests", () => {
 
   test("output is valid multi-document YAML with separators", () => {
     const docs = manifests.split("---").filter(d => d.trim().length > 0);
-    expect(docs.length).toBe(4);
+    // redis: deployment + service, minio: deployment + service, minio-init: job
+    expect(docs.length).toBe(5);
   });
 
   test("all resources have boilerhouse.dev/infra label", () => {
     const matches = manifests.match(/boilerhouse\.dev\/infra: "true"/g);
-    // 6: 2 deployment meta + 2 pod template + 2 service meta
-    expect(matches?.length).toBe(6);
+    // 2 deployment meta + 2 pod template + 2 service meta + 1 job meta + 1 job pod template
+    expect(matches?.length).toBe(8);
   });
 });

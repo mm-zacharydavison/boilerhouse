@@ -38,17 +38,15 @@ interface ComposeConfig {
 
 // ── Configuration ───────────────────────────────────────────────────────
 
-/** Services to exclude from k8s translation (observability + utility). */
-const EXCLUDE = new Set(["prometheus", "tempo", "grafana", "minio-init"]);
+/** Services to exclude from k8s translation (observability). */
+const EXCLUDE = new Set(["prometheus", "tempo", "grafana"]);
 
 /**
- * Map of init-container services → the parent service they attach to.
- * Key: compose service name that becomes an init container.
- * Value: compose service name it should be attached to.
+ * Services that become k8s Jobs instead of Deployments.
+ * These are one-shot setup tasks (e.g. bucket creation) that depend on
+ * another service being reachable via its k8s Service DNS name.
  */
-const INIT_CONTAINERS: Record<string, string> = {
-  "minio-init": "minio",
-};
+const JOBS = new Set(["minio-init"]);
 
 // ── Manifest generation ─────────────────────────────────────────────────
 
@@ -68,44 +66,7 @@ function renderCommand(cmd: string[]): string {
   return cmd.map((c) => `        - ${JSON.stringify(c)}`).join("\n");
 }
 
-function buildInitContainer(svc: ComposeService, name: string, parentVolumes: ComposeVolume[]): string {
-  // Rewrite entrypoint to replace compose service name with localhost
-  // (init container runs in same pod as parent)
-  const entrypoint = svc.entrypoint
-    ? svc.entrypoint.map((s) => s.replace(/http:\/\/minio:(\d+)/g, "http://localhost:$1"))
-    : null;
-
-  const lines = [
-    `      - name: ${name}`,
-    `        image: ${svc.image}`,
-  ];
-
-  if (entrypoint) {
-    lines.push(`        command:`);
-    for (const arg of entrypoint) {
-      lines.push(`        - ${JSON.stringify(arg)}`);
-    }
-  }
-
-  // Mount same volumes as parent so init can access the data dir
-  if (parentVolumes.length > 0) {
-    lines.push(`        volumeMounts:`);
-    for (const vol of parentVolumes) {
-      if (vol.type === "volume") {
-        lines.push(`        - name: ${vol.source}`);
-        lines.push(`          mountPath: ${vol.target}`);
-      }
-    }
-  }
-
-  return lines.join("\n");
-}
-
-function buildDeployment(
-  name: string,
-  svc: ComposeService,
-  initSvc?: { name: string; svc: ComposeService },
-): string {
+function buildDeployment(name: string, svc: ComposeService): string {
   const metaLabels = `app: ${name}\n    boilerhouse.dev/infra: "true"`;
   const podLabels = `app: ${name}\n        boilerhouse.dev/infra: "true"`;
   const matchLabels = `app: ${name}`;
@@ -133,11 +94,6 @@ function buildDeployment(
     }
   }
 
-  let initSpec = "";
-  if (initSvc) {
-    initSpec = `\n      initContainers:\n${buildInitContainer(initSvc.svc, initSvc.name, namedVolumes)}`;
-  }
-
   let volumeSpec = "";
   if (namedVolumes.length > 0) {
     volumeSpec = `\n      volumes:`;
@@ -161,7 +117,7 @@ spec:
     metadata:
       labels:
         ${podLabels}
-    spec:${initSpec}
+    spec:
 ${containerSpec}${volumeSpec}`;
 }
 
@@ -190,25 +146,50 @@ spec:
 ${portLines}`;
 }
 
+function buildJob(name: string, svc: ComposeService): string {
+  const metaLabels = `app: ${name}\n    boilerhouse.dev/infra: "true"`;
+  const podLabels = `app: ${name}\n        boilerhouse.dev/infra: "true"`;
+
+  // Use entrypoint or command for the container command
+  const cmd = svc.entrypoint ?? svc.command;
+  let cmdSpec = "";
+  if (cmd) {
+    cmdSpec = `\n        command:\n${renderCommand(cmd)}`;
+  }
+
+  return `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${name}
+  labels:
+    ${metaLabels}
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        ${podLabels}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: ${name}
+        image: ${svc.image}${cmdSpec}`;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────
 
 export function generateManifests(config: ComposeConfig): string {
   const docs: string[] = [];
 
-  // Collect init container services
-  const initContainerMap = new Map<string, { name: string; svc: ComposeService }>();
-  for (const [initName, parentName] of Object.entries(INIT_CONTAINERS)) {
-    const initSvc = config.services[initName];
-    if (initSvc) {
-      initContainerMap.set(parentName, { name: initName, svc: initSvc });
-    }
-  }
-
   for (const [name, svc] of Object.entries(config.services)) {
     if (EXCLUDE.has(name)) continue;
 
-    const initSvc = initContainerMap.get(name);
-    docs.push(buildDeployment(name, svc, initSvc));
+    if (JOBS.has(name)) {
+      docs.push(buildJob(name, svc));
+      continue;
+    }
+
+    docs.push(buildDeployment(name, svc));
 
     if (svc.ports && svc.ports.length > 0) {
       docs.push(buildService(name, svc.ports));
