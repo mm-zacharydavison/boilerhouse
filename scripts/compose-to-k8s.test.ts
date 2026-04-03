@@ -102,6 +102,12 @@ describe("generateManifests", () => {
     expect(manifests).not.toContain("LoadBalancer");
   });
 
+  test("multi-port services have port names", () => {
+    // k8s requires named ports when a Service has >1 port
+    expect(manifests).toContain("name: minio-9000");
+    expect(manifests).toContain("name: minio-9001");
+  });
+
   test("output is valid multi-document YAML with separators", () => {
     const docs = manifests.split("---").filter(d => d.trim().length > 0);
     expect(docs.length).toBe(4);

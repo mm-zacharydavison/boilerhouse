@@ -167,10 +167,13 @@ ${containerSpec}${volumeSpec}`;
 
 function buildService(name: string, ports: ComposePort[]): string {
   const labels = `app: ${name}\n    boilerhouse.dev/infra: "true"`;
+  const needsNames = ports.length > 1;
   const portLines = ports
     .map(
-      (p) =>
-        `    - port: ${p.target}\n      targetPort: ${p.target}\n      protocol: ${p.protocol.toUpperCase()}`,
+      (p) => {
+        const nameLine = needsNames ? `\n      name: ${name}-${p.target}` : "";
+        return `    - port: ${p.target}\n      targetPort: ${p.target}\n      protocol: ${p.protocol.toUpperCase()}${nameLine}`;
+      },
     )
     .join("\n");
 
