@@ -7,6 +7,7 @@ set -euo pipefail
 
 PROFILE="boilerhouse-test"
 NAMESPACE="boilerhouse"
+SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
 # ── Install minikube + kubectl if missing ─────────────────────────────────
 
@@ -108,7 +109,19 @@ EOF
 echo "Pulling Envoy image into minikube..."
 minikube -p "$PROFILE" image pull docker.io/envoyproxy/envoy:v1.32-latest
 
+# ── Deploy infrastructure services from docker-compose.yml ────────────
+
+echo "Deploying infrastructure services from docker-compose.yml..."
+bun run "$SCRIPT_DIR/scripts/compose-to-k8s.ts" \
+  | kubectl --context="$PROFILE" -n "$NAMESPACE" apply -f -
+
+echo "Waiting for infrastructure deployments to be ready..."
+kubectl --context="$PROFILE" -n "$NAMESPACE" \
+  wait --for=condition=available deployment --all --timeout=120s
+
 echo ""
 echo "Minikube ready: profile=$PROFILE namespace=$NAMESPACE"
 echo "  API server: $(minikube ip -p "$PROFILE"):8443"
 echo "  Token:      kubectl --context=$PROFILE -n $NAMESPACE create token default"
+echo "  Redis:      redis.${NAMESPACE}.svc.cluster.local:6379"
+echo "  MinIO:      minio.${NAMESPACE}.svc.cluster.local:9000"
