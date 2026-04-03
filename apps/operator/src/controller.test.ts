@@ -44,6 +44,26 @@ describe("Controller", () => {
     expect(attempts).toBe(2);
   });
 
+  test("does not deduplicate items with same name but different namespace", async () => {
+    const reconciled: string[] = [];
+    const controller = new Controller<{ metadata: { name: string; namespace?: string } }>({
+      name: "test",
+      reconcile: async (item) => {
+        reconciled.push(`${item.metadata.namespace}/${item.metadata.name}`);
+      },
+    });
+
+    controller.enqueue({ metadata: { name: "item-1", namespace: "ns-a" } } as any);
+    controller.enqueue({ metadata: { name: "item-1", namespace: "ns-b" } } as any);
+
+    await controller.processOnce();
+    await controller.processOnce();
+
+    expect(reconciled).toContain("ns-a/item-1");
+    expect(reconciled).toContain("ns-b/item-1");
+    expect(reconciled.length).toBe(2);
+  });
+
   test("deduplicates items with same name", async () => {
     const reconciled: string[] = [];
     const controller = new Controller<{ metadata: { name: string }; value?: string }>({

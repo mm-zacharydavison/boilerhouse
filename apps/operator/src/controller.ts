@@ -32,9 +32,11 @@ export class Controller<T extends { metadata: { name: string; namespace?: string
   }
 
   enqueue(item: T): void {
-    // Deduplicate: if same name already in queue, replace it
-    const name = item.metadata.name;
-    const idx = this.queue.findIndex((q) => q.item.metadata.name === name);
+    // Deduplicate: if same namespace+name already in queue, replace it
+    const key = `${item.metadata.namespace ?? ""}/${item.metadata.name}`;
+    const idx = this.queue.findIndex(
+      (q) => `${q.item.metadata.namespace ?? ""}/${q.item.metadata.name}` === key,
+    );
     if (idx >= 0) {
       this.queue[idx] = { item, retries: this.queue[idx].retries, nextAttempt: Date.now() };
     } else {
@@ -80,9 +82,15 @@ export class Controller<T extends { metadata: { name: string; namespace?: string
     while (this.running && !signal?.aborted) {
       const processed = await this.processOnce();
       if (!processed) {
-        // Wait for new items
+        // Wait for new items — set wakeup BEFORE checking queue to avoid race:
+        // an enqueue() between processOnce() returning false and wakeup being set
+        // would otherwise wait up to 5s.
         await new Promise<void>((resolve) => {
           this.wakeup = resolve;
+          if (this.queue.length > 0) {
+            resolve();
+            return;
+          }
           setTimeout(resolve, 5000); // periodic wakeup
         });
         this.wakeup = null;
