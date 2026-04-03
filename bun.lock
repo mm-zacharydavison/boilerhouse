@@ -12,7 +12,7 @@
     },
     "apps/api": {
       "name": "@boilerhouse/api",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/db": "workspace:*",
@@ -30,7 +30,7 @@
     },
     "apps/cli": {
       "name": "@boilerhouse/cli",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/api": "workspace:*",
         "@boilerhouse/core": "workspace:*",
@@ -39,7 +39,7 @@
     },
     "apps/dashboard": {
       "name": "@boilerhouse/dashboard",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "lucide-react": "^0.575.0",
         "react": "^19.0.0",
@@ -55,14 +55,14 @@
     },
     "apps/docs": {
       "name": "@boilerhouse/docs",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "devDependencies": {
         "vitepress": "^1.6.3",
       },
     },
     "apps/trigger-gateway": {
       "name": "@boilerhouse/trigger-gateway",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/o11y": "workspace:*",
         "@boilerhouse/triggers": "workspace:*",
@@ -71,7 +71,7 @@
     },
     "packages/core": {
       "name": "@boilerhouse/core",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
         "age-encryption": "^0.3.0",
@@ -79,7 +79,7 @@
     },
     "packages/db": {
       "name": "@boilerhouse/db",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
         "drizzle-orm": "^0.44.0",
@@ -90,21 +90,28 @@
     },
     "packages/driver-claude-code": {
       "name": "@boilerhouse/driver-claude-code",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/triggers": "workspace:*",
       },
     },
     "packages/driver-openclaw": {
       "name": "@boilerhouse/driver-openclaw",
-      "version": "0.0.8",
+      "version": "0.1.11",
+      "dependencies": {
+        "@boilerhouse/triggers": "workspace:*",
+      },
+    },
+    "packages/driver-pi": {
+      "name": "@boilerhouse/driver-pi",
+      "version": "0.1.0",
       "dependencies": {
         "@boilerhouse/triggers": "workspace:*",
       },
     },
     "packages/envoy-config": {
       "name": "@boilerhouse/envoy-config",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "handlebars": "^4.7.8",
       },
@@ -115,21 +122,21 @@
     },
     "packages/guard-allowlist": {
       "name": "@boilerhouse/guard-allowlist",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/triggers": "workspace:*",
       },
     },
     "packages/guard-api": {
       "name": "@boilerhouse/guard-api",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/triggers": "workspace:*",
       },
     },
     "packages/o11y": {
       "name": "@boilerhouse/o11y",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/db": "workspace:*",
@@ -150,7 +157,7 @@
     },
     "packages/runtime-docker": {
       "name": "@boilerhouse/runtime-docker",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
         "@opentelemetry/api": "^1.9.0",
@@ -158,14 +165,14 @@
     },
     "packages/runtime-kubernetes": {
       "name": "@boilerhouse/runtime-kubernetes",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
       },
     },
     "packages/storage": {
       "name": "@boilerhouse/storage",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.750.0",
         "@aws-sdk/lib-storage": "^3.750.0",
@@ -173,11 +180,12 @@
     },
     "packages/triggers": {
       "name": "@boilerhouse/triggers",
-      "version": "0.0.8",
+      "version": "0.1.11",
       "dependencies": {
         "@boilerhouse/core": "workspace:*",
         "@boilerhouse/driver-claude-code": "workspace:*",
         "@boilerhouse/driver-openclaw": "workspace:*",
+        "@boilerhouse/driver-pi": "workspace:*",
         "@boilerhouse/guard-allowlist": "workspace:*",
         "@boilerhouse/guard-api": "workspace:*",
         "@boilerhouse/o11y": "workspace:*",
@@ -354,6 +362,8 @@
     "@boilerhouse/driver-claude-code": ["@boilerhouse/driver-claude-code@workspace:packages/driver-claude-code"],
 
     "@boilerhouse/driver-openclaw": ["@boilerhouse/driver-openclaw@workspace:packages/driver-openclaw"],
+
+    "@boilerhouse/driver-pi": ["@boilerhouse/driver-pi@workspace:packages/driver-pi"],
 
     "@boilerhouse/envoy-config": ["@boilerhouse/envoy-config@workspace:packages/envoy-config"],
 
