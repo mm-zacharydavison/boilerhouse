@@ -79,24 +79,6 @@ export async function startE2EServer(
 		onDbReady?: (db: DrizzleDb) => void;
 	},
 ): Promise<E2EServer> {
-	// Kubernetes e2e runs against an external deployment — no in-process server.
-	if (runtimeName === "kubernetes") {
-		const baseUrl = process.env.BOILERHOUSE_K8S_API_URL?.replace(/\/$/, "");
-		if (!baseUrl) throw new Error("BOILERHOUSE_K8S_API_URL must be set for kubernetes e2e");
-		return {
-			baseUrl,
-			db: null,
-			cleanup: async () => {
-				// Best-effort: remove any pods created during the test run
-				Bun.spawnSync(
-					["kubectl", "--context", "boilerhouse-test", "-n", "boilerhouse",
-					 "delete", "pods", "-l", "boilerhouse.dev/managed=true", "--ignore-not-found"],
-					{ stdout: "ignore", stderr: "ignore" },
-				);
-			},
-		};
-	}
-
 	const db = createTestDatabase();
 	const nodeId = generateNodeId();
 	const activityLog = new ActivityLog(db);
