@@ -6,6 +6,7 @@
 		"@boilerhouse/core": "workspace:*",
 		"@boilerhouse/db": "workspace:*",
 		"@boilerhouse/domain": "workspace:*",
+		"@boilerhouse/k8s": "workspace:*",
 		"@boilerhouse/envoy-config": "workspace:*",
 		"@boilerhouse/o11y": "workspace:*",
 		"@boilerhouse/runtime-docker": "workspace:*",

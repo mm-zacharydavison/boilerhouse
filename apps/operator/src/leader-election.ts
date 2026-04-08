@@ -24,6 +24,12 @@ interface LeaseSpec {
 
 const log = createLogger("leader-election");
 
+/** K8s MicroTime requires exactly 6 fractional digits (microseconds). */
+function microTime(): string {
+  // toISOString() gives 3 digits; pad to 6 for K8s MicroTime format
+  return new Date().toISOString().replace(/(\.\d{3})Z$/, "$1000Z");
+}
+
 export class LeaderElector {
   private _isLeader = false;
   private stopped = false;
@@ -125,7 +131,7 @@ export class LeaderElector {
 
   private async createLease(): Promise<void> {
     const url = `${this.config.apiUrl}/apis/coordination.k8s.io/v1/namespaces/${this.config.leaseNamespace}/leases`;
-    const now = new Date().toISOString();
+    const now = microTime();
     const resp = await fetch(url, {
       method: "POST",
       headers: { ...this.config.headers, "Content-Type": "application/json" },
@@ -143,7 +149,10 @@ export class LeaderElector {
       }),
       tls: this.tlsOptions,
     } as RequestInit);
-    if (!resp.ok) throw new Error(`Create lease failed: ${resp.status}`);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      throw new Error(`Create lease failed: ${resp.status} ${body}`);
+    }
     this._isLeader = true;
     this.lastRenewMs = Date.now();
     log.info({ identity: this.config.identity }, "acquired leadership");
@@ -152,7 +161,7 @@ export class LeaderElector {
 
   private async updateLease(resourceVersion?: string, leaseTransitions?: number): Promise<void> {
     const url = `${this.config.apiUrl}/apis/coordination.k8s.io/v1/namespaces/${this.config.leaseNamespace}/leases/${this.config.leaseName}`;
-    const now = new Date().toISOString();
+    const now = microTime();
     const resp = await fetch(url, {
       method: "PUT",
       headers: { ...this.config.headers, "Content-Type": "application/json" },

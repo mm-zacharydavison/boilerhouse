@@ -40,21 +40,70 @@ beforeAll(async () => {
 	const crdsDir = new URL("../../apps/operator/crds/", import.meta.url).pathname;
 	await run(["kubectl", "--context", CONTEXT, "apply", "-f", crdsDir]);
 
-	// 3. Apply RBAC (idempotent)
+	// 3. Apply RBAC (idempotent) — operator SA + test SA
 	const rbacPath = new URL("../../apps/operator/deploy/rbac.yaml", import.meta.url).pathname;
 	await run(["kubectl", "--context", CONTEXT, "apply", "-f", rbacPath]);
 
+	// Create test SA with full CRD CRUD permissions (tests create/delete CRDs like a user would)
+	const testRbac = `
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: boilerhouse-test
+  namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boilerhouse-test
+  namespace: ${NAMESPACE}
+rules:
+  - apiGroups: ["boilerhouse.dev"]
+    resources: [boilerhouseworkloads, boilerhousepools, boilerhouseclaims, boilerhousetriggers]
+    verbs: ["*"]
+  - apiGroups: ["boilerhouse.dev"]
+    resources: [boilerhouseworkloads/status, boilerhousepools/status, boilerhouseclaims/status, boilerhousetriggers/status]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: [pods, pods/exec, pods/log, services, secrets]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: boilerhouse-test
+  namespace: ${NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: boilerhouse-test
+subjects:
+  - kind: ServiceAccount
+    name: boilerhouse-test
+    namespace: ${NAMESPACE}
+`;
+	const rbacProc = Bun.spawn(["kubectl", "--context", CONTEXT, "apply", "-f", "-"], {
+		stdin: new TextEncoder().encode(testRbac),
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	await rbacProc.exited;
+
 	// 4. Get minikube auth
 	const minikubeIp = await run(["minikube", "ip", "-p", MINIKUBE_PROFILE]);
-	const token = await run([
-		"kubectl",
-		"--context",
-		CONTEXT,
-		"create",
-		"token",
-		"boilerhouse-operator",
-		"-n",
-		NAMESPACE,
+
+	// Operator token — for the operator process
+	const operatorToken = await run([
+		"kubectl", "--context", CONTEXT,
+		"create", "token", "boilerhouse-operator",
+		"-n", NAMESPACE,
+	]);
+
+	// Test client token — for CRD CRUD operations
+	const testToken = await run([
+		"kubectl", "--context", CONTEXT,
+		"create", "token", "boilerhouse-test",
+		"-n", NAMESPACE,
 	]);
 	const caCert = await run([
 		"minikube",
@@ -74,7 +123,7 @@ beforeAll(async () => {
 		env: {
 			...process.env,
 			K8S_API_URL: k8sApiUrl,
-			K8S_TOKEN: token,
+			K8S_TOKEN: operatorToken,
 			K8S_CA_CERT: caCert,
 			K8S_NAMESPACE: NAMESPACE,
 			K8S_CONTEXT: CONTEXT,
@@ -109,7 +158,7 @@ beforeAll(async () => {
 	}
 
 	// 7. Create and set test client
-	const client = new KubeTestClient({ apiUrl: k8sApiUrl, token, caCert });
+	const client = new KubeTestClient({ apiUrl: k8sApiUrl, token: testToken, caCert });
 	setTestClient(client);
 	setOperatorApiUrl(`http://localhost:${OPERATOR_PORT}`);
 });

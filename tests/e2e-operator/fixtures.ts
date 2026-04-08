@@ -18,6 +18,7 @@ export function httpserverWorkload(name: string): BoilerhouseWorkload {
 		spec: {
 			version: "1",
 			image: { ref: "python:3.12-slim" },
+			resources: { vcpus: 1, memoryMb: 256, diskGb: 1 },
 			network: {
 				access: "unrestricted",
 				expose: [{ guest: 8080 }],
@@ -43,6 +44,7 @@ export function minimalWorkload(name: string): BoilerhouseWorkload {
 		spec: {
 			version: "1",
 			image: { ref: "alpine:3.19" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 1 },
 			network: { access: "none" },
 			entrypoint: {
 				cmd: "sh",
@@ -60,6 +62,7 @@ export function overlayWorkload(name: string): BoilerhouseWorkload {
 		spec: {
 			version: "1",
 			image: { ref: "alpine:3.19" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 2 },
 			network: { access: "none" },
 			filesystem: {
 				overlayDirs: ["/data"],
@@ -83,6 +86,7 @@ export function idleWorkload(name: string, timeoutSeconds: number): BoilerhouseW
 		spec: {
 			version: "1",
 			image: { ref: "alpine:3.19" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 1 },
 			network: { access: "none" },
 			filesystem: {
 				overlayDirs: ["/data"],
@@ -107,6 +111,7 @@ export function brokenWorkload(name: string): BoilerhouseWorkload {
 		spec: {
 			version: "1",
 			image: { ref: "docker.io/library/nonexistent-image:99.99.99" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 1 },
 			network: { access: "none" },
 			entrypoint: {
 				cmd: "sh",
@@ -124,6 +129,7 @@ export function openclawWorkload(name: string): BoilerhouseWorkload {
 		spec: {
 			version: "1",
 			image: { ref: "alpine:3.19" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 1 },
 			network: {
 				access: "restricted",
 				allowlist: ["api.example.com"],

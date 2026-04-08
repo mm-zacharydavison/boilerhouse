@@ -226,6 +226,7 @@
         "@boilerhouse/db": "workspace:*",
         "@boilerhouse/domain": "workspace:*",
         "@boilerhouse/envoy-config": "workspace:*",
+        "@boilerhouse/k8s": "workspace:*",
         "@boilerhouse/o11y": "workspace:*",
         "@boilerhouse/runtime-docker": "workspace:*",
         "@boilerhouse/triggers": "workspace:*",

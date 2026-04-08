@@ -18,8 +18,7 @@ export function crdToWorkload(name: string, spec: BoilerhouseWorkloadSpec): Work
     },
     network: {
       access: spec.network?.access ?? "none",
-      // CRD expose only has guest; cast to satisfy internal type
-      expose: spec.network?.expose as Workload["network"]["expose"],
+      expose: spec.network?.expose?.map((e) => ({ guest: e.guest, host_range: [0, 0] as [number, number] })),
       allowlist: spec.network?.allowlist,
       websocket: spec.network?.websocket,
     },
