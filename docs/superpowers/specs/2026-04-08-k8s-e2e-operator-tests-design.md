@@ -31,7 +31,7 @@ tests/e2e-operator/
   data-persistence.e2e.test.ts
 ```
 
-Existing `tests/e2e/` is untouched — it continues to serve fake+docker runtimes.
+Existing `tests/e2e/` keeps serving fake+docker runtimes. The kubernetes runtime option is removed from `tests/e2e/` (runtime-matrix, e2e-helpers, fixtures, runtime-detect) since K8s testing now lives here.
 
 ## Test Driver: Hybrid Approach
 
@@ -164,6 +164,6 @@ The operator creates a ClusterIP Service per managed instance. Tests verify HTTP
 
 - No changes to the operator code itself
 - No in-cluster operator deployment for tests
-- No changes to existing `tests/e2e/` (fake+docker)
-- No new kadai action for running operator E2E (use `bun test tests/e2e-operator/ --timeout 120000`)
+- Remove kubernetes option from existing `tests/e2e/` (runtime-matrix, e2e-helpers, fixtures, runtime-detect)
+- Add kadai action `e2e-operator` to run operator E2E tests (ensures minikube + CRDs + RBAC are ready, starts operator, runs tests, cleans up)
 - No leader election in test setup
