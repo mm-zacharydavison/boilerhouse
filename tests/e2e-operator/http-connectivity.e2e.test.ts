@@ -1,11 +1,15 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, kubectlPortForward } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, kubectlPortForward, type KubeTestClient } from "./helpers";
 import { httpserverWorkload, claim } from "./fixtures";
 
 describe("http-connectivity", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
 	let portForwardHandle: { localPort: number; stop: () => void } | null = null;
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		if (portForwardHandle) portForwardHandle.stop();

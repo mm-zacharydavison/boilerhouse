@@ -1,10 +1,14 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, type KubeTestClient } from "./helpers";
 import { brokenWorkload, httpserverWorkload, claim } from "./fixtures";
 
 describe("error-recovery", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		await tracker.cleanup(client);

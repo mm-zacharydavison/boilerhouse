@@ -1,10 +1,14 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, kubectlExec, kubectlLogs, kubectlPodExists } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, kubectlExec, kubectlLogs, kubectlPodExists, type KubeTestClient } from "./helpers";
 import { httpserverWorkload, claim } from "./fixtures";
 
 describe("instance-actions", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		await tracker.cleanup(client);

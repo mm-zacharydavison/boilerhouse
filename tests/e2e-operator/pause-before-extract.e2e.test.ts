@@ -1,10 +1,14 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, kubectlExec, operatorApiUrl } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, kubectlExec, operatorApiUrl, type KubeTestClient } from "./helpers";
 import { overlayWorkload, claim } from "./fixtures";
 
 describe("pause-before-extract", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		await tracker.cleanup(client);

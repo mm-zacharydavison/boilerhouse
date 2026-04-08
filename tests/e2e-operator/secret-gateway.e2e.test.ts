@@ -1,12 +1,16 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, kubectlExec, CONTEXT, NAMESPACE } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, kubectlExec, CONTEXT, NAMESPACE, type KubeTestClient } from "./helpers";
 import { openclawWorkload, claim } from "./fixtures";
 
 describe("secret-gateway", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
 	const secretName = "openclaw-creds";
 	let secretCreated = false;
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		await tracker.cleanup(client);

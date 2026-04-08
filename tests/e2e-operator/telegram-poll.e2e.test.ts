@@ -1,12 +1,16 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, CONTEXT, NAMESPACE } from "./helpers";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { getTestClient, uniqueName, CrdTracker, CONTEXT, NAMESPACE, type KubeTestClient } from "./helpers";
 import { httpserverWorkload, trigger } from "./fixtures";
 
 describe("telegram-poll", () => {
-	const client = getTestClient();
+	let client: KubeTestClient;
 	const tracker = new CrdTracker();
 	const secretName = uniqueName("tg-secret");
 	let secretCreated = false;
+
+	beforeAll(() => {
+		client = getTestClient();
+	});
 
 	afterAll(async () => {
 		await tracker.cleanup(client);
