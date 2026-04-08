@@ -103,6 +103,17 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 EOF
 
+# ── Operator CRDs + RBAC ────────────────────────────────────────────────
+# Applied idempotently so re-running the action picks up any changes.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+
+echo "Applying operator CRDs..."
+kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/crds/"
+
+echo "Applying operator RBAC..."
+kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/deploy/rbac.yaml"
+
 # ── Pre-pull Envoy image for sidecar proxy tests ────────────────────────
 
 echo "Pulling Envoy image into minikube..."
