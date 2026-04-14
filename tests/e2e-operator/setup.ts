@@ -40,6 +40,19 @@ beforeAll(async () => {
 	const crdsDir = new URL("../../apps/operator/crds/", import.meta.url).pathname;
 	await run(["kubectl", "--context", CONTEXT, "apply", "-f", crdsDir]);
 
+	// 2b. Clean up stale test resources from previous runs.
+	// Unique naming prevents interference, but crashed runs can leave orphans.
+	for (const crd of ["boilerhousetriggers", "boilerhouseclaims", "boilerhousepools", "boilerhouseworkloads"]) {
+		try {
+			await run([
+				"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
+				"delete", `${crd}.boilerhouse.dev`, "--all", "--timeout=15s",
+			]);
+		} catch {
+			// CRD may not have any resources yet — ignore
+		}
+	}
+
 	// 3. Apply RBAC (idempotent) — operator SA + test SA
 	const rbacPath = new URL("../../apps/operator/deploy/rbac.yaml", import.meta.url).pathname;
 	await run(["kubectl", "--context", CONTEXT, "apply", "-f", rbacPath]);

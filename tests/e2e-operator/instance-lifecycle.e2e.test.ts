@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, kubectlPodExists, kubectlGetPodPhase, type KubeTestClient } from "./helpers";
+import { getTestClient, uniqueName, CrdTracker, kubectlGetPodPhase, waitForPodDeletion, type KubeTestClient } from "./helpers";
 import { httpserverWorkload, claim } from "./fixtures";
 
 describe("instance-lifecycle", () => {
@@ -38,11 +38,6 @@ describe("instance-lifecycle", () => {
 		await client.waitForDeletion("boilerhouseclaims", claimName);
 
 		// Wait for pod cleanup
-		const deadline = Date.now() + 30_000;
-		while (Date.now() < deadline) {
-			if (!(await kubectlPodExists(instanceId))) break;
-			await new Promise((r) => setTimeout(r, 1_000));
-		}
-		expect(await kubectlPodExists(instanceId)).toBe(false);
+		await waitForPodDeletion(instanceId, 30_000);
 	}, 120_000);
 });

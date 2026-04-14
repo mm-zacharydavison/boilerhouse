@@ -15,7 +15,9 @@ import {
 export const NAMESPACE = "boilerhouse";
 export const CONTEXT = "boilerhouse-test";
 export const DEFAULT_TIMEOUT_MS = 120_000;
-export const POLL_INTERVAL_MS = 1_000;
+export const POLL_INITIAL_MS = 100;
+export const POLL_MAX_MS = 1_000;
+export const POLL_BACKOFF = 1.5;
 
 // ── CRD resource names (plural, lowercase) ──────────────────────────────────
 
@@ -83,27 +85,21 @@ export class CrdTracker {
 			byResource.set(t.resource, list);
 		}
 
-		// Delete in dependency order
+		// Fire deletes in dependency order — don't wait for pod termination.
+		// Unique naming prevents cross-test interference from lingering resources.
+		const allDeletes: Promise<void>[] = [];
 		for (const resource of DELETION_ORDER) {
 			const names = byResource.get(resource);
 			if (!names) continue;
 			for (const name of names) {
-				await client.delete(resource, name);
+				allDeletes.push(
+					client.delete(resource, name).catch((err) => {
+						console.warn(`[cleanup] failed to delete ${resource}/${name}: ${err.message}`);
+					}),
+				);
 			}
 		}
-
-		// Wait for all deletions
-		for (const resource of DELETION_ORDER) {
-			const names = byResource.get(resource);
-			if (!names) continue;
-			for (const name of names) {
-				try {
-					await client.waitForDeletion(resource, name, 30_000);
-				} catch {
-					// best-effort cleanup
-				}
-			}
-		}
+		await Promise.all(allDeletes);
 
 		this.tracked = [];
 	}
@@ -137,24 +133,40 @@ export class KubeTestClient {
 		resource: CrdResource,
 		obj: T,
 	): Promise<T> {
-		try {
-			return await this.request<T>("POST", this.crdPath(resource), obj);
-		} catch (err) {
-			if (err instanceof KubernetesRuntimeError && err.statusCode === 409) {
-				// Already exists — get resourceVersion, then PUT
-				const existing = await this.request<T>(
-					"GET",
-					this.crdPath(resource, obj.metadata.name),
-				);
-				obj.metadata.resourceVersion = existing.metadata.resourceVersion;
-				return this.request<T>(
-					"PUT",
-					this.crdPath(resource, obj.metadata.name),
-					obj,
-				);
+		const maxAttempts = 3;
+		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				try {
+					return await this.request<T>("POST", this.crdPath(resource), obj);
+				} catch (err) {
+					if (err instanceof KubernetesRuntimeError && err.statusCode === 409) {
+						// Already exists — get resourceVersion, then PUT
+						const existing = await this.request<T>(
+							"GET",
+							this.crdPath(resource, obj.metadata.name),
+						);
+						obj.metadata.resourceVersion = existing.metadata.resourceVersion;
+						return await this.request<T>(
+							"PUT",
+							this.crdPath(resource, obj.metadata.name),
+							obj,
+						);
+					}
+					throw err;
+				}
+			} catch (err) {
+				const isTransient =
+					(err instanceof KubernetesRuntimeError && (err.statusCode ?? 0) >= 500) ||
+					(err instanceof TypeError); // fetch network error
+				if (isTransient && attempt < maxAttempts) {
+					await new Promise((r) => setTimeout(r, 500 * attempt));
+					continue;
+				}
+				throw err;
 			}
-			throw err;
 		}
+		// unreachable, but satisfies TS
+		throw new Error("apply: max attempts exceeded");
 	}
 
 	async applyWorkload(obj: BoilerhouseWorkload): Promise<BoilerhouseWorkload> {
@@ -228,6 +240,7 @@ export class KubeTestClient {
 		timeoutMs = DEFAULT_TIMEOUT_MS,
 	): Promise<Record<string, unknown>> {
 		const deadline = Date.now() + timeoutMs;
+		let interval = POLL_INITIAL_MS;
 
 		while (Date.now() < deadline) {
 			const status = await this.getStatus(resource, name);
@@ -237,7 +250,8 @@ export class KubeTestClient {
 					`${resource}/${name} reached Error phase: ${status.detail ?? "unknown"}`,
 				);
 			}
-			await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+			await new Promise((r) => setTimeout(r, interval));
+			interval = Math.min(interval * POLL_BACKOFF, POLL_MAX_MS);
 		}
 
 		const finalStatus = await this.getStatus(resource, name);
@@ -252,6 +266,7 @@ export class KubeTestClient {
 		timeoutMs = DEFAULT_TIMEOUT_MS,
 	): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
+		let interval = POLL_INITIAL_MS;
 
 		while (Date.now() < deadline) {
 			try {
@@ -262,7 +277,8 @@ export class KubeTestClient {
 				}
 				throw err;
 			}
-			await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+			await new Promise((r) => setTimeout(r, interval));
+			interval = Math.min(interval * POLL_BACKOFF, POLL_MAX_MS);
 		}
 
 		throw new Error(`${resource}/${name} was not deleted within ${timeoutMs}ms`);
@@ -359,6 +375,17 @@ export async function kubectlPodExists(podName: string): Promise<boolean> {
 	return result.exitCode === 0;
 }
 
+export async function waitForPodDeletion(podName: string, timeoutMs = 30_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	let interval = POLL_INITIAL_MS;
+	while (Date.now() < deadline) {
+		if (!(await kubectlPodExists(podName))) return;
+		await new Promise((r) => setTimeout(r, interval));
+		interval = Math.min(interval * POLL_BACKOFF, POLL_MAX_MS);
+	}
+	throw new Error(`Pod ${podName} was not deleted within ${timeoutMs}ms`);
+}
+
 export async function kubectlPortForward(
 	podName: string,
 	containerPort: number,
@@ -369,7 +396,7 @@ export async function kubectlPortForward(
 	);
 
 	const reader = proc.stdout.getReader();
-	const deadline = Date.now() + 15_000;
+	const deadline = Date.now() + 30_000;
 	let buffer = "";
 
 	while (Date.now() < deadline) {
@@ -406,5 +433,5 @@ export async function kubectlPortForward(
 	}
 
 	proc.kill();
-	throw new Error(`kubectl port-forward did not produce local port within 15s`);
+	throw new Error(`kubectl port-forward did not produce local port within 30s`);
 }

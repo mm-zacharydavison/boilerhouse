@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, CONTEXT, NAMESPACE, type KubeTestClient } from "./helpers";
+import { getTestClient, uniqueName, CrdTracker, CONTEXT, NAMESPACE, POLL_INITIAL_MS, POLL_MAX_MS, POLL_BACKOFF, type KubeTestClient } from "./helpers";
 import { httpserverWorkload, trigger } from "./fixtures";
 
 describe("telegram-poll", () => {
@@ -47,10 +47,12 @@ describe("telegram-poll", () => {
 		// Wait for trigger to be reconciled (status.phase appears)
 		const deadline = Date.now() + 60_000;
 		let triggerStatus: Record<string, unknown> | undefined;
+		let interval = POLL_INITIAL_MS;
 		while (Date.now() < deadline) {
 			triggerStatus = await client.getStatus("boilerhousetriggers", triggerName);
 			if (triggerStatus?.phase) break;
-			await new Promise((r) => setTimeout(r, 1_000));
+			await new Promise((r) => setTimeout(r, interval));
+			interval = Math.min(interval * POLL_BACKOFF, POLL_MAX_MS);
 		}
 
 		expect(triggerStatus).toBeDefined();
