@@ -25,7 +25,7 @@ export default defineConfig({
           items: [
             { text: "Workloads", link: "/guide/workloads" },
             { text: "Instances", link: "/guide/instances" },
-            { text: "Tenants", link: "/guide/tenants" },
+            { text: "Tenants & Claims", link: "/guide/tenants" },
             { text: "Pooling", link: "/guide/pooling" },
             { text: "Snapshots & Hibernation", link: "/guide/snapshots" },
           ],
@@ -34,7 +34,7 @@ export default defineConfig({
           text: "Runtimes",
           items: [
             { text: "Docker", link: "/guide/runtime-docker" },
-            { text: "Kubernetes", link: "/guide/runtime-kubernetes" },
+            { text: "Kubernetes Operator", link: "/guide/runtime-kubernetes" },
           ],
         },
         {
@@ -56,12 +56,25 @@ export default defineConfig({
       ],
       "/reference/": [
         {
-          text: "Reference",
+          text: "API & CLI",
           items: [
             { text: "REST API", link: "/reference/api" },
             { text: "CLI", link: "/reference/cli" },
+            { text: "WebSocket Events", link: "/reference/websocket" },
+          ],
+        },
+        {
+          text: "Configuration",
+          items: [
             { text: "Workload Schema", link: "/reference/workload-schema" },
+            { text: "Trigger Schema", link: "/reference/trigger-schema" },
             { text: "Environment Variables", link: "/reference/env" },
+          ],
+        },
+        {
+          text: "Kubernetes",
+          items: [
+            { text: "CRD Reference", link: "/reference/crds" },
           ],
         },
       ],
