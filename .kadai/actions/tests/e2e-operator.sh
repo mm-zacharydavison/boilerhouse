@@ -1,7 +1,7 @@
 #!/bin/bash
 # kadai:name Operator E2E Tests
 # kadai:emoji ☸️
-# kadai:description Run all Go tests (includes envtest-based controller tests)
+# kadai:description Run E2E tests against the Go operator on minikube
 # kadai:category tests
 
 set -euo pipefail
@@ -9,25 +9,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$SCRIPT_DIR/go"
 
-# ── Ensure envtest binaries are available ────────────────────────────────────
+# ── Verify minikube is running ──────────────────────────────────────────────
 
-ENVTEST_ASSETS=""
-if [ -d "/Users/z/Library/Application Support/io.kubebuilder.envtest" ]; then
-  # Find the latest version
-  ENVTEST_ASSETS="$(ls -d "/Users/z/Library/Application Support/io.kubebuilder.envtest/k8s/"* 2>/dev/null | sort -V | tail -1)"
+PROFILE="boilerhouse"
+
+if ! minikube status -p "$PROFILE" &>/dev/null 2>&1; then
+  echo "minikube profile '$PROFILE' not running."
+  echo "Start it with: bunx kadai run minikube"
+  exit 1
 fi
 
-if [ -z "$ENVTEST_ASSETS" ]; then
-  echo "Installing envtest binaries..."
-  go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
-  ENVTEST_ASSETS="$(setup-envtest use -p path 2>/dev/null || $(go env GOPATH)/bin/setup-envtest use -p path)"
-fi
+echo "minikube cluster '$PROFILE' is running"
+kubectl config use-context "$PROFILE" &>/dev/null 2>&1 || true
 
-export KUBEBUILDER_ASSETS="$ENVTEST_ASSETS"
-echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS"
+# ── Run E2E tests ───────────────────────────────────────────────────────────
+# The tests build and start the operator themselves (see main_test.go).
+
 echo ""
-
-# ── Run tests ────────────────────────────────────────────────────────────────
-
-echo "Running Go tests..."
-exec go test ./... -timeout 300s -v
+echo "Running operator E2E tests..."
+exec go test -tags e2e -v -timeout 600s ./tests/e2e/
