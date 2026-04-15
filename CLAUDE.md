@@ -1,63 +1,82 @@
 # Boilerhouse
 
-NOT-RELEASED
+NOT-RELEASED — Go port on `experimental/go` branch.
+
+## Architecture
+
+Boilerhouse is a multi-tenant container orchestration platform built on Kubernetes. Three Go binaries share internal packages:
+
+- `go/cmd/operator/` — K8s operator. Watches CRDs, reconciles Pods/PVCs/Services/NetworkPolicies.
+- `go/cmd/api/` — REST API server. Thin translation layer between HTTP and K8s API.
+- `go/cmd/trigger/` — Trigger gateway. Receives external events, creates Claims.
+
+All state lives in the K8s API server (CRDs + native resources). No database.
+
+## Development
+
+### Prerequisites
+
+- Go 1.23+
+- k3s (for local dev) — `bunx kadai run k3s` to set up
+- envtest binaries (for tests) — installed automatically by test scripts
+
+### Local dev
+
+```sh
+# Set up k3s (one-time)
+bunx kadai run k3s
+
+# Start operator + API
+bunx kadai run go-dev
+```
+
+### Running the operator alone
+
+```sh
+cd go
+KUBECONFIG=/etc/rancher/k3s/k3s.yaml K8S_NAMESPACE=boilerhouse go run ./cmd/operator/
+```
+
+### Running the API alone
+
+```sh
+cd go
+KUBECONFIG=/etc/rancher/k3s/k3s.yaml K8S_NAMESPACE=boilerhouse PORT=3000 go run ./cmd/api/
+```
 
 ## Testing
 
-Tests are organized into tiers. Only unit tests run by default.
-
-### Unit tests
-
 ```sh
-bun test
+# All tests (requires envtest binaries)
+bunx kadai run go-unit
+
+# Or manually
+cd go
+export KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+go test ./... -timeout 300s
 ```
-
-Runs `bun test packages/ apps/ workloads/` — scoped to workspace
-dirs so that `tests/` (integration, e2e, security) is excluded.
-
-### Integration tests
-
-Live in `tests/integration/`. Require live infrastructure.
-
-**Docker** — requires Docker daemon running:
-
-```sh
-bun test tests/integration/docker.integration.test.ts --timeout 60000
-```
-
-**Kubernetes** — requires minikube with profile `boilerhouse-test`
-(`bunx kadai run minikube` to set up):
-
-```sh
-bun test tests/integration/kubernetes.integration.test.ts --timeout 60000
-```
-
-### E2E tests
-
-Live in `tests/e2e/`. Run via kadai (`bunx kadai run e2e`) or directly:
-
-```sh
-# All detected runtimes (fake + docker + kubernetes)
-bun test tests/e2e/ --timeout 120000
-
-# Filter to specific runtimes
-BOILERHOUSE_E2E_RUNTIMES=fake bun test tests/e2e/ --timeout 120000
-BOILERHOUSE_E2E_RUNTIMES=docker bun test tests/e2e/ --timeout 120000
-```
-
-### Security tests
-
-Live in `tests/security/`. Run via kadai:
-
-- `bunx kadai run security` — Nuclei red-team templates against the API
-- `bunx kadai run security-breakout` — CDK container escape scan
 
 ### Test structure
 
 ```
-packages/            *.test.ts                unit tests (bun test)
-apps/                *.test.ts                unit tests (bun test)
-tests/integration/   *.integration.test.ts    integration tests (live infra)
-tests/e2e/           *.e2e.test.ts            E2E tests (kadai or manual)
-tests/security/      scripts                  security scans (kadai only)
+go/internal/core/         workload parsing + validation tests
+go/internal/operator/     controller tests (envtest-based)
+go/internal/api/          API route tests (envtest + httptest)
+go/internal/trigger/      trigger gateway tests
+```
+
+## Key directories
+
+```
+go/                   Go source (module: github.com/zdavison/boilerhouse/go)
+  cmd/                entry points for 3 binaries
+  internal/           private packages (core, operator, api, trigger, o11y, envoy)
+  api/v1alpha1/       CRD type definitions (kubebuilder)
+config/
+  crd/bases/          CRD YAML (original from TS)
+  crd/bases-go/       CRD YAML (generated from Go types)
+  deploy/             kustomize deployment manifests
+workloads/            example workload YAML definitions
+scripts/              setup scripts (k3s)
+docs/                 documentation and specs
 ```

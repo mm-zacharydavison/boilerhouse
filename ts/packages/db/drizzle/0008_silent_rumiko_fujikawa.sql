@@ -1,1 +1,0 @@
-ALTER TABLE `snapshots` ADD `encrypted` integer DEFAULT false;

@@ -1,1 +1,0 @@
-ALTER TABLE `snapshots` ADD `archive_hmac` text;
