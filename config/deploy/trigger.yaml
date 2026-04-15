@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boilerhouse-trigger
+  namespace: boilerhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: boilerhouse-trigger
+  template:
+    metadata:
+      labels:
+        app: boilerhouse-trigger
+    spec:
+      serviceAccountName: boilerhouse-operator
+      containers:
+        - name: trigger
+          image: boilerhouse-trigger:latest
+          env:
+            - name: K8S_NAMESPACE
+              value: boilerhouse
+          ports:
+            - containerPort: 8082
+              name: http
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health

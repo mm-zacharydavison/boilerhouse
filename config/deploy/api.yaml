@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boilerhouse-api
+  namespace: boilerhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: boilerhouse-api
+  template:
+    metadata:
+      labels:
+        app: boilerhouse-api
+    spec:
+      serviceAccountName: boilerhouse-operator
+      containers:
+        - name: api
+          image: boilerhouse-api:latest
+          env:
+            - name: K8S_NAMESPACE
+              value: boilerhouse
+          ports:
+            - containerPort: 3000
+              name: http
+            - containerPort: 8081
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: boilerhouse-api
+  namespace: boilerhouse
+spec:
+  selector:
+    app: boilerhouse-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
