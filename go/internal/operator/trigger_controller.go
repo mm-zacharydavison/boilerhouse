@@ -108,8 +108,8 @@ func validateTriggerSpec(spec v1alpha1.BoilerhouseTriggerSpec) []string {
 		errs = append(errs, fmt.Sprintf("type %q is not valid; must be one of: webhook, slack, telegram, cron", spec.Type))
 	}
 
-	if spec.Tenant != nil && spec.Tenant.From == "" {
-		errs = append(errs, "tenant.from must be set when tenant is specified")
+	if spec.Tenant != nil && spec.Tenant.Static == "" && spec.Tenant.From == "" {
+		errs = append(errs, "tenant.static or tenant.from must be set when tenant is specified")
 	}
 
 	return errs

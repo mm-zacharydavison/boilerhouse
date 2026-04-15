@@ -7,6 +7,9 @@ import (
 
 // TriggerTenant defines how the tenant is determined for a trigger.
 type TriggerTenant struct {
+	// Static sets a fixed tenant identifier for all events.
+	// +optional
+	Static string `json:"static,omitempty"`
 	// From specifies the source field for the tenant identifier.
 	// +optional
 	From string `json:"from,omitempty"`
