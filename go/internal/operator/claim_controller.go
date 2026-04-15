@@ -56,24 +56,22 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req reconcile.Request) 
 
 // handleNewClaim processes a claim that is not yet Active (empty or Pending phase).
 func (r *ClaimReconciler) handleNewClaim(ctx context.Context, req reconcile.Request, claim *v1alpha1.BoilerhouseClaim) (reconcile.Result, error) {
-	// Add finalizer if missing.
+	// Add finalizer if missing — return early to let next reconcile handle the rest.
 	if !controllerutil.ContainsFinalizer(claim, finalizerName) {
 		controllerutil.AddFinalizer(claim, finalizerName)
 		if err := r.Update(ctx, claim); err != nil {
 			return reconcile.Result{}, err
 		}
-		// Re-fetch after update.
-		if err := r.Get(ctx, req.NamespacedName, claim); err != nil {
-			return reconcile.Result{}, err
-		}
+		return reconcile.Result{Requeue: true}, nil
 	}
 
-	// Set phase to Pending if not already.
+	// Set phase to Pending if not already — return early.
 	if claim.Status.Phase != "Pending" {
 		claim.Status.Phase = "Pending"
 		if err := r.Status().Update(ctx, claim); err != nil {
 			return reconcile.Result{}, err
 		}
+		return reconcile.Result{Requeue: true}, nil
 	}
 
 	// Look up the referenced workload.

@@ -36,16 +36,13 @@ func (r *PoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
-	// 2. Add finalizer if missing.
+	// 2. Add finalizer if missing — return early to let next reconcile handle the rest.
 	if !controllerutil.ContainsFinalizer(&pool, finalizerName) {
 		controllerutil.AddFinalizer(&pool, finalizerName)
 		if err := r.Update(ctx, &pool); err != nil {
 			return reconcile.Result{}, err
 		}
-		// Re-fetch after update to get the latest resourceVersion.
-		if err := r.Get(ctx, req.NamespacedName, &pool); err != nil {
-			return reconcile.Result{}, err
-		}
+		return reconcile.Result{Requeue: true}, nil
 	}
 
 	// 3. Handle deletion (deletionTimestamp set).
