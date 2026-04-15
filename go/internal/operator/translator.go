@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/zdavison/boilerhouse/go/internal/envoy"
+
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -32,6 +34,7 @@ type TranslateOpts struct {
 	TenantId     string // empty for pool pods
 	Namespace    string
 	PoolStatus   string // "warming", "ready", or "" for non-pool
+	ProxyConfig  *ProxyConfig // nil if no sidecar needed
 }
 
 // TranslateResult holds the Kubernetes resources produced by Translate.
@@ -40,7 +43,7 @@ type TranslateResult struct {
 	Service       *corev1.Service
 	NetworkPolicy *networkingv1.NetworkPolicy
 	PVC           *corev1.PersistentVolumeClaim
-	ConfigMap     *corev1.ConfigMap // for Envoy sidecar — Task 3.2, nil for now
+	ConfigMap     *corev1.ConfigMap // for Envoy sidecar proxy config
 }
 
 // Translate converts a BoilerhouseWorkloadSpec and metadata into Kubernetes
@@ -64,6 +67,13 @@ func Translate(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*Tran
 
 	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 && opts.TenantId != "" {
 		result.PVC = buildPVC(spec, opts, labels)
+	}
+
+	// Inject Envoy sidecar if ProxyConfig is provided.
+	if opts.ProxyConfig != nil {
+		configMapName := fmt.Sprintf("proxy-%s", opts.InstanceId)
+		InjectSidecar(result.Pod, configMapName)
+		result.ConfigMap = buildProxyConfigMap(opts, labels, configMapName)
 	}
 
 	return result, nil
@@ -394,4 +404,33 @@ func buildPVC(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels 
 
 func pvcName(opts TranslateOpts) string {
 	return fmt.Sprintf("overlay-%s-%s", opts.TenantId, opts.WorkloadName)
+}
+
+// buildProxyConfigMap creates a ConfigMap with the Envoy YAML config and CA cert
+// for the sidecar proxy.
+func buildProxyConfigMap(opts TranslateOpts, labels map[string]string, name string) *corev1.ConfigMap {
+	data := map[string]string{
+		"envoy.yaml": opts.ProxyConfig.EnvoyYAML,
+	}
+	if opts.ProxyConfig.CACert != nil {
+		data["ca.crt"] = string(opts.ProxyConfig.CACert)
+	}
+
+	// Add per-domain TLS certs if TLS material is available.
+	if opts.ProxyConfig.TLS != nil {
+		for _, dc := range opts.ProxyConfig.TLS.Certs {
+			safe := envoy.SafeDomain(dc.Domain)
+			data["certs/"+safe+".crt"] = string(dc.Cert)
+			data["certs/"+safe+".key"] = string(dc.Key)
+		}
+	}
+
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: opts.Namespace,
+			Labels:    labels,
+		},
+		Data: data,
+	}
 }

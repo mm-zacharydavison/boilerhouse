@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zdavison/boilerhouse/go/internal/envoy"
+
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -200,18 +202,38 @@ func (r *ClaimReconciler) coldBoot(ctx context.Context, claim *v1alpha1.Boilerho
 }
 
 // createTenantPod translates a workload spec and creates the Pod.
+// If the workload has network credentials, it resolves them, generates Envoy
+// config and TLS certs, creates a ConfigMap, and injects the sidecar.
 func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (*corev1.Pod, error) {
 	suffix := randomSuffix()
 	instanceId := fmt.Sprintf("%s-%s-%s", claim.Spec.WorkloadRef, claim.Spec.TenantId, suffix)
 
-	result, err := Translate(wl.Spec, TranslateOpts{
+	opts := TranslateOpts{
 		InstanceId:   instanceId,
 		WorkloadName: claim.Spec.WorkloadRef,
 		TenantId:     claim.Spec.TenantId,
 		Namespace:    claim.Namespace,
-	})
+	}
+
+	// Resolve credentials and build proxy config if workload has credentials.
+	if wl.Spec.Network != nil && len(wl.Spec.Network.Credentials) > 0 {
+		proxyConfig, err := r.buildProxyConfig(ctx, claim, wl)
+		if err != nil {
+			return nil, fmt.Errorf("building proxy config: %w", err)
+		}
+		opts.ProxyConfig = proxyConfig
+	}
+
+	result, err := Translate(wl.Spec, opts)
 	if err != nil {
 		return nil, fmt.Errorf("translating workload: %w", err)
+	}
+
+	// Create ConfigMap before Pod if sidecar is injected.
+	if result.ConfigMap != nil {
+		if err := r.Create(ctx, result.ConfigMap); err != nil {
+			return nil, fmt.Errorf("creating proxy configmap: %w", err)
+		}
 	}
 
 	if err := r.Create(ctx, result.Pod); err != nil {
@@ -219,6 +241,46 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 	}
 
 	return result.Pod, nil
+}
+
+// buildProxyConfig resolves credentials, generates Envoy YAML and TLS certs.
+func (r *ClaimReconciler) buildProxyConfig(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (*ProxyConfig, error) {
+	resolved, err := ResolveCredentials(ctx, r.Client, claim.Namespace, claim.Spec.TenantId, wl.Spec.Network.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("resolving credentials: %w", err)
+	}
+
+	// Collect domains for TLS.
+	var domains []string
+	for _, rc := range resolved {
+		domains = append(domains, rc.Domain)
+	}
+
+	// Generate TLS material.
+	tlsMaterial, err := envoy.GenerateTLS(domains)
+	if err != nil {
+		return nil, fmt.Errorf("generating TLS material: %w", err)
+	}
+
+	// Generate Envoy config YAML.
+	envoyCfg := envoy.EnvoyConfig{
+		Credentials: resolved,
+		TLS:         tlsMaterial,
+	}
+	if wl.Spec.Network.Allowlist != nil {
+		envoyCfg.Allowlist = wl.Spec.Network.Allowlist
+	}
+
+	envoyYAML, err := envoy.GenerateEnvoyYAML(envoyCfg)
+	if err != nil {
+		return nil, fmt.Errorf("generating envoy config: %w", err)
+	}
+
+	return &ProxyConfig{
+		EnvoyYAML: envoyYAML,
+		CACert:    tlsMaterial.CACert,
+		TLS:       tlsMaterial,
+	}, nil
 }
 
 // activateClaim sets the claim to Active with the given Pod info and source.
