@@ -18,8 +18,7 @@ import {
 import type { DrizzleDb } from "@boilerhouse/db";
 import { instances, tenants, workloads, claims } from "@boilerhouse/db";
 import type { Logger } from "@boilerhouse/o11y";
-import { applyClaimTransition } from "./transitions";
-import { instanceHandleFrom } from "./transitions";
+import { applyClaimTransition, forceInstanceStatus, instanceHandleFrom } from "./transitions";
 import type { InstanceManager } from "./instance-manager";
 import type { TenantDataStore } from "./tenant-data";
 import type { IdleMonitor } from "./idle-monitor";
@@ -101,7 +100,10 @@ export class TenantManager {
 			? (Date.now() - instanceRow.claimedAt.getTime()) / 1000
 			: undefined;
 
-		applyClaimTransition(this.db, claim.claimId, claim.status as ClaimStatus, "release");
+		// Skip transition if already releasing (retry after a failed release attempt)
+		if (claim.status !== "releasing") {
+			applyClaimTransition(this.db, claim.claimId, claim.status as ClaimStatus, "release");
+		}
 
 		if (this.idleMonitor) {
 			this.idleMonitor.unwatch(instanceId);
@@ -111,28 +113,44 @@ export class TenantManager {
 			this.watchDirsPoller.stopPolling(instanceId);
 		}
 
-		// Extract overlay data from the running container, then hibernate or destroy.
-		// If overlay extraction fails (e.g. S3 error), still destroy the instance
-		// and release the claim — the previous snapshot is preserved for the tenant.
-		const handle: InstanceHandle = { instanceId, running: true };
-		let hasOverlay = false;
-		let releaseError: Error | undefined;
-		try {
-			hasOverlay = await this.tenantDataStore.extractOverlay(handle, tenantId, workloadId);
-		} catch (err) {
-			releaseError = err instanceof Error ? err : new Error(String(err));
-			this.log?.error({ instanceId, tenantId, err }, "Overlay extraction failed during release — destroying instance without new snapshot");
-			// Set statusDetail on the instance so the error is visible in the API/UI
-			this.db.update(instances)
-				.set({ statusDetail: `Release failed: ${releaseError.message}` })
-				.where(eq(instances.instanceId, instanceId))
-				.run();
-		}
+		// Check if instance still needs cleanup (might already be terminal on retry)
+		const currentInstance = this.db.select({ status: instances.status }).from(instances)
+			.where(eq(instances.instanceId, instanceId)).get();
+		const instanceStatus = currentInstance?.status;
+		const isTerminal = !instanceStatus || instanceStatus === "destroyed" || instanceStatus === "hibernated";
+		// "destroying" means a previous attempt sent the pod DELETE — just wait for it to finish
+		const isDestroying = instanceStatus === "destroying" || instanceStatus === "hibernating";
 
-		if (hasOverlay && !releaseError) {
-			await this.instanceManager.hibernate(instanceId);
-		} else {
-			await this.instanceManager.destroy(instanceId);
+		if (!isTerminal) {
+			if (isDestroying) {
+				// Previous attempt already started destruction — force to terminal state
+				// so the claim row can be cleaned up (pod DELETE was already sent)
+				forceInstanceStatus(this.db, instanceId, "destroyed");
+			} else {
+				// Extract overlay data from the running container, then hibernate or destroy.
+				// If overlay extraction fails (e.g. S3 error), still destroy the instance
+				// and release the claim — the previous snapshot is preserved for the tenant.
+				const handle: InstanceHandle = { instanceId, running: true };
+				let hasOverlay = false;
+				let releaseError: Error | undefined;
+				try {
+					hasOverlay = await this.tenantDataStore.extractOverlay(handle, tenantId, workloadId);
+				} catch (err) {
+					releaseError = err instanceof Error ? err : new Error(String(err));
+					this.log?.error({ instanceId, tenantId, err }, "Overlay extraction failed during release — destroying instance without new snapshot");
+					// Set statusDetail on the instance so the error is visible in the API/UI
+					this.db.update(instances)
+						.set({ statusDetail: `Release failed: ${releaseError.message}` })
+						.where(eq(instances.instanceId, instanceId))
+						.run();
+				}
+
+				if (hasOverlay && !releaseError) {
+					await this.instanceManager.hibernate(instanceId);
+				} else {
+					await this.instanceManager.destroy(instanceId);
+				}
+			}
 		}
 		if (this.poolManager) {
 			this.poolManager.replenish(claim.workloadId).catch(() => {});

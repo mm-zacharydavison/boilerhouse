@@ -83,7 +83,7 @@ export async function reconcilePool(
     const readyCount = deps.poolManager.getPoolDepth(workloadId);
     const warmingCount = countWarming();
     if (readyCount + warmingCount < targetSize) {
-      await deps.poolManager.replenish(workloadId);
+      await deps.poolManager.replenish(workloadId, targetSize);
     }
 
     return {

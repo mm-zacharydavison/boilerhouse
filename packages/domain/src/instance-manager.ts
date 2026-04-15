@@ -81,14 +81,14 @@ export class InstanceManager {
 		try {
 			const handle = await this.runtime.create(workload, instanceId, runtimeOptions);
 
-			// Inject overlay data before starting so the process sees it immediately
+			await this.runtime.start(handle);
+
+			// Inject overlay data after starting (kubectl exec requires a running container)
 			if (opts?.overlayArchivePath && this.runtime.injectArchive) {
 				const { readFileSync } = await import("node:fs");
 				const data = readFileSync(opts.overlayArchivePath);
 				await this.runtime.injectArchive(instanceId, "/", data);
 			}
-
-			await this.runtime.start(handle);
 
 			applyInstanceTransition(this.db, instanceId, "starting", "started");
 

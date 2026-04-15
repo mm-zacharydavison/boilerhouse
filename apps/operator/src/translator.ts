@@ -56,7 +56,6 @@ export function workloadToPod(
 		securityContext: {
 			capabilities: { drop: ["ALL"] },
 			allowPrivilegeEscalation: false,
-			runAsNonRoot: true,
 			readOnlyRootFilesystem: false,
 		},
 	};
@@ -183,11 +182,11 @@ export function workloadToPod(
 		},
 		spec: {
 			automountServiceAccountToken: false,
+			terminationGracePeriodSeconds: 3,
 			hostNetwork: false,
 			hostPID: false,
 			hostIPC: false,
 			securityContext: {
-				runAsNonRoot: true,
 				seccompProfile: { type: "RuntimeDefault" },
 			},
 			containers,

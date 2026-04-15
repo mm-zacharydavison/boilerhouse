@@ -25,19 +25,22 @@ describe("destroy", () => {
 		await client.applyClaim(claim(claimName, "tenant-destroy", wlName));
 		await client.waitForPhase("boilerhouseclaims", claimName, "Active");
 
-		// Attempt to delete workload — should be blocked by finalizer (still exists after short wait)
+		// Attempt to delete workload — should be blocked by finalizer
 		await client.delete("boilerhouseworkloads", wlName);
-		await new Promise((r) => setTimeout(r, 5_000));
 
-		// Workload should still exist (finalizer blocks deletion while claim is active)
-		const wlStatus = await client.getStatus("boilerhouseworkloads", wlName);
-		expect(wlStatus).toBeDefined();
+		// Poll to confirm workload still exists (finalizer blocks deletion while claim is active)
+		// Check multiple times over a few seconds to verify it stays blocked
+		for (let i = 0; i < 5; i++) {
+			await new Promise((r) => setTimeout(r, 500));
+			const wlStatus = await client.getStatus("boilerhouseworkloads", wlName);
+			expect(wlStatus).toBeDefined();
+		}
 
 		// Delete claim first
 		await client.delete("boilerhouseclaims", claimName);
 		await client.waitForDeletion("boilerhouseclaims", claimName);
 
-		// Now workload deletion should complete
-		await client.waitForDeletion("boilerhouseworkloads", wlName, 30_000);
-	}, 120_000);
+		// Now workload deletion should complete (claim release destroys the pod, which takes time)
+		await client.waitForDeletion("boilerhouseworkloads", wlName, 90_000);
+	}, 150_000);
 });

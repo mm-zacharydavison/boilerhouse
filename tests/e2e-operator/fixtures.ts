@@ -17,20 +17,20 @@ export function httpserverWorkload(name: string): BoilerhouseWorkload {
 		metadata: { name, namespace: NS },
 		spec: {
 			version: "1",
-			image: { ref: "python:3.12-slim" },
-			resources: { vcpus: 1, memoryMb: 256, diskGb: 1 },
+			image: { ref: "busybox:1.36" },
+			resources: { vcpus: 1, memoryMb: 128, diskGb: 1 },
 			network: {
 				access: "unrestricted",
 				expose: [{ guest: 8080 }],
 			},
 			health: {
-				intervalSeconds: 5,
+				intervalSeconds: 1,
 				unhealthyThreshold: 3,
 				httpGet: { path: "/", port: 8080 },
 			},
 			entrypoint: {
-				cmd: "python",
-				args: ["-m", "http.server", "8080"],
+				cmd: "sh",
+				args: ["-c", "mkdir -p /www && echo 'OK' > /www/index.html && busybox httpd -f -p 8080 -h /www"],
 			},
 		},
 	};

@@ -13,7 +13,10 @@
     "typecheck": "bun run --filter '*' typecheck",
     "build": "bun build --compile apps/cli/src/main.ts --outfile dist/boilerhouse && bun build --compile apps/trigger-gateway/src/server.ts --outfile dist/trigger-gateway && bun build --compile apps/dashboard/src/server.ts --outfile dist/dashboard",
     "test": "bun test packages/ apps/ workloads/",
-    "dev": "bun run --filter '@boilerhouse/api' dev & bun run --filter '@boilerhouse/dashboard' dev"
+    "dev": "bun run --filter '@boilerhouse/api' dev & bun run --filter '@boilerhouse/dashboard' dev",
+    "docs:dev": "bun run --filter '@boilerhouse/docs' dev",
+    "docs:build": "bun run --filter '@boilerhouse/docs' build",
+    "docs:preview": "bun run --filter '@boilerhouse/docs' preview"
   },
   "devDependencies": {
     "bun-types": "^1.3.9",

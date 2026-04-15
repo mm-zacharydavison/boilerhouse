@@ -65,7 +65,7 @@ spec:
                       type: integer
                 source:
                   type: string
-                  enum: [pool, cold]
+                  enum: [existing, cold, "cold+data", pool, "pool+data"]
                 claimedAt:
                   type: string
                   format: date-time

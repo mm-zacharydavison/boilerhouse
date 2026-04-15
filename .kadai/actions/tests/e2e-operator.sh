@@ -18,8 +18,8 @@ else
   echo "✓ Minikube cluster '$PROFILE' is running"
 
   # Ensure CRDs and RBAC are applied even if cluster was already running
-  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/crds/" --quiet
-  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/deploy/rbac.yaml" --quiet
+  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/crds/" > /dev/null
+  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/deploy/rbac.yaml" > /dev/null
   echo "✓ CRDs and RBAC applied"
 fi
 

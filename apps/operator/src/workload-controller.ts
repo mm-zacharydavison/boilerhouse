@@ -2,7 +2,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { validateWorkload, generateWorkloadId } from "@boilerhouse/core";
 import type { WorkloadId } from "@boilerhouse/core";
 import type { DrizzleDb } from "@boilerhouse/db";
-import { workloads, claims } from "@boilerhouse/db";
+import { workloads, claims, instances, tenants, snapshots } from "@boilerhouse/db";
 import type {
   BoilerhouseWorkload,
   BoilerhouseWorkloadStatus,
@@ -33,25 +33,34 @@ export async function reconcileWorkload(
         .get();
 
       if (existing) {
-        const activeClaims = deps.db
+        // Block deletion if any claims reference this workload (active, creating, or releasing)
+        const linkedClaims = deps.db
           .select()
           .from(claims)
-          .where(
-            and(
-              eq(claims.workloadId, existing.workloadId),
-              inArray(claims.status, ["active", "creating"]),
-            ),
-          )
+          .where(eq(claims.workloadId, existing.workloadId))
           .all();
 
-        if (activeClaims.length > 0) {
+        if (linkedClaims.length > 0) {
           return {
             phase: "Error",
-            detail: `Cannot delete: ${activeClaims.length} active claim(s) exist`,
+            detail: `Cannot delete: ${linkedClaims.length} claim(s) still reference this workload`,
             observedGeneration: crd.metadata.generation,
           };
         }
 
+        // Clean up all rows referencing this workload before removing it (FK constraints)
+        deps.db
+          .delete(instances)
+          .where(eq(instances.workloadId, existing.workloadId))
+          .run();
+        deps.db
+          .delete(snapshots)
+          .where(eq(snapshots.workloadId, existing.workloadId))
+          .run();
+        deps.db
+          .delete(tenants)
+          .where(eq(tenants.workloadId, existing.workloadId))
+          .run();
         deps.db
           .delete(workloads)
           .where(eq(workloads.workloadId, existing.workloadId))

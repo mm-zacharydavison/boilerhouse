@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { getTestClient, uniqueName, CrdTracker, type KubeTestClient } from "./helpers";
+import { getTestClient, uniqueName, CrdTracker, POLL_INITIAL_MS, POLL_MAX_MS, POLL_BACKOFF, type KubeTestClient } from "./helpers";
 import { brokenWorkload, httpserverWorkload, claim } from "./fixtures";
 
 describe("error-recovery", () => {
@@ -14,25 +14,32 @@ describe("error-recovery", () => {
 		await tracker.cleanup(client);
 	});
 
-	test("broken workload enters Error phase with detail; valid workload still works alongside it", async () => {
-		// Create broken workload
+	test("broken workload enters Error phase when claimed; valid workload still works alongside it", async () => {
+		// Create broken workload — spec is valid so it reconciles to Ready
 		const brokenName = uniqueName("broken");
 		tracker.track("boilerhouseworkloads", brokenName);
 		await client.applyWorkload(brokenWorkload(brokenName));
+		await client.waitForPhase("boilerhouseworkloads", brokenName, "Ready");
 
-		// Wait for Error phase — waitForPhase throws on Error, so poll manually
-		const deadline = Date.now() + 60_000;
-		let brokenStatus: Record<string, unknown> | undefined;
+		// Claiming the broken workload should fail (bad image can't start a pod)
+		const brokenClaimName = uniqueName("claim");
+		tracker.track("boilerhouseclaims", brokenClaimName);
+		await client.applyClaim(claim(brokenClaimName, "tenant-err-broken", brokenName));
+
+		const deadline = Date.now() + 90_000;
+		let brokenClaimStatus: Record<string, unknown> | undefined;
+		let interval = POLL_INITIAL_MS;
 		while (Date.now() < deadline) {
-			brokenStatus = await client.getStatus("boilerhouseworkloads", brokenName);
-			if (brokenStatus?.phase === "Error") break;
-			await new Promise((r) => setTimeout(r, 1_000));
+			brokenClaimStatus = await client.getStatus("boilerhouseclaims", brokenClaimName);
+			if (brokenClaimStatus?.phase === "Error") break;
+			await new Promise((r) => setTimeout(r, interval));
+			interval = Math.min(interval * POLL_BACKOFF, POLL_MAX_MS);
 		}
 
-		expect(brokenStatus?.phase).toBe("Error");
-		expect(brokenStatus?.detail).toBeDefined();
-		expect(typeof brokenStatus?.detail).toBe("string");
-		expect((brokenStatus!.detail as string).length).toBeGreaterThan(0);
+		expect(brokenClaimStatus?.phase).toBe("Error");
+		expect(brokenClaimStatus?.detail).toBeDefined();
+		expect(typeof brokenClaimStatus?.detail).toBe("string");
+		expect((brokenClaimStatus!.detail as string).length).toBeGreaterThan(0);
 
 		// Valid workload should still work alongside the broken one
 		const validName = uniqueName("valid");

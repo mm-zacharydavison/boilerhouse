@@ -49,6 +49,8 @@ export interface OperatorConfig {
   apiUrl: string;
   token: string;
   caCert?: string;
+  context?: string;
+  minikubeProfile?: string;
   storagePath: string;
   dbPath: string;
 }
@@ -59,6 +61,8 @@ export function configFromEnv(): OperatorConfig {
     apiUrl: process.env.K8S_API_URL ?? "https://kubernetes.default.svc",
     token: process.env.K8S_TOKEN ?? "",
     caCert: process.env.K8S_CA_CERT,
+    context: process.env.K8S_CONTEXT,
+    minikubeProfile: process.env.K8S_MINIKUBE_PROFILE,
     storagePath: process.env.STORAGE_PATH ?? "/data/storage",
     dbPath: process.env.DB_PATH ?? "/data/boilerhouse.db",
   };
@@ -101,6 +105,8 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
         token: config.token,
         caCert: config.caCert,
         namespace: config.namespace,
+        context: config.context,
+        minikubeProfile: config.minikubeProfile,
       })
     : new KubernetesRuntime({
         auth: "in-cluster",
@@ -139,13 +145,28 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
     `${API_GROUP}/${API_VERSION}/boilerhousetriggers`,
   );
 
-  // Idle handler — release the claim and patch the CR status
-  // Registered after claimPatcher and basePath are available.
+  // Track idle-released instanceIds so the claim controller can detect them.
+  const idleReleasedInstances = new Set<string>();
+
+  // Helper: list CRDs using the same TLS config as KubeStatusPatcher
+  const kubeList = async <T>(resourcePath: string): Promise<{ items: T[] }> => {
+    const url = `${config.apiUrl}/apis/${API_GROUP}/${API_VERSION}/namespaces/${config.namespace}/${resourcePath}`;
+    const tlsOpts = config.caCert
+      ? { rejectUnauthorized: true, ca: config.caCert }
+      : { rejectUnauthorized: false };
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.token}`, Accept: "application/json" },
+      tls: tlsOpts,
+    } as RequestInit);
+    if (!res.ok) throw new Error(`List ${resourcePath}: ${res.status}`);
+    return res.json() as Promise<{ items: T[] }>;
+  };
+
+  // Idle handler — release the claim, then nudge the claim controller to patch status.
   idleMonitor.onIdle(async (instanceId, action) => {
     log.info({ instanceId, action }, "idle timeout fired");
 
     try {
-      // Find the claim that owns this instance
       const claimRow = db
         .select()
         .from(claims)
@@ -160,10 +181,12 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
       const tenantId = claimRow.tenantId as TenantId;
       const workloadId = claimRow.workloadId as WorkloadId;
 
-      // Release via TenantManager
+      // Mark as idle-released BEFORE release (which deletes the DB row)
+      idleReleasedInstances.add(instanceId);
       await tenantManager.release(tenantId, workloadId);
 
-      // Look up workload name to find matching CR
+      // Nudge the claim controller by annotating the K8s claim CR.
+      // This triggers a MODIFIED event → claim controller sees isIdleReleased → patches "Released".
       const workloadRow = db
         .select()
         .from(workloadsTable)
@@ -171,27 +194,20 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
         .get();
 
       if (workloadRow) {
-        // List BoilerhouseClaims to find the matching CR
-        const listUrl = `${config.apiUrl}${basePath}/namespaces/${config.namespace}/boilerhouseclaims`;
-        const resp = await fetch(listUrl, {
-          headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
-        });
-
-        if (resp.ok) {
-          const list = (await resp.json()) as { items: BoilerhouseClaim[] };
+        try {
+          const list = await kubeList<BoilerhouseClaim>("boilerhouseclaims");
           const matchingCr = list.items.find(
-            (cr) =>
-              cr.spec.tenantId === tenantId &&
-              cr.spec.workloadRef === workloadRow.name,
+            (cr) => cr.spec.tenantId === tenantId && cr.spec.workloadRef === workloadRow.name,
           );
-
           if (matchingCr) {
-            await claimPatcher.patchStatus(
+            await claimPatcher.patchMetadata(
               matchingCr.metadata.namespace ?? config.namespace,
               matchingCr.metadata.name,
-              { phase: "Released" },
+              { annotations: { "boilerhouse.dev/idle-released": new Date().toISOString() } } as any,
             );
           }
+        } catch (err) {
+          log.warn({ instanceId, err }, "failed to nudge claim after idle release");
         }
       }
     } catch (err) {
@@ -202,6 +218,7 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
   // Controllers
   const workloadController = new Controller<BoilerhouseWorkload>({
     name: "workload",
+    maxRetries: 20,
     reconcile: async (crd) => {
       const ns = crd.metadata.namespace ?? config.namespace;
       const name = crd.metadata.name;
@@ -211,14 +228,35 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
         await workloadPatcher.patchMetadata(ns, name, { finalizers: withFinalizer.finalizers });
       }
       const status = await reconcileWorkload(crd, { db });
-      // On deletion path: only patch status if there's an error blocking deletion
-      if (!crd.metadata.deletionTimestamp || status.phase === "Error") {
-        await workloadPatcher.patchStatus(ns, name, status);
-      }
-      // Remove finalizer after successful deletion handling
-      if (crd.metadata.deletionTimestamp && status.phase !== "Error") {
+      if (crd.metadata.deletionTimestamp) {
+        if (status.phase === "Error") {
+          // Only patch Error status once — repeated patches generate MODIFIED watch
+          // events that reset backoff, creating a tight loop that starves other controllers
+          if (crd.status?.phase !== "Error") {
+            await workloadPatcher.patchStatus(ns, name, status);
+          }
+          throw new Error(status.detail ?? "deletion blocked");
+        }
+        // Successful deletion handling — remove finalizer
         const withoutFinalizer = removeFinalizer(crd.metadata, FINALIZER);
         await workloadPatcher.patchMetadata(ns, name, { finalizers: withoutFinalizer.finalizers });
+      } else {
+        await workloadPatcher.patchStatus(ns, name, status);
+      }
+      // Nudge pools that reference this workload so they re-reconcile after workload changes
+      if (!crd.metadata.deletionTimestamp && status.phase === "Ready") {
+        try {
+          const list = await kubeList<BoilerhousePool>("boilerhousepools");
+          for (const p of list.items) {
+            if (p.spec.workloadRef === name) {
+              await poolPatcher.patchMetadata(ns, p.metadata.name, {
+                annotations: { "boilerhouse.dev/workload-updated": new Date().toISOString() },
+              } as any).catch(() => {});
+            }
+          }
+        } catch {
+          // best-effort: pool re-reconciliation is not critical
+        }
       }
     },
   });
@@ -245,6 +283,7 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
 
   const claimController = new Controller<BoilerhouseClaim>({
     name: "claim",
+    maxRetries: 20,
     reconcile: async (crd) => {
       const ns = crd.metadata.namespace ?? config.namespace;
       const name = crd.metadata.name;
@@ -258,12 +297,33 @@ export async function startOperator(config: OperatorConfig): Promise<void> {
       if (!currentPhase) {
         await claimPatcher.patchStatus(ns, name, { phase: "Pending" });
       }
-      const status = await reconcileClaim(crd, { db, tenantManager });
+      const status = await reconcileClaim(crd, {
+        db,
+        tenantManager,
+        isIdleReleased: (id) => idleReleasedInstances.delete(id),
+      });
       await claimPatcher.patchStatus(ns, name, status);
-      // Remove finalizer after release
+      // Deletion failed — throw to trigger controller retry with backoff
+      if (crd.metadata.deletionTimestamp && status.phase === "Error") {
+        throw new Error(status.detail ?? "claim release failed");
+      }
+      // Remove finalizer after successful release
       if (crd.metadata.deletionTimestamp) {
         const withoutFinalizer = removeFinalizer(crd.metadata, FINALIZER);
         await claimPatcher.patchMetadata(ns, name, { finalizers: withoutFinalizer.finalizers });
+        // Re-trigger workload reconciliation — the workload may be pending deletion
+        // and was blocked by this claim. Fetch the real CRD so the controller
+        // sees deletionTimestamp and can remove the finalizer.
+        try {
+          const wlList = await kubeList<BoilerhouseWorkload>("boilerhouseworkloads");
+          const wl = wlList.items.find((w) => w.metadata.name === crd.spec.workloadRef);
+          if (wl) {
+            log.info({ workload: crd.spec.workloadRef, hasDeletionTimestamp: !!wl.metadata.deletionTimestamp }, "re-enqueuing workload after claim release");
+            workloadController.enqueue(wl, true);
+          }
+        } catch (err) {
+          log.error({ workload: crd.spec.workloadRef, err }, "failed to re-enqueue workload after claim release");
+        }
       }
     },
   });
