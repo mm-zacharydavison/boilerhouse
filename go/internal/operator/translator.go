@@ -1,0 +1,397 @@
+package operator
+
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sort"
+
+	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+)
+
+const (
+	LabelManaged    = "boilerhouse.dev/managed"
+	LabelWorkload   = "boilerhouse.dev/workload"
+	LabelInstance   = "boilerhouse.dev/instance"
+	LabelTenant     = "boilerhouse.dev/tenant"
+	LabelPoolStatus = "boilerhouse.dev/pool-status"
+
+	linkLocalCIDR = "169.254.0.0/16"
+)
+
+// TranslateOpts holds the metadata needed to translate a workload spec into
+// Kubernetes resources.
+type TranslateOpts struct {
+	InstanceId   string
+	WorkloadName string
+	TenantId     string // empty for pool pods
+	Namespace    string
+	PoolStatus   string // "warming", "ready", or "" for non-pool
+}
+
+// TranslateResult holds the Kubernetes resources produced by Translate.
+type TranslateResult struct {
+	Pod           *corev1.Pod
+	Service       *corev1.Service
+	NetworkPolicy *networkingv1.NetworkPolicy
+	PVC           *corev1.PersistentVolumeClaim
+	ConfigMap     *corev1.ConfigMap // for Envoy sidecar — Task 3.2, nil for now
+}
+
+// Translate converts a BoilerhouseWorkloadSpec and metadata into Kubernetes
+// resource specs: Pod, optional Service, NetworkPolicy, and optional PVC.
+func Translate(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*TranslateResult, error) {
+	result := &TranslateResult{}
+
+	labels := buildLabels(opts)
+
+	pod, err := buildPod(spec, opts, labels)
+	if err != nil {
+		return nil, fmt.Errorf("building pod: %w", err)
+	}
+	result.Pod = pod
+
+	if spec.Network != nil && len(spec.Network.Expose) > 0 {
+		result.Service = buildService(spec, opts, labels)
+	}
+
+	result.NetworkPolicy = buildNetworkPolicy(spec, opts, labels)
+
+	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 && opts.TenantId != "" {
+		result.PVC = buildPVC(spec, opts, labels)
+	}
+
+	return result, nil
+}
+
+func buildLabels(opts TranslateOpts) map[string]string {
+	labels := map[string]string{
+		LabelManaged:  "true",
+		LabelWorkload: opts.WorkloadName,
+		LabelInstance: opts.InstanceId,
+	}
+	if opts.TenantId != "" {
+		labels[LabelTenant] = opts.TenantId
+	}
+	if opts.PoolStatus != "" {
+		labels[LabelPoolStatus] = opts.PoolStatus
+	}
+	return labels
+}
+
+func buildPod(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) (*corev1.Pod, error) {
+	falseVal := false
+	terminationGrace := int64(3)
+
+	container, err := buildContainer(spec, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.InstanceId,
+			Namespace: opts.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PodSpec{
+			Containers:                    []corev1.Container{*container},
+			RestartPolicy:                 corev1.RestartPolicyNever,
+			AutomountServiceAccountToken:  &falseVal,
+			TerminationGracePeriodSeconds: &terminationGrace,
+			SecurityContext: &corev1.PodSecurityContext{
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
+		},
+	}
+
+	// Overlay volume mounts (only if tenant is set)
+	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 && opts.TenantId != "" {
+		pvcName := pvcName(opts)
+		volumeName := "overlay"
+
+		pod.Spec.Volumes = []corev1.Volume{
+			{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvcName,
+					},
+				},
+			},
+		}
+
+		var mounts []corev1.VolumeMount
+		for _, dir := range spec.Filesystem.OverlayDirs {
+			subPath := filepath.Base(dir)
+			mounts = append(mounts, corev1.VolumeMount{
+				Name:      volumeName,
+				MountPath: dir,
+				SubPath:   subPath,
+			})
+		}
+		pod.Spec.Containers[0].VolumeMounts = mounts
+	}
+
+	return pod, nil
+}
+
+func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*corev1.Container, error) {
+	falseVal := false
+
+	container := &corev1.Container{
+		Name:  "main",
+		Image: spec.Image.Ref,
+		SecurityContext: &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			AllowPrivilegeEscalation: &falseVal,
+		},
+	}
+
+	// Resources
+	cpuMillis := spec.Resources.VCPUs * 1000
+	memMi := spec.Resources.MemoryMb
+
+	cpuReqMillis := spec.Resources.VCPUs * 250
+	if cpuReqMillis < 100 {
+		cpuReqMillis = 100
+	}
+	memReqMi := memMi
+	if memReqMi > 128 {
+		memReqMi = 128
+	}
+
+	container.Resources = corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", cpuMillis)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memMi)),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", cpuReqMillis)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memReqMi)),
+		},
+	}
+
+	// Entrypoint
+	if spec.Entrypoint != nil {
+		if spec.Entrypoint.Cmd != "" {
+			container.Command = []string{spec.Entrypoint.Cmd}
+		}
+		if len(spec.Entrypoint.Args) > 0 {
+			container.Args = spec.Entrypoint.Args
+		}
+		if spec.Entrypoint.Workdir != "" {
+			container.WorkingDir = spec.Entrypoint.Workdir
+		}
+		if spec.Entrypoint.Env != nil && spec.Entrypoint.Env.Raw != nil {
+			envVars, err := parseEnvVars(spec.Entrypoint.Env.Raw)
+			if err != nil {
+				return nil, fmt.Errorf("parsing env vars: %w", err)
+			}
+			container.Env = envVars
+		}
+	}
+
+	// Exposed ports
+	if spec.Network != nil {
+		for _, p := range spec.Network.Expose {
+			container.Ports = append(container.Ports, corev1.ContainerPort{
+				ContainerPort: int32(p.Guest),
+				Protocol:      corev1.ProtocolTCP,
+			})
+		}
+	}
+
+	// Health probe
+	if spec.Health != nil {
+		probe := &corev1.Probe{
+			PeriodSeconds:  int32(spec.Health.IntervalSeconds),
+			FailureThreshold: int32(spec.Health.UnhealthyThreshold),
+		}
+		if spec.Health.HTTPGet != nil {
+			probe.ProbeHandler = corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: spec.Health.HTTPGet.Path,
+					Port: intstr.FromInt32(int32(spec.Health.HTTPGet.Port)),
+				},
+			}
+		} else if spec.Health.Exec != nil {
+			probe.ProbeHandler = corev1.ProbeHandler{
+				Exec: &corev1.ExecAction{
+					Command: spec.Health.Exec.Command,
+				},
+			}
+		}
+		container.ReadinessProbe = probe
+	}
+
+	return container, nil
+}
+
+// parseEnvVars decodes a JSON object of env vars (map[string]string) into
+// a sorted slice of corev1.EnvVar.
+func parseEnvVars(raw []byte) ([]corev1.EnvVar, error) {
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	envVars := make([]corev1.EnvVar, 0, len(m))
+	for _, k := range keys {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  k,
+			Value: m[k],
+		})
+	}
+	return envVars, nil
+}
+
+func buildService(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) *corev1.Service {
+	var ports []corev1.ServicePort
+	for i, p := range spec.Network.Expose {
+		sp := corev1.ServicePort{
+			Port:       int32(p.Guest),
+			TargetPort: intstr.FromInt32(int32(p.Guest)),
+			Protocol:   corev1.ProtocolTCP,
+		}
+		if len(spec.Network.Expose) > 1 {
+			sp.Name = fmt.Sprintf("port-%d", i)
+		}
+		ports = append(ports, sp)
+	}
+
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.InstanceId,
+			Namespace: opts.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				LabelInstance: opts.InstanceId,
+			},
+			Ports: ports,
+			Type:  corev1.ServiceTypeClusterIP,
+		},
+	}
+}
+
+func buildNetworkPolicy(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) *networkingv1.NetworkPolicy {
+	access := "none"
+	if spec.Network != nil && spec.Network.Access != "" {
+		access = spec.Network.Access
+	}
+
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      opts.InstanceId,
+			Namespace: opts.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					LabelInstance: opts.InstanceId,
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+		},
+	}
+
+	switch access {
+	case "unrestricted":
+		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			dnsEgressRule(),
+			{
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR:   "0.0.0.0/0",
+							Except: []string{linkLocalCIDR},
+						},
+					},
+				},
+			},
+		}
+	case "restricted":
+		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			dnsEgressRule(),
+			{
+				Ports: []networkingv1.NetworkPolicyPort{
+					networkPolicyPort(corev1.ProtocolTCP, 443),
+				},
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR:   "0.0.0.0/0",
+							Except: []string{linkLocalCIDR},
+						},
+					},
+				},
+			},
+		}
+	default: // "none" — deny all egress
+		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{}
+	}
+
+	return np
+}
+
+func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
+	return networkingv1.NetworkPolicyEgressRule{
+		Ports: []networkingv1.NetworkPolicyPort{
+			networkPolicyPort(corev1.ProtocolUDP, 53),
+			networkPolicyPort(corev1.ProtocolTCP, 53),
+		},
+		To: []networkingv1.NetworkPolicyPeer{
+			{NamespaceSelector: &metav1.LabelSelector{}},
+		},
+	}
+}
+
+func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkPolicyPort {
+	p := intstr.FromInt32(int32(port))
+	proto := protocol
+	return networkingv1.NetworkPolicyPort{
+		Protocol: &proto,
+		Port:     &p,
+	}
+}
+
+func buildPVC(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName(opts),
+			Namespace: opts.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", spec.Resources.DiskGb)),
+				},
+			},
+		},
+	}
+}
+
+func pvcName(opts TranslateOpts) string {
+	return fmt.Sprintf("overlay-%s-%s", opts.TenantId, opts.WorkloadName)
+}
