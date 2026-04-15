@@ -1,0 +1,249 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: boilerhouseworkloads.boilerhouse.dev
+spec:
+  group: boilerhouse.dev
+  names:
+    kind: BoilerhouseWorkload
+    listKind: BoilerhouseWorkloadList
+    plural: boilerhouseworkloads
+    shortNames:
+    - bhw
+    singular: boilerhouseworkload
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .spec.image.ref
+      name: Image
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: BoilerhouseWorkload is the Schema for the boilerhouseworkloads
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: BoilerhouseWorkloadSpec defines the desired state of a BoilerhouseWorkload.
+            properties:
+              entrypoint:
+                description: Entrypoint defines the workload entrypoint.
+                properties:
+                  args:
+                    description: Args is the list of arguments.
+                    items:
+                      type: string
+                    type: array
+                  cmd:
+                    description: Cmd is the command to run.
+                    type: string
+                  env:
+                    description: Env is a free-form map of environment variables.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  workdir:
+                    description: Workdir is the working directory.
+                    type: string
+                type: object
+              filesystem:
+                description: Filesystem defines filesystem configuration.
+                properties:
+                  encryptOverlays:
+                    description: EncryptOverlays enables encryption of overlay directories.
+                    type: boolean
+                  overlayDirs:
+                    description: OverlayDirs lists directories to overlay.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              health:
+                description: Health defines health check configuration.
+                properties:
+                  exec:
+                    description: Exec defines a command-based health check.
+                    properties:
+                      command:
+                        description: Command is the command to execute.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  httpGet:
+                    description: HTTPGet defines an HTTP health check.
+                    properties:
+                      path:
+                        description: Path is the HTTP path to check.
+                        type: string
+                      port:
+                        description: Port is the port to check.
+                        type: integer
+                    type: object
+                  intervalSeconds:
+                    description: IntervalSeconds is the interval between health checks.
+                    type: integer
+                  unhealthyThreshold:
+                    description: UnhealthyThreshold is the number of failures before
+                      marking unhealthy.
+                    type: integer
+                type: object
+              idle:
+                description: Idle defines idle behavior.
+                properties:
+                  action:
+                    description: Action is the action to take when idle.
+                    enum:
+                    - hibernate
+                    - destroy
+                    type: string
+                  timeoutSeconds:
+                    description: TimeoutSeconds is the idle timeout in seconds.
+                    type: integer
+                  watchDirs:
+                    description: WatchDirs lists directories to watch for activity.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              image:
+                description: Image defines the container image.
+                properties:
+                  ref:
+                    description: Ref is the container image reference.
+                    type: string
+                required:
+                - ref
+                type: object
+              network:
+                description: Network defines network configuration.
+                properties:
+                  access:
+                    description: Access controls the network access level.
+                    enum:
+                    - none
+                    - restricted
+                    - unrestricted
+                    type: string
+                  allowlist:
+                    description: Allowlist defines allowed network destinations.
+                    items:
+                      type: string
+                    type: array
+                  credentials:
+                    description: Credentials defines per-domain credentials.
+                    items:
+                      description: NetworkCredential defines credentials for a domain.
+                      properties:
+                        domain:
+                          description: Domain is the domain to apply credentials to.
+                          type: string
+                        headers:
+                          description: Headers is a free-form map of HTTP headers.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        secretRef:
+                          description: SecretRef references a Kubernetes secret containing
+                            credentials.
+                          properties:
+                            key:
+                              description: Key is the key within the secret.
+                              type: string
+                            name:
+                              description: Name is the name of the secret.
+                              type: string
+                          type: object
+                      type: object
+                    type: array
+                  expose:
+                    description: Expose lists ports to expose from the workload.
+                    items:
+                      description: NetworkExposePort defines a guest port to expose.
+                      properties:
+                        guest:
+                          description: Guest is the port number inside the workload.
+                          type: integer
+                      type: object
+                    type: array
+                  websocket:
+                    description: Websocket configures WebSocket support.
+                    type: string
+                type: object
+              resources:
+                description: Resources defines resource requirements.
+                properties:
+                  diskGb:
+                    description: DiskGb is the disk size in gigabytes.
+                    type: integer
+                  memoryMb:
+                    description: MemoryMb is the memory in megabytes.
+                    type: integer
+                  vcpus:
+                    description: VCPUs is the number of virtual CPUs.
+                    type: integer
+                required:
+                - diskGb
+                - memoryMb
+                - vcpus
+                type: object
+              version:
+                description: Version is the workload version string.
+                type: string
+            required:
+            - image
+            - resources
+            - version
+            type: object
+          status:
+            description: BoilerhouseWorkloadStatus defines the observed state of a
+              BoilerhouseWorkload.
+            properties:
+              detail:
+                description: Detail provides additional information about the current
+                  phase.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the current phase of the workload.
+                enum:
+                - Creating
+                - Ready
+                - Error
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

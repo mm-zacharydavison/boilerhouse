@@ -1,0 +1,121 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: boilerhouseclaims.boilerhouse.dev
+spec:
+  group: boilerhouse.dev
+  names:
+    kind: BoilerhouseClaim
+    listKind: BoilerhouseClaimList
+    plural: boilerhouseclaims
+    shortNames:
+    - bhc
+    singular: boilerhouseclaim
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tenantId
+      name: Tenant
+      type: string
+    - jsonPath: .spec.workloadRef
+      name: Workload
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.endpoint.host
+      name: Endpoint
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: BoilerhouseClaim is the Schema for the boilerhouseclaims API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: BoilerhouseClaimSpec defines the desired state of a BoilerhouseClaim.
+            properties:
+              resume:
+                description: Resume controls whether to resume an existing instance.
+                type: boolean
+              tenantId:
+                description: TenantId is the unique identifier for the tenant.
+                type: string
+              workloadRef:
+                description: WorkloadRef is the name of the BoilerhouseWorkload to
+                  claim.
+                type: string
+            required:
+            - tenantId
+            - workloadRef
+            type: object
+          status:
+            description: BoilerhouseClaimStatus defines the observed state of a BoilerhouseClaim.
+            properties:
+              claimedAt:
+                description: ClaimedAt is the timestamp when the claim was fulfilled.
+                format: date-time
+                type: string
+              detail:
+                description: Detail provides additional information about the current
+                  phase.
+                type: string
+              endpoint:
+                description: Endpoint is the network endpoint for the claimed instance.
+                properties:
+                  host:
+                    description: Host is the hostname or IP address.
+                    type: string
+                  port:
+                    description: Port is the port number.
+                    type: integer
+                type: object
+              instanceId:
+                description: InstanceId is the unique identifier of the claimed instance.
+                type: string
+              phase:
+                description: Phase is the current phase of the claim.
+                enum:
+                - Pending
+                - Active
+                - Releasing
+                - Released
+                - Error
+                type: string
+              source:
+                description: Source indicates how the instance was obtained.
+                enum:
+                - existing
+                - cold
+                - cold+data
+                - pool
+                - pool+data
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

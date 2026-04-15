@@ -1,0 +1,96 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: boilerhousepools.boilerhouse.dev
+spec:
+  group: boilerhouse.dev
+  names:
+    kind: BoilerhousePool
+    listKind: BoilerhousePoolList
+    plural: boilerhousepools
+    shortNames:
+    - bhp
+    singular: boilerhousepool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.workloadRef
+      name: Workload
+      type: string
+    - jsonPath: .spec.size
+      name: Size
+      type: integer
+    - jsonPath: .status.ready
+      name: Ready
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: BoilerhousePool is the Schema for the boilerhousepools API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: BoilerhousePoolSpec defines the desired state of a BoilerhousePool.
+            properties:
+              maxFillConcurrency:
+                description: MaxFillConcurrency limits how many instances can be warming
+                  simultaneously.
+                minimum: 1
+                type: integer
+              size:
+                description: Size is the desired number of warm instances in the pool.
+                minimum: 0
+                type: integer
+              workloadRef:
+                description: WorkloadRef is the name of the BoilerhouseWorkload to
+                  pool.
+                type: string
+            required:
+            - size
+            - workloadRef
+            type: object
+          status:
+            description: BoilerhousePoolStatus defines the observed state of a BoilerhousePool.
+            properties:
+              phase:
+                description: Phase is the current phase of the pool.
+                enum:
+                - Healthy
+                - Degraded
+                - Error
+                type: string
+              ready:
+                description: Ready is the number of instances ready to serve.
+                type: integer
+              warming:
+                description: Warming is the number of instances currently warming
+                  up.
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
