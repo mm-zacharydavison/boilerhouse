@@ -17,14 +17,14 @@ All state lives in the K8s API server (CRDs + native resources). No database.
 ### Prerequisites
 
 - Go 1.23+
-- k3s (for local dev) — `bunx kadai run k3s` to set up
+- minikube + Docker — `bunx kadai run minikube` to set up
 - envtest binaries (for tests) — installed automatically by test scripts
 
 ### Local dev
 
 ```sh
 # Set up k3s (one-time)
-bunx kadai run k3s
+bunx kadai run minikube
 
 # Start operator + API
 bunx kadai run go-dev

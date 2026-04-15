@@ -1,0 +1,30 @@
+{
+  "name": "@boilerhouse/dashboard",
+  "version": "0.1.11",
+  "private": true,
+  "license": "BUSL-1.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "scripts": {
+    "dev": "bun --hot src/server.ts",
+    "start": "bun src/server.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "build": "bun build --compile src/server.ts --outfile ../../dist/dashboard",
+    "build:linux-amd64": "bun build --compile --target=bun-linux-x64 src/server.ts --outfile ../../dist/dashboard-linux-amd64",
+    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/server.ts --outfile ../../dist/dashboard-linux-arm64"
+  },
+  "dependencies": {
+    "lucide-react": "^0.575.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-syntax-highlighter": "^16.1.0",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/react-syntax-highlighter": "^15.5.13"
+  }
+}

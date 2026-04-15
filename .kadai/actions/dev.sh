@@ -1,44 +1,47 @@
 #!/bin/bash
 # kadai:name Dev
 # kadai:emoji 🚀
-# kadai:description Start operator + API server against k3s — Ctrl+C kills both
+# kadai:description Start operator + API server against minikube — Ctrl+C kills both
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 OPERATOR_PID=""
-API_PID=""
+DASHBOARD_PID=""
 
 cleanup() {
   echo ""
   echo "Shutting down..."
   [ -n "$OPERATOR_PID" ] && kill "$OPERATOR_PID" 2>/dev/null || true
-  [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null || true
+  [ -n "$DASHBOARD_PID" ] && kill "$DASHBOARD_PID" 2>/dev/null || true
   wait 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
 
-# ── Ensure k3s is set up ────────────────────────────────────────────────────
+# ── Ensure minikube is set up ───────────────────────────────────────────────
 
-if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-elif command -v k3s &>/dev/null; then
-  echo "k3s installed but KUBECONFIG not found. Run: bunx kadai run k3s"
-  exit 1
-else
-  echo "k3s not installed. Run: bunx kadai run k3s"
+PROFILE="boilerhouse"
+
+if ! command -v minikube &>/dev/null; then
+  echo "minikube not installed. Run: brew install minikube"
   exit 1
 fi
+
+if ! minikube status -p "$PROFILE" &>/dev/null 2>&1; then
+  echo "minikube profile '$PROFILE' not running. Run: bunx kadai run minikube"
+  exit 1
+fi
+
+kubectl config use-context "$PROFILE" &>/dev/null 2>&1 || true
 
 # Verify cluster is reachable
 if ! kubectl get nodes &>/dev/null 2>&1; then
-  echo "Cannot reach k3s cluster. Is it running?"
-  echo "Run: bunx kadai run k3s"
+  echo "Cannot reach minikube cluster. Run: bunx kadai run minikube"
   exit 1
 fi
 
-echo "k3s cluster ready (KUBECONFIG=$KUBECONFIG)"
+echo "minikube cluster ready (profile: $PROFILE)"
 
 # ── Apply CRDs ───────────────────────────────────────────────────────────────
 
@@ -62,8 +65,18 @@ echo "Operator running (PID $OPERATOR_PID)"
 # Give operator a moment to start
 sleep 2
 
+# ── Start dashboard in background ───────────────────────────────────────────
+
+echo ""
+echo "Starting dashboard on :3001..."
+cd "$SCRIPT_DIR/ts/apps/dashboard"
+bun --hot src/server.ts &
+DASHBOARD_PID=$!
+echo "Dashboard running (PID $DASHBOARD_PID)"
+
 # ── Start API in foreground ──────────────────────────────────────────────────
 
 echo ""
 echo "Starting API server on :3000..."
+cd "$SCRIPT_DIR/go"
 PORT=3000 LISTEN_HOST=127.0.0.1 K8S_NAMESPACE=boilerhouse exec go run ./cmd/api/
