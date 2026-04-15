@@ -1,5 +1,7 @@
 #!/bin/bash
-# Install all dependencies for the Boilerhouse monorepo (Go + TypeScript)
+# kadai:name Setup
+# kadai:emoji 📦
+# kadai:description Install all dependencies (Go + TypeScript + dev tools)
 
 set -euo pipefail
 
