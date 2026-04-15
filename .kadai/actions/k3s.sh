@@ -1,5 +1,5 @@
 #!/bin/bash
-# kadai:name Minikube
+# kadai:name k3s
 # kadai:emoji ☸️
 # kadai:description Set up k3s cluster for local development
 
