@@ -40,186 +40,6 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 	return res.json() as Promise<T>;
 }
 
-// --- Types matching API responses ---
-
-export interface StatsResponse {
-	instances: Record<string, number>;
-	snapshots: number;
-	nodes: number;
-}
-
-export interface WorkloadSummary {
-	workloadId: string;
-	name: string;
-	version: string;
-	/** @example "ready" */
-	status: string;
-	/** Error message or other status context, shown on hover. */
-	statusDetail: string | null;
-	/** Idle timeout in seconds, or null if not configured. */
-	idleTimeoutSeconds: number | null;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface WorkloadDetail extends WorkloadSummary {
-	config: unknown;
-	instanceCount: number;
-}
-
-export interface InstanceSummary {
-	instanceId: string;
-	workloadId: string;
-	nodeId: string;
-	tenantId: string | null;
-	status: string;
-	statusDetail: string | null;
-	hasSidecar?: boolean;
-	lastActivity: string | null;
-	claimedAt: string | null;
-	createdAt: string;
-}
-
-export interface InstanceDetail extends InstanceSummary {
-	runtimeMeta: unknown;
-	lastActivity: string | null;
-	claimedAt: string | null;
-}
-
-export interface TenantSummary {
-	tenantId: string;
-	workloadId: string;
-	instanceId: string | null;
-	lastActivity: string | null;
-	createdAt: string;
-}
-
-export interface TenantDetail extends TenantSummary {
-	lastSnapshotId: string | null;
-	instance: {
-		instanceId: string;
-		status: string;
-		createdAt: string;
-	} | null;
-	snapshots: Array<{
-		snapshotId: string;
-		type: string;
-		createdAt: string;
-	}>;
-}
-
-export interface NodeSummary {
-	nodeId: string;
-	runtimeType: string;
-	capacity: { vcpus: number; memoryMb: number; diskGb: number };
-	status: string;
-	statusDetail: string | null;
-	lastHeartbeat: string;
-	createdAt: string;
-}
-
-export interface NodeDetail extends NodeSummary {
-	instanceCount: number;
-}
-
-export interface InstanceEndpoint {
-	instanceId: string;
-	status: string;
-	endpoint: { host: string; ports: number[] };
-}
-
-
-export interface ActivityLogEntry {
-	id: number;
-	event: string;
-	instanceId: string | null;
-	workloadId: string | null;
-	nodeId: string | null;
-	tenantId: string | null;
-	metadata: Record<string, unknown> | null;
-	/** @example "2026-02-21T12:00:00.000Z" */
-	createdAt: string;
-}
-
-export interface BootstrapLogEntry {
-	/** @example "2026-02-22T12:00:00.000Z" */
-	timestamp: string;
-	text: string;
-}
-
-export interface ClaimResult {
-	tenantId: string;
-	instanceId: string;
-	/** @example { host: "10.0.0.1", port: 8080 } */
-	endpoint: { host: string; port: number };
-	/** @example "warm" */
-	source: string;
-	latencyMs: number;
-}
-
-export type TenantMapping =
-	| { static: string }
-	| { fromField: string; prefix?: string };
-
-export interface GuardStep {
-	guard: string;
-	guardOptions?: Record<string, unknown>;
-}
-
-export interface TriggerSummary {
-	id: string;
-	name: string;
-	/** @example "webhook" */
-	type: string;
-	tenant: TenantMapping;
-	workload: string;
-	config: Record<string, unknown>;
-	/** Driver package name, if configured. */
-	driver?: string;
-	/** Driver-specific options. */
-	driverOptions?: Record<string, unknown>;
-	/** Guard chain for this trigger. */
-	guards?: GuardStep[] | null;
-	/** 1 = enabled, 0 = disabled */
-	enabled: number;
-	/** @example "2026-03-13T15:24:59.634Z" */
-	lastInvokedAt: string | null;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface CreateTriggerInput {
-	name: string;
-	type: "webhook" | "slack" | "telegram-poll" | "cron";
-	tenant: TenantMapping;
-	workload: string;
-	config: Record<string, unknown>;
-	/** Driver package name for WebSocket protocol translation. */
-	driver?: string;
-	/** Driver-specific options (e.g. `{ gatewayToken: "..." }`). */
-	driverOptions?: Record<string, unknown>;
-}
-
-export interface TriggerTestInput {
-	tenantId: string;
-	payload: unknown;
-}
-
-export interface TriggerTestResult {
-	claim: {
-		tenantId: string;
-		instanceId: string;
-		endpoint: { host: string; port: number };
-		source: string;
-		latencyMs: number;
-	};
-	response: {
-		status: number;
-		body: unknown;
-	} | null;
-	error?: string;
-}
-
 async function del<T>(path: string): Promise<T> {
 	const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
 	if (!res.ok) {
@@ -232,79 +52,114 @@ async function del<T>(path: string): Promise<T> {
 	return res.json() as Promise<T>;
 }
 
+// --- Types matching Go API CRD-shaped responses ---
+
+export interface StatsResponse {
+	instances: { total: number; byPhase: Record<string, number> };
+	claims: { total: number; byPhase: Record<string, number> };
+}
+
+// Workload -- matches Go API workloadResponse
+export interface WorkloadResponse {
+	name: string;
+	spec: {
+		version: string;
+		image: { ref: string };
+		resources: { vcpus: number; memoryMb: number; diskGb: number };
+		network?: {
+			access?: string;
+			expose?: Array<{ guest?: number }>;
+			allowlist?: string[];
+			websocket?: string;
+		};
+		idle?: { timeoutSeconds?: number; action?: string; watchDirs?: string[] };
+		health?: {
+			intervalSeconds?: number;
+			unhealthyThreshold?: number;
+			httpGet?: { path?: string; port?: number };
+			exec?: { command?: string[] };
+		};
+		entrypoint?: { cmd?: string; args?: string[]; workdir?: string };
+		filesystem?: { overlayDirs?: string[]; encryptOverlays?: boolean };
+	};
+	status: {
+		phase?: string;
+		detail?: string;
+		observedGeneration?: number;
+	};
+	createdAt: string;
+}
+
+// Instance -- mapped from Pod by Go API
+export interface InstanceResponse {
+	name: string;
+	phase: string;
+	tenantId?: string;
+	workloadRef?: string;
+	ip?: string;
+	labels?: Record<string, string>;
+	createdAt: string;
+}
+
+// Claim response from POST /tenants/:id/claim
+export interface ClaimResponse {
+	tenantId: string;
+	phase: string;
+	instanceId?: string;
+	endpoint?: { host: string; port: number };
+	source?: string;
+	claimedAt?: string;
+	detail?: string;
+}
+
+// Trigger -- matches Go API triggerResponse
+export interface TriggerResponse {
+	name: string;
+	spec: {
+		type: string;
+		workloadRef: string;
+		tenant?: { static?: string; from?: string; prefix?: string };
+		driver?: string;
+		driverOptions?: unknown;
+		config?: unknown;
+		guards?: Array<{ type?: string; config?: unknown }>;
+	};
+	status: {
+		phase?: string;
+		detail?: string;
+	};
+	createdAt: string;
+}
+
 // --- API methods ---
 
 export const api = {
-	fetchActivity: (filters?: { instanceId?: string; tenantId?: string; workloadId?: string; event?: string }) => {
-		const params = new URLSearchParams();
-		if (filters?.instanceId) params.set("instanceId", filters.instanceId);
-		if (filters?.tenantId) params.set("tenantId", filters.tenantId);
-		if (filters?.workloadId) params.set("workloadId", filters.workloadId);
-		if (filters?.event) params.set("event", filters.event);
-		const qs = params.toString();
-		return get<ActivityLogEntry[]>(`/audit${qs ? `?${qs}` : ""}`);
-	},
-
 	fetchStats: () => get<StatsResponse>("/stats"),
 
-	fetchWorkloads: () => get<WorkloadSummary[]>("/workloads"),
+	fetchWorkloads: () => get<WorkloadResponse[]>("/workloads"),
 
-	fetchWorkload: (name: string) => get<WorkloadDetail>(`/workloads/${encodeURIComponent(name)}`),
+	fetchWorkload: (name: string) => get<WorkloadResponse>(`/workloads/${encodeURIComponent(name)}`),
 
-	fetchBootstrapLogs: (name: string) =>
-		get<BootstrapLogEntry[]>(`/workloads/${encodeURIComponent(name)}/logs`),
+	fetchInstances: () => get<InstanceResponse[]>("/instances"),
 
-	fetchInstances: (status?: string) => {
-		const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-		return get<InstanceSummary[]>(`/instances${qs}`);
-	},
-
-	fetchInstance: (id: string) => get<InstanceDetail>(`/instances/${encodeURIComponent(id)}`),
-
-	fetchInstanceEndpoint: (id: string) =>
-		get<InstanceEndpoint>(`/instances/${encodeURIComponent(id)}/endpoint`),
+	fetchInstance: (id: string) => get<InstanceResponse>(`/instances/${encodeURIComponent(id)}`),
 
 	fetchInstanceLogs: (id: string, tail = 200) =>
-		get<{ instanceId: string; logs: string | null }>(`/instances/${encodeURIComponent(id)}/logs?tail=${tail}`),
-
-	fetchTenants: () => get<TenantSummary[]>("/tenants"),
-
-	fetchTenant: (id: string) => get<TenantDetail>(`/tenants/${encodeURIComponent(id)}`),
-
-	fetchNodes: () => get<NodeSummary[]>("/nodes"),
-
-	fetchNode: (id: string) => get<NodeDetail>(`/nodes/${encodeURIComponent(id)}`),
+		get<string>(`/instances/${encodeURIComponent(id)}/logs?tail=${tail}`).catch(() => null),
 
 	destroyInstance: (id: string) =>
-		post<{ instanceId: string; status: string }>(
+		post<{ status: string; instance: string }>(
 			`/instances/${encodeURIComponent(id)}/destroy`,
 		),
 
-	hibernateInstance: (id: string) =>
-		post<{ instanceId: string; status: string }>(
-			`/instances/${encodeURIComponent(id)}/hibernate`,
-		),
-
 	claimWorkload: (tenantId: string, workloadName: string) =>
-		postJson<ClaimResult>(`/tenants/${encodeURIComponent(tenantId)}/claim`, {
+		postJson<ClaimResponse>(`/tenants/${encodeURIComponent(tenantId)}/claim`, {
 			workload: workloadName,
 		}),
 
 	// Triggers
-	fetchTriggers: () => get<TriggerSummary[]>("/triggers"),
-
-	createTrigger: (data: CreateTriggerInput) =>
-		postJson<TriggerSummary>("/triggers", data),
+	fetchTriggers: () => get<TriggerResponse[]>("/triggers"),
 
 	deleteTrigger: (id: string) =>
-		del<{ ok: boolean }>(`/triggers/${encodeURIComponent(id)}`),
-
-	enableTrigger: (id: string) =>
-		post<TriggerSummary>(`/triggers/${encodeURIComponent(id)}/enable`),
-
-	disableTrigger: (id: string) =>
-		post<TriggerSummary>(`/triggers/${encodeURIComponent(id)}/disable`),
-
-	testTrigger: (id: string, data: TriggerTestInput) =>
-		postJson<TriggerTestResult>(`/triggers/${encodeURIComponent(id)}/test`, data),
+		del<{ status: string }>(`/triggers/${encodeURIComponent(id)}`),
 };

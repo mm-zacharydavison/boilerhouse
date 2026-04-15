@@ -1,8 +1,6 @@
 import index from "./index.html";
 
 const API_URL = process.env.API_URL ?? "http://localhost:3000";
-const METRICS_URL = process.env.METRICS_URL ?? "http://localhost:9464";
-const PROMETHEUS_URL = process.env.PROMETHEUS_URL ?? "http://localhost:9090";
 
 interface WsData {
 	upstream: WebSocket;
@@ -26,34 +24,6 @@ const server = Bun.serve<WsData>({
 				return new Response("WebSocket upgrade failed", { status: 400 });
 			}
 			return undefined;
-		}
-
-		// Proxy /metrics to the Prometheus exporter
-		if (url.pathname === "/metrics") {
-			const upstream = new URL("/metrics", METRICS_URL);
-			const headers = new Headers(req.headers);
-			headers.delete("host");
-			return fetch(upstream.toString(), { method: "GET", headers }).catch(
-				() => new Response("Cannot reach metrics endpoint", { status: 502 }),
-			);
-		}
-
-		// Proxy /prometheus/* to the Prometheus query API
-		if (url.pathname.startsWith("/prometheus/")) {
-			const promPath = url.pathname.replace(/^\/prometheus/, "");
-			const upstream = new URL(promPath + url.search, PROMETHEUS_URL);
-			const headers = new Headers(req.headers);
-			headers.delete("host");
-			return fetch(upstream.toString(), {
-				method: req.method,
-				headers,
-				body: req.body,
-			}).catch(
-				() => new Response(JSON.stringify({ error: "Cannot reach Prometheus" }), {
-					status: 502,
-					headers: { "Content-Type": "application/json" },
-				}),
-			);
 		}
 
 		// Proxy /api/* requests to the API server
@@ -97,4 +67,4 @@ const server = Bun.serve<WsData>({
 	} : false,
 });
 
-console.log(`♨️ Dashboard listening on ${server.url}`);
+console.log(`Dashboard listening on ${server.url}`);

@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
-import { api, type InstanceEndpoint } from "./api";
 import { ClipboardCopy, Check } from "lucide-react";
 
 // --- Status Indicator ---
@@ -9,41 +8,33 @@ import { ClipboardCopy, Check } from "lucide-react";
 // ○ (empty) → ◔ (quarter) → ◑ (half) → ◕ (three-quarter) → ● (full)
 // More fill = closer to active. ✕ = terminal/error.
 const STATUS_SYMBOLS: Record<string, string> = {
-	// Terminal/error
-	destroyed: "✕",
-	offline: "✕",
-	error: "✕",
-	// Fully active
-	active: "●",
-	online: "●",
-	ready: "●",
-	// Startup progression (increasing fill)
-	starting: "◔",
-	restoring: "◑",
-	// Shutdown to hibernate (decreasing fill → sleep)
-	hibernating: "◕",
-	hibernated: "○",
-	// Destroy flow (decreasing fill → gone)
-	draining: "◕",
-	destroying: "◔",
-	// Provisioning
-	creating: "◔",
+	// K8s Pod phases
+	Running: "●",
+	Pending: "◔",
+	Succeeded: "○",
+	Failed: "✕",
+	Unknown: "◑",
+	// CRD workload phases
+	Ready: "●",
+	Creating: "◔",
+	Error: "✕",
+	// CRD trigger/claim phases
+	Active: "●",
 };
 
 const STATUS_COLORS: Record<string, string> = {
-	active: "text-status-green",
-	online: "text-status-green",
-	ready: "text-status-green",
-	starting: "text-status-yellow",
-	restoring: "text-status-yellow",
-	creating: "text-status-yellow",
-	hibernating: "text-status-blue",
-	hibernated: "text-status-blue",
-	draining: "text-status-orange",
-	destroying: "text-status-orange",
-	destroyed: "text-status-red",
-	offline: "text-status-red",
-	error: "text-status-red",
+	// K8s Pod phases
+	Running: "text-status-green",
+	Pending: "text-status-yellow",
+	Succeeded: "text-status-blue",
+	Failed: "text-status-red",
+	Unknown: "text-status-orange",
+	// CRD workload phases
+	Ready: "text-status-green",
+	Creating: "text-status-yellow",
+	Error: "text-status-red",
+	// CRD trigger/claim phases
+	Active: "text-status-green",
 };
 
 export function StatusIndicator({ status, detail }: { status: string; detail?: string }) {
@@ -280,85 +271,6 @@ export function Modal({
 				<div className="p-4">{children}</div>
 			</div>
 		</div>
-	);
-}
-
-// --- Connection Modal ---
-
-export function ConnectionModal({
-	instanceId,
-	workloadName,
-	onClose,
-}: {
-	instanceId: string;
-	workloadName: string;
-	onClose: () => void;
-}) {
-	const [endpointData, setEndpointData] = useState<InstanceEndpoint | null>(null);
-	const [connectUrl, setConnectUrl] = useState<string | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		Promise.all([
-			api.fetchInstanceEndpoint(instanceId),
-			api.fetchWorkload(workloadName),
-		])
-			.then(([endpoint, workload]) => {
-				setEndpointData(endpoint);
-				const meta = (workload.config as { metadata?: { connect_url?: string } })?.metadata;
-				if (meta?.connect_url) {
-					setConnectUrl(meta.connect_url);
-				}
-				setLoading(false);
-			})
-			.catch((err: unknown) => {
-				setError(err instanceof Error ? err.message : "Failed to fetch endpoint");
-				setLoading(false);
-			});
-	}, [instanceId, workloadName]);
-
-	return (
-		<Modal title="Connection Details" onClose={onClose}>
-			{loading && (
-				<p className="font-mono text-sm text-muted animate-pulse">loading...</p>
-			)}
-			{error && (
-				<p className="font-mono text-sm text-status-red">{error}</p>
-			)}
-			{endpointData && (
-				<div className="space-y-3">
-					<div className="grid grid-cols-2 gap-3">
-						<InfoCard label="Host" value={endpointData.endpoint.host} />
-						<InfoCard label="Ports" value={endpointData.endpoint.ports.join(", ")} />
-					</div>
-					<InfoCard label="Instance" value={endpointData.instanceId} />
-					<InfoCard label="Status" value={endpointData.status} />
-					{connectUrl && endpointData.endpoint.ports.length > 0 && (
-						<a
-							href={`http://${endpointData.endpoint.host}:${endpointData.endpoint.ports[0]}${connectUrl}`}
-							target="_blank"
-							rel="noopener noreferrer"
-							className="block w-full text-center py-2 px-4 bg-accent/20 text-accent hover:bg-accent/30 rounded-md text-sm font-medium transition-colors"
-						>
-							Open {workloadName}
-						</a>
-					)}
-					<div className="bg-surface-2 rounded-md p-3">
-						<p className="text-xs font-tight uppercase tracking-wider text-muted mb-2">Connect via</p>
-						{endpointData.endpoint.ports.map((port: number) => {
-							const base = `http://${endpointData.endpoint.host}:${port}`;
-							const url = connectUrl ? `${base}${connectUrl}` : `${base}/`;
-							return (
-								<pre key={port} className="text-xs font-mono text-muted-light select-all mt-1 whitespace-pre-wrap break-all">
-									curl <a href={url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{url}</a>
-								</pre>
-							);
-						})}
-					</div>
-				</div>
-			)}
-		</Modal>
 	);
 }
 

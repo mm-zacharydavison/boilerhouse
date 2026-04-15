@@ -1,15 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useApi } from "../hooks";
-import { api, type ActivityLogEntry } from "../api";
+import { api } from "../api";
 import { LoadingState, ErrorState, PageHeader, InfoCard, BackLink, StatusIndicator, ActionButton } from "../components";
-
-function relativeTime(iso: string): string {
-	const diff = Date.now() - new Date(iso).getTime();
-	if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
-	if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-	if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
-	return `${Math.round(diff / 86_400_000)}d ago`;
-}
 
 export function InstanceDetail({
 	instanceId,
@@ -19,28 +11,20 @@ export function InstanceDetail({
 	navigate: (path: string) => void;
 }) {
 	const { data, loading, error } = useApi(() => api.fetchInstance(instanceId));
-	const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
 	const [logs, setLogs] = useState<string | null>(null);
 	const [logsError, setLogsError] = useState<string | null>(null);
 	const [logsLoading, setLogsLoading] = useState(false);
 	const [autoRefresh, setAutoRefresh] = useState(true);
 	const logContainerRef = useRef<HTMLDivElement>(null);
 
-	// Fetch activity log for this instance
-	useEffect(() => {
-		if (!data) return;
-		api.fetchActivity({ instanceId }).then(setActivity).catch(() => {});
-	}, [data, instanceId]);
-
-	// Fetch container logs
-	const isLive = data && data.status !== "destroyed" && data.status !== "hibernated";
+	const isLive = data && data.phase !== "Succeeded" && data.phase !== "Failed";
 
 	function fetchLogs() {
 		if (!isLive) return;
 		setLogsLoading(true);
 		api.fetchInstanceLogs(instanceId)
-			.then((res) => {
-				setLogs(res.logs);
+			.then((text) => {
+				setLogs(typeof text === "string" ? text : null);
 				setLogsError(null);
 			})
 			.catch((err) => {
@@ -68,15 +52,6 @@ export function InstanceDetail({
 		}
 	}, [logs]);
 
-	// Endpoint info
-	const [endpoint, setEndpoint] = useState<{ host: string; ports: number[] } | null>(null);
-	useEffect(() => {
-		if (!isLive || data?.status === "starting") return;
-		api.fetchInstanceEndpoint(instanceId)
-			.then((res) => setEndpoint(res.endpoint))
-			.catch(() => {});
-	}, [isLive, instanceId, data?.status]);
-
 	if (loading) return <LoadingState />;
 	if (error) return <ErrorState message={error} />;
 	if (!data) return null;
@@ -85,40 +60,20 @@ export function InstanceDetail({
 		<div>
 			<BackLink label="workloads" onClick={() => navigate("/workloads")} />
 
-			<PageHeader>Instance {instanceId.slice(0, 12)}</PageHeader>
+			<PageHeader>Instance {instanceId.slice(0, 16)}</PageHeader>
 
 			{/* Status + metadata */}
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 				<div className="bg-surface-2 rounded-md p-4">
-					<p className="text-xs font-tight uppercase tracking-wider text-muted mb-1">Status</p>
-					<StatusIndicator status={data.status} />
+					<p className="text-xs font-tight uppercase tracking-wider text-muted mb-1">Phase</p>
+					<StatusIndicator status={data.phase} />
 				</div>
-				<InfoCard label="Instance ID" value={data.instanceId} />
-				<InfoCard label="Workload" value={data.workloadId} />
-				<InfoCard label="Tenant" value={data.tenantId ?? "none"} />
-				<InfoCard label="Node" value={data.nodeId} />
+				<InfoCard label="Name" value={data.name} />
+				<InfoCard label="Workload" value={data.workloadRef ?? "unknown"} />
+				<InfoCard label="Tenant" value={data.tenantId ?? "none (pool)"} />
+				{data.ip && <InfoCard label="Pod IP" value={data.ip} />}
 				<InfoCard label="Created" value={new Date(data.createdAt).toLocaleString()} />
-				{data.claimedAt && (
-					<InfoCard label="Claimed" value={new Date(data.claimedAt).toLocaleString()} />
-				)}
-				{data.lastActivity && (
-					<InfoCard label="Last Activity" value={relativeTime(data.lastActivity)} />
-				)}
 			</div>
-
-			{/* Endpoint */}
-			{endpoint && (
-				<div className="mb-6">
-					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
-						Endpoint
-					</h3>
-					<div className="bg-surface-2 rounded-md p-4">
-						<p className="text-sm font-mono text-muted-light">
-							{endpoint.host}:{endpoint.ports.join(", ")}
-						</p>
-					</div>
-				</div>
-			)}
 
 			{/* Container Logs */}
 			<div className="mb-6">
@@ -140,7 +95,7 @@ export function InstanceDetail({
 								</label>
 								<ActionButton
 									label={logsLoading ? "loading..." : "refresh"}
-									variant="default"
+									variant="info"
 									disabled={logsLoading}
 									onClick={fetchLogs}
 								/>
@@ -151,7 +106,7 @@ export function InstanceDetail({
 				<div className="bg-surface-2 rounded-md">
 					{!isLive ? (
 						<p className="p-4 text-xs font-mono text-muted">
-							Instance is {data.status} - no logs available.
+							Instance is {data.phase} -- no logs available.
 						</p>
 					) : logsError ? (
 						<p className="p-4 text-xs font-mono text-status-red">{logsError}</p>
@@ -174,56 +129,27 @@ export function InstanceDetail({
 				</div>
 			</div>
 
-			{/* Activity Log */}
-			<div className="mb-6">
-				<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
-					Activity
-				</h3>
-				{activity.length === 0 ? (
-					<p className="text-sm text-muted">No activity recorded.</p>
-				) : (
-					<div className="bg-surface-2 rounded-md overflow-hidden">
-						<table className="w-full text-xs font-mono">
-							<thead>
-								<tr className="border-b border-border">
-									<th className="text-left px-3 py-2 text-muted">Time</th>
-									<th className="text-left px-3 py-2 text-muted">Event</th>
-									<th className="text-left px-3 py-2 text-muted">Details</th>
-								</tr>
-							</thead>
-							<tbody>
-								{activity.map((row) => (
-									<tr key={row.id} className="border-b border-border/50">
-										<td className="px-3 py-1.5 text-muted whitespace-nowrap">
-											{relativeTime(row.createdAt)}
-										</td>
-										<td className="px-3 py-1.5">
-											<span className={eventColor(row.event)}>
-												{row.event}
-											</span>
-										</td>
-										<td className="px-3 py-1.5 text-muted-light">
-											{row.metadata ? JSON.stringify(row.metadata) : ""}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
+			{/* Labels */}
+			{data.labels && Object.keys(data.labels).length > 0 && (
+				<div className="mb-6">
+					<h3 className="text-sm font-tight uppercase tracking-wider text-muted mb-3">
+						Labels
+					</h3>
+					<div className="bg-surface-2 rounded-md p-4">
+						<div className="flex flex-wrap gap-2">
+							{Object.entries(data.labels).map(([k, v]) => (
+								<span key={k} className="text-xs font-mono px-2 py-0.5 bg-surface-3 rounded border border-border/30">
+									<span className="text-muted">{k}</span>=<span className="text-muted-light">{v}</span>
+								</span>
+							))}
+						</div>
 					</div>
-				)}
-			</div>
+				</div>
+			)}
 
 			{/* Actions */}
 			{isLive && (
 				<div className="flex gap-2">
-					<ActionButton
-						label="hibernate"
-						variant="warning"
-						onClick={async () => {
-							await api.hibernateInstance(instanceId);
-							navigate("/workloads");
-						}}
-					/>
 					<ActionButton
 						label="destroy"
 						variant="danger"
@@ -236,12 +162,4 @@ export function InstanceDetail({
 			)}
 		</div>
 	);
-}
-
-function eventColor(event: string): string {
-	if (event.includes("error")) return "text-status-red";
-	if (event.includes("created") || event.includes("claimed") || event.includes("ready")) return "text-status-green";
-	if (event.includes("released") || event.includes("hibernated") || event.includes("destroyed")) return "text-status-yellow";
-	if (event.includes("starting") || event.includes("restoring")) return "text-status-blue";
-	return "text-muted-light";
 }

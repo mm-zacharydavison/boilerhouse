@@ -1,54 +1,54 @@
-import { useState, useCallback, useEffect } from "react";
-import { ChevronDown, ChevronRight, Plug, Trash2, UserPlus, Loader2, Moon } from "lucide-react";
+import { useState, useCallback } from "react";
+import { ChevronDown, ChevronRight, Trash2, UserPlus, Loader2 } from "lucide-react";
 import { useApi, useWebSocket } from "../hooks";
 import {
 	api,
-	type WorkloadSummary,
-	type InstanceSummary,
-	type ClaimResult,
+	type WorkloadResponse,
+	type InstanceResponse,
+	type ClaimResponse,
 } from "../api";
 import {
 	LoadingState,
 	ErrorState,
 	PageHeader,
 	StatusIndicator,
-	ConnectionModal,
 } from "../components";
 
 // --- Tree types ---
 
 interface InstanceNode {
-	instance: InstanceSummary;
+	instance: InstanceResponse;
 }
 
 interface WorkloadTreeNode {
-	workload: WorkloadSummary;
-	/** Unclaimed pool instances (tenantId === null). */
+	workload: WorkloadResponse;
+	/** Unclaimed pool instances (tenantId is empty/missing). */
 	poolInstances: InstanceNode[];
-	/** Instances claimed by a tenant (tenantId !== null). */
+	/** Instances claimed by a tenant (tenantId is present). */
 	claimedInstances: InstanceNode[];
 }
 
 // --- Tree builder ---
 
 function buildWorkloadTree(
-	workloads: WorkloadSummary[],
-	instances: InstanceSummary[],
+	workloads: WorkloadResponse[],
+	instances: InstanceResponse[],
 ): WorkloadTreeNode[] {
-	const instancesByWorkload = new Map<string, InstanceSummary[]>();
+	const instancesByWorkload = new Map<string, InstanceResponse[]>();
 	for (const inst of instances) {
-		if (inst.status === "destroyed") continue;
-		const list = instancesByWorkload.get(inst.workloadId) ?? [];
+		if (inst.phase === "Succeeded" || inst.phase === "Failed") continue;
+		const wlName = inst.workloadRef ?? "";
+		const list = instancesByWorkload.get(wlName) ?? [];
 		list.push(inst);
-		instancesByWorkload.set(inst.workloadId, list);
+		instancesByWorkload.set(wlName, list);
 	}
 
 	return workloads.map((workload) => {
-		const all = instancesByWorkload.get(workload.workloadId) ?? [];
+		const all = instancesByWorkload.get(workload.name) ?? [];
 		return {
 			workload,
-			poolInstances: all.filter((i) => i.tenantId === null).map((inst) => ({ instance: inst })),
-			claimedInstances: all.filter((i) => i.tenantId !== null).map((inst) => ({ instance: inst })),
+			poolInstances: all.filter((i) => !i.tenantId).map((inst) => ({ instance: inst })),
+			claimedInstances: all.filter((i) => !!i.tenantId).map((inst) => ({ instance: inst })),
 		};
 	});
 }
@@ -60,7 +60,7 @@ function formatDate(dateStr: string): string {
 }
 
 function shortId(id: string): string {
-	return id.slice(0, 8);
+	return id.length > 12 ? id.slice(0, 12) : id;
 }
 
 // --- Icon Action Button ---
@@ -78,7 +78,7 @@ function IconButton({
 	onClick,
 	disabled,
 }: {
-	icon: typeof Plug;
+	icon: typeof Trash2;
 	title: string;
 	variant: "danger" | "warning" | "info";
 	onClick: () => void;
@@ -106,7 +106,7 @@ function ClaimCell({ workloadName, disabled, onClaim }: { workloadName: string; 
 	const [expanded, setExpanded] = useState(false);
 	const [tenantId, setTenantId] = useState("");
 	const [claiming, setClaiming] = useState(false);
-	const [result, setResult] = useState<ClaimResult | null>(null);
+	const [result, setResult] = useState<ClaimResponse | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	async function handleClaim() {
@@ -117,7 +117,7 @@ function ClaimCell({ workloadName, disabled, onClaim }: { workloadName: string; 
 		try {
 			const res = await api.claimWorkload(tenantId.trim(), workloadName);
 			setResult(res);
-			onClaim?.(res.source);
+			onClaim?.(res.source ?? "unknown");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Claim failed");
 		} finally {
@@ -153,7 +153,7 @@ function ClaimCell({ workloadName, disabled, onClaim }: { workloadName: string; 
 			/>
 			<IconButton
 				icon={UserPlus}
-				title={claiming ? "Claiming…" : "Claim"}
+				title={claiming ? "Claiming..." : "Claim"}
 				variant="info"
 				disabled={claiming || !tenantId.trim()}
 				onClick={handleClaim}
@@ -165,40 +165,11 @@ function ClaimCell({ workloadName, disabled, onClaim }: { workloadName: string; 
 			)}
 			{result && (
 				<span className="text-xs text-accent truncate">
-					{result.source} → {shortId(result.instanceId)}
+					{result.source} {result.instanceId ? `-> ${shortId(result.instanceId)}` : ""}
 				</span>
 			)}
 		</div>
 	);
-}
-
-// --- Idle timer hook ---
-
-function useIdleTimerPct(
-	lastActivity: string | null,
-	claimedAt: string | null,
-	timeoutSeconds: number | null,
-): number | null {
-	const [pct, setPct] = useState<number | null>(null);
-
-	useEffect(() => {
-		if (!timeoutSeconds) return;
-		const startStr = lastActivity ?? claimedAt;
-		if (!startStr) return;
-
-		function compute() {
-			const start = new Date(startStr!).getTime();
-			const elapsed = (Date.now() - start) / 1000;
-			const remaining = Math.max(0, timeoutSeconds! - elapsed);
-			setPct(remaining / timeoutSeconds!);
-		}
-
-		compute();
-		const id = setInterval(compute, 1000);
-		return () => clearInterval(id);
-	}, [lastActivity, claimedAt, timeoutSeconds]);
-
-	return pct;
 }
 
 // --- Layout constants ---
@@ -214,75 +185,43 @@ const DATE_W = 88;
 
 function InstanceRow({
 	instance,
-	onAction,
-	onConnect,
-	onClaimInstance,
+	onDestroy,
 	workloadName,
 	busy,
-	idleTimeoutSeconds,
 }: {
-	instance: InstanceSummary;
-	onAction: (id: string, action: "destroy" | "hibernate") => void;
-	onConnect: (id: string, workloadName: string) => void;
-	onClaimInstance?: (instanceId: string, tenantId: string, workloadName: string) => void;
+	instance: InstanceResponse;
+	onDestroy: (id: string) => void;
 	workloadName: string;
 	/** When true, action buttons are replaced with a spinner. */
 	busy?: boolean;
-	idleTimeoutSeconds?: number | null;
 }) {
-	const idlePct = useIdleTimerPct(
-		instance.lastActivity ?? null,
-		instance.claimedAt ?? null,
-		instance.tenantId && instance.status === "active" ? (idleTimeoutSeconds ?? null) : null,
-	);
-
 	return (
 		<div className="relative flex items-center h-7 px-2 text-sm font-mono border-b border-border/10 overflow-hidden">
-			{idlePct !== null && (
-				<div
-					className="absolute inset-y-0 left-0 pointer-events-none transition-[width] duration-1000 ease-linear"
-					style={{ width: `${idlePct * 100}%`, backgroundColor: "rgba(255,255,255,0.06)" }}
-				/>
-			)}
 			<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
-				<StatusIndicator status={instance.status} detail={instance.statusDetail ?? undefined} />
+				<StatusIndicator status={instance.phase} />
 			</span>
-			<a href={`#/instances/${instance.instanceId}`} className="text-muted-light hover:text-status-blue hover:underline" title={instance.instanceId}>
-				{shortId(instance.instanceId)}
+			<a href={`#/instances/${instance.name}`} className="text-muted-light hover:text-status-blue hover:underline" title={instance.name}>
+				{shortId(instance.name)}
 			</a>
-			{instance.hasSidecar && (
-				<span className="text-[10px] font-mono text-muted border border-border rounded px-1 ml-1" title="Envoy proxy sidecar running">
-					proxy
-				</span>
-			)}
 			{instance.tenantId && (
 				<span className="text-xs font-mono ml-2 text-muted">
 					for <span className="text-foreground">{instance.tenantId}</span>
 				</span>
 			)}
+			{instance.ip && (
+				<span className="text-xs font-mono ml-2 text-muted">
+					{instance.ip}
+				</span>
+			)}
 
 			<span className="flex-1" />
 
-			{instance.status !== "destroyed" && (
+			{instance.phase !== "Succeeded" && instance.phase !== "Failed" && (
 				busy ? (
 					<Loader2 size={13} className="text-muted animate-spin mr-1" />
 				) : (
 					<div className="flex items-center gap-0.5">
-						{instance.status === "active" && instance.tenantId !== null && (
-							<>
-								<IconButton icon={Plug} title="Connect" variant="info" onClick={() => onConnect(instance.instanceId, workloadName)} />
-								<IconButton icon={Moon} title="Hibernate" variant="warning" onClick={() => onAction(instance.instanceId, "hibernate")} />
-							</>
-						)}
-						{instance.status === "hibernated" && instance.tenantId !== null && (
-							<IconButton
-								icon={UserPlus}
-								title="Claim"
-								variant="info"
-								onClick={() => onClaimInstance?.(instance.instanceId, instance.tenantId!, workloadName)}
-							/>
-						)}
-						<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onAction(instance.instanceId, "destroy")} />
+						<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onDestroy(instance.name)} />
 					</div>
 				)
 			)}
@@ -302,31 +241,25 @@ function PendingWarmRow() {
 			<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
 				<Loader2 size={10} className="text-muted animate-spin" />
 			</span>
-			<span className="text-muted text-xs">warming…</span>
+			<span className="text-muted text-xs">warming...</span>
 		</div>
 	);
 }
 
-// --- Workload Group ---
+// --- Instance Section ---
 
 function InstanceSection({
 	label,
 	instances,
-	onAction,
-	onConnect,
-	onClaimInstance,
+	onDestroy,
 	workloadName,
 	busyInstances,
-	idleTimeoutSeconds,
 }: {
 	label: string;
 	instances: InstanceNode[];
-	onAction: (id: string, action: "destroy" | "hibernate") => void;
-	onConnect: (id: string, workloadName: string) => void;
-	onClaimInstance?: (instanceId: string, tenantId: string, workloadName: string) => void;
+	onDestroy: (id: string) => void;
 	workloadName: string;
 	busyInstances: Set<string>;
-	idleTimeoutSeconds?: number | null;
 }) {
 	return (
 		<>
@@ -339,27 +272,24 @@ function InstanceSection({
 			</div>
 			{instances.map((inst) => (
 				<InstanceRow
-					key={inst.instance.instanceId}
+					key={inst.instance.name}
 					instance={inst.instance}
-					onAction={onAction}
-					onConnect={onConnect}
-					onClaimInstance={onClaimInstance}
+					onDestroy={onDestroy}
 					workloadName={workloadName}
-					busy={busyInstances.has(inst.instance.instanceId)}
-					idleTimeoutSeconds={idleTimeoutSeconds}
+					busy={busyInstances.has(inst.instance.name)}
 				/>
 			))}
 		</>
 	);
 }
 
+// --- Workload Group ---
+
 function WorkloadGroup({
 	node,
 	expanded,
 	onToggle,
-	onAction,
-	onConnect,
-	onClaimInstance,
+	onDestroy,
 	navigate,
 	busyInstances,
 	onClaim,
@@ -368,17 +298,16 @@ function WorkloadGroup({
 	node: WorkloadTreeNode;
 	expanded: boolean;
 	onToggle: () => void;
-	onAction: (id: string, action: "destroy" | "hibernate") => void;
-	onConnect: (id: string, workloadName: string) => void;
-	onClaimInstance?: (instanceId: string, tenantId: string, workloadName: string) => void;
+	onDestroy: (id: string) => void;
 	navigate: (path: string) => void;
 	busyInstances: Set<string>;
-	onClaim?: (workloadId: string, source: string) => void;
+	onClaim?: (workloadName: string, source: string) => void;
 	pendingWarm?: boolean;
 }) {
 	const { workload, poolInstances, claimedInstances } = node;
 	const Chevron = expanded ? ChevronDown : ChevronRight;
 	const hasInstances = poolInstances.length > 0 || claimedInstances.length > 0 || !!pendingWarm;
+	const phase = workload.status.phase ?? "Unknown";
 
 	return (
 		<div className="mb-3">
@@ -393,7 +322,7 @@ function WorkloadGroup({
 					</button>
 				</span>
 				<span style={{ width: STATUS_W }} className="shrink-0 flex items-center">
-					<StatusIndicator status={workload.status} detail={workload.statusDetail ?? undefined} />
+					<StatusIndicator status={phase} detail={workload.status.detail ?? undefined} />
 				</span>
 				<a
 					href={`#/workloads/${workload.name}`}
@@ -405,15 +334,15 @@ function WorkloadGroup({
 				>
 					{workload.name}
 				</a>
-				<span className="text-muted-light text-xs font-mono ml-2">v{workload.version}</span>
-				{workload.status !== "ready" && (
-					<span className="text-xs text-muted font-mono ml-2">({workload.status})</span>
+				<span className="text-muted-light text-xs font-mono ml-2">v{workload.spec.version}</span>
+				{phase !== "Ready" && (
+					<span className="text-xs text-muted font-mono ml-2">({phase})</span>
 				)}
 
 				<span className="flex-1" />
 
 				<div onClick={(e) => e.stopPropagation()}>
-					<ClaimCell workloadName={workload.name} disabled={workload.status !== "ready"} onClaim={(source) => onClaim?.(workload.workloadId, source)} />
+					<ClaimCell workloadName={workload.name} disabled={phase !== "Ready"} onClaim={(source) => onClaim?.(workload.name, source)} />
 				</div>
 			</div>
 
@@ -425,9 +354,7 @@ function WorkloadGroup({
 							<InstanceSection
 								label="pool"
 								instances={poolInstances}
-								onAction={onAction}
-								onConnect={onConnect}
-								onClaimInstance={onClaimInstance}
+								onDestroy={onDestroy}
 								workloadName={workload.name}
 								busyInstances={busyInstances}
 							/>
@@ -438,12 +365,9 @@ function WorkloadGroup({
 						<InstanceSection
 							label="claimed"
 							instances={claimedInstances}
-							onAction={onAction}
-							onConnect={onConnect}
-							onClaimInstance={onClaimInstance}
+							onDestroy={onDestroy}
 							workloadName={workload.name}
 							busyInstances={busyInstances}
-							idleTimeoutSeconds={workload.idleTimeoutSeconds}
 						/>
 					)}
 				</div>
@@ -455,50 +379,40 @@ function WorkloadGroup({
 // --- Main Component ---
 
 export function WorkloadList({ navigate }: { navigate: (path: string) => void }) {
-	const workloadsApi = useApi<WorkloadSummary[]>(api.fetchWorkloads);
-	const instancesApi = useApi<InstanceSummary[]>(useCallback(() => api.fetchInstances(), []));
+	const workloadsApi = useApi<WorkloadResponse[]>(api.fetchWorkloads);
+	const instancesApi = useApi<InstanceResponse[]>(useCallback(() => api.fetchInstances(), []));
 
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [initialized, setInitialized] = useState(false);
-	const [connectTarget, setConnectTarget] = useState<{ instanceId: string; workloadName: string } | null>(null);
 	const [busyInstances, setBusyInstances] = useState<Set<string>>(new Set());
 	const [pendingWarms, setPendingWarms] = useState<Set<string>>(new Set());
 
-	// Auto-refresh when instance state changes (e.g. idle timeout fires, claim released)
+	// Auto-refresh when instance state changes
 	const { refetch: refetchWorkloads } = workloadsApi;
-	const { refetch: refetchInstances, update: updateInstances } = instancesApi;
+	const { refetch: refetchInstances } = instancesApi;
 	useWebSocket(useCallback((event) => {
-		const e = event as { type: string; instanceId?: string; workloadId?: string; tenantId?: string | null; lastActivity?: string };
+		const e = event as { type: string; workloadRef?: string; tenantId?: string | null };
 		if (e.type === "instance.state" || e.type === "tenant.released" || e.type === "tenant.claimed" || e.type === "pool.instance.ready") {
-			// Optimistically update lastActivity so the idle bar resets immediately
-			if (e.type === "tenant.claimed" && e.instanceId) {
-				const now = e.lastActivity ?? new Date().toISOString();
-				updateInstances((prev) =>
-					prev?.map((inst) =>
-						inst.instanceId === e.instanceId ? { ...inst, lastActivity: now } : inst,
-					) ?? null,
-				);
-			}
 			// Clear pending warm once the real pool instance starts appearing
-			if (e.type === "instance.state" && !e.tenantId && e.workloadId) {
+			if (e.type === "instance.state" && !e.tenantId && e.workloadRef) {
 				setPendingWarms((prev) => {
-					if (!prev.has(e.workloadId!)) return prev;
+					if (!prev.has(e.workloadRef!)) return prev;
 					const next = new Set(prev);
-					next.delete(e.workloadId!);
+					next.delete(e.workloadRef!);
 					return next;
 				});
 			}
 			refetchWorkloads();
 			refetchInstances();
 		}
-	}, [refetchWorkloads, refetchInstances, updateInstances]));
+	}, [refetchWorkloads, refetchInstances]));
 
 	const loading = workloadsApi.loading || instancesApi.loading;
 	const error = workloadsApi.error || instancesApi.error;
 
 	// Expand all workloads by default once data loads
 	if (!initialized && workloadsApi.data) {
-		setExpanded(new Set(workloadsApi.data.map((w) => w.workloadId)));
+		setExpanded(new Set(workloadsApi.data.map((w) => w.name)));
 		setInitialized(true);
 	}
 
@@ -511,11 +425,11 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		instancesApi.data ?? [],
 	);
 
-	function toggleExpanded(workloadId: string) {
+	function toggleExpanded(workloadName: string) {
 		setExpanded((prev) => {
 			const next = new Set(prev);
-			if (next.has(workloadId)) next.delete(workloadId);
-			else next.add(workloadId);
+			if (next.has(workloadName)) next.delete(workloadName);
+			else next.add(workloadName);
 			return next;
 		});
 	}
@@ -525,44 +439,24 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		instancesApi.refetch();
 	}
 
-	function handleClaim(workloadId: string, source: string) {
+	function handleClaim(workloadName: string, source: string) {
 		if (source === "pool" || source === "pool+data") {
-			setPendingWarms((prev) => new Set(prev).add(workloadId));
+			setPendingWarms((prev) => new Set(prev).add(workloadName));
 		}
 		refetchAll();
 	}
 
-	async function handleClaimInstance(instanceId: string, tenantId: string, workloadName: string) {
-		setBusyInstances((prev) => new Set(prev).add(instanceId));
+	async function handleDestroy(instanceName: string) {
+		setBusyInstances((prev) => new Set(prev).add(instanceName));
 		try {
-			await api.claimWorkload(tenantId, workloadName);
+			await api.destroyInstance(instanceName);
 			refetchAll();
 		} catch (err) {
-			alert(err instanceof Error ? err.message : "Claim failed");
+			alert(err instanceof Error ? err.message : "Destroy failed");
 		} finally {
 			setBusyInstances((prev) => {
 				const next = new Set(prev);
-				next.delete(instanceId);
-				return next;
-			});
-		}
-	}
-
-	async function handleAction(instanceId: string, action: "destroy" | "hibernate") {
-		setBusyInstances((prev) => new Set(prev).add(instanceId));
-		try {
-			if (action === "destroy") {
-				await api.destroyInstance(instanceId);
-			} else {
-				await api.hibernateInstance(instanceId);
-			}
-			refetchAll();
-		} catch (err) {
-			alert(err instanceof Error ? err.message : "Action failed");
-		} finally {
-			setBusyInstances((prev) => {
-				const next = new Set(prev);
-				next.delete(instanceId);
+				next.delete(instanceName);
 				return next;
 			});
 		}
@@ -577,28 +471,18 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 				<div>
 					{tree.map((node) => (
 						<WorkloadGroup
-							key={node.workload.workloadId}
+							key={node.workload.name}
 							node={node}
-							expanded={expanded.has(node.workload.workloadId)}
-							onToggle={() => toggleExpanded(node.workload.workloadId)}
-							onAction={handleAction}
-							onConnect={(id, name) => setConnectTarget({ instanceId: id, workloadName: name })}
-							onClaimInstance={handleClaimInstance}
+							expanded={expanded.has(node.workload.name)}
+							onToggle={() => toggleExpanded(node.workload.name)}
+							onDestroy={handleDestroy}
 							navigate={navigate}
 							busyInstances={busyInstances}
 							onClaim={handleClaim}
-							pendingWarm={pendingWarms.has(node.workload.workloadId)}
+							pendingWarm={pendingWarms.has(node.workload.name)}
 						/>
 					))}
 				</div>
-			)}
-
-			{connectTarget && (
-				<ConnectionModal
-					instanceId={connectTarget.instanceId}
-					workloadName={connectTarget.workloadName}
-					onClose={() => setConnectTarget(null)}
-				/>
 			)}
 		</div>
 	);
