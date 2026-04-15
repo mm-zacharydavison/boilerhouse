@@ -16,8 +16,16 @@ import (
 
 // claimRequest is the JSON body for claiming an instance.
 type claimRequest struct {
+	Workload    string `json:"workload"`
 	WorkloadRef string `json:"workloadRef"`
 	Resume      *bool  `json:"resume,omitempty"`
+}
+
+func (c *claimRequest) workloadName() string {
+	if c.Workload != "" {
+		return c.Workload
+	}
+	return c.WorkloadRef
 }
 
 // claimResponse is the JSON representation of a claim returned by the API.
@@ -61,12 +69,13 @@ func (s *Server) claimInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.WorkloadRef == "" {
-		writeError(w, http.StatusBadRequest, "workloadRef is required")
+	wlName := req.workloadName()
+	if wlName == "" {
+		writeError(w, http.StatusBadRequest, "workload is required")
 		return
 	}
 
-	claimName := fmt.Sprintf("claim-%s", tenantID)
+	claimName := fmt.Sprintf("claim-%s-%s", tenantID, wlName)
 	now := metav1.Now()
 
 	claim := &v1alpha1.BoilerhouseClaim{
@@ -82,7 +91,7 @@ func (s *Server) claimInstance(w http.ResponseWriter, r *http.Request) {
 		},
 		Spec: v1alpha1.BoilerhouseClaimSpec{
 			TenantId:    tenantID,
-			WorkloadRef: req.WorkloadRef,
+			WorkloadRef: wlName,
 			Resume:      req.Resume,
 		},
 	}

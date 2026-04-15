@@ -36,12 +36,21 @@ func main() {
 		metricsAddr = ":" + metricsAddr
 	}
 
+	leaderElect := os.Getenv("LEADER_ELECT") != "false"
+
+	healthAddr := os.Getenv("HEALTH_PORT")
+	if healthAddr == "" {
+		healthAddr = ":8081"
+	} else {
+		healthAddr = ":" + healthAddr
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
-		LeaderElection:          true,
+		LeaderElection:          leaderElect,
 		LeaderElectionID:        "boilerhouse-operator",
 		LeaderElectionNamespace: namespace,
-		HealthProbeBindAddress:  ":8081",
+		HealthProbeBindAddress:  healthAddr,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
 		},
