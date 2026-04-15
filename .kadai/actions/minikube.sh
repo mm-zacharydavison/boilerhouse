@@ -1,7 +1,7 @@
 #!/bin/bash
-# kadai:name k3s
+# kadai:name Minikube
 # kadai:emoji ☸️
-# kadai:description Start/setup k3s for local Go development
+# kadai:description Set up k3s cluster for local development
 
 set -euo pipefail
 

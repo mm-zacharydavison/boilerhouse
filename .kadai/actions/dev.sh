@@ -1,7 +1,7 @@
 #!/bin/bash
-# kadai:name Go Dev
+# kadai:name Dev
 # kadai:emoji 🚀
-# kadai:description Start the Go operator + API server against k3s
+# kadai:description Start operator + API server against k3s — Ctrl+C kills both
 
 set -euo pipefail
 

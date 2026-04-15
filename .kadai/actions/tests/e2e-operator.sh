@@ -1,7 +1,7 @@
 #!/bin/bash
-# kadai:name Go Unit Tests
-# kadai:emoji 🧪
-# kadai:description Run all Go unit tests (includes envtest-based controller tests)
+# kadai:name Operator E2E Tests
+# kadai:emoji ☸️
+# kadai:description Run all Go tests (includes envtest-based controller tests)
 # kadai:category tests
 
 set -euo pipefail
