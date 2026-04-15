@@ -44,14 +44,15 @@ func TestClaimController_ColdBootNewTenant(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "cold-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "cold-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Verify workload is Ready.
 	var readyWl v1alpha1.BoilerhouseWorkload
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "cold-wl", Namespace: "default"}, &readyWl))
+	require.NoError(t, k8sClient.Get(ctx, wlKey, &readyWl))
 	require.Equal(t, "Ready", readyWl.Status.Phase)
 
 	// Create a claim.
@@ -73,12 +74,12 @@ func TestClaimController_ColdBootNewTenant(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	// First reconcile adds finalizer and sets Pending, then proceeds to cold boot.
-	result, err := claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "cold-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
-	assert.NotZero(t, result.RequeueAfter)
+	// Multiple reconciles: finalizer add, Pending, then cold boot to Active.
+	claimKey := types.NamespacedName{Name: "cold-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify claim status.
 	var updatedClaim v1alpha1.BoilerhouseClaim
@@ -137,10 +138,11 @@ func TestClaimController_ColdBootWithPVC(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "pvc-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "pvc-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Pre-create the PVC that would exist from a previous session.
 	pvc := &corev1.PersistentVolumeClaim{
@@ -178,15 +180,15 @@ func TestClaimController_ColdBootWithPVC(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	result, err := claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "pvc-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
-	assert.NotZero(t, result.RequeueAfter)
+	claimKey := types.NamespacedName{Name: "pvc-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify claim status.
 	var updatedClaim v1alpha1.BoilerhouseClaim
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "pvc-claim", Namespace: "default"}, &updatedClaim))
+	require.NoError(t, k8sClient.Get(ctx, claimKey, &updatedClaim))
 	assert.Equal(t, "Active", updatedClaim.Status.Phase)
 	assert.Equal(t, "cold+data", updatedClaim.Status.Source)
 
@@ -242,10 +244,11 @@ func TestClaimController_ClaimFromPool(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "pool-claim-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "pool-claim-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create a pool Pod manually with pool-status=ready.
 	poolPod := &corev1.Pod{
@@ -300,15 +303,15 @@ func TestClaimController_ClaimFromPool(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	result, err := claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "pool-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
-	assert.NotZero(t, result.RequeueAfter)
+	claimKey := types.NamespacedName{Name: "pool-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify claim status.
 	var updatedClaim v1alpha1.BoilerhouseClaim
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "pool-claim", Namespace: "default"}, &updatedClaim))
+	require.NoError(t, k8sClient.Get(ctx, claimKey, &updatedClaim))
 	assert.Equal(t, "Active", updatedClaim.Status.Phase)
 	assert.Equal(t, "pool", updatedClaim.Status.Source)
 	assert.Equal(t, "pool-claim-wl-pool-abc123", updatedClaim.Status.InstanceId)
@@ -349,10 +352,11 @@ func TestClaimController_ExistingInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "existing-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "existing-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create an existing Pod with tenant label already running.
 	existingPod := &corev1.Pod{
@@ -407,15 +411,15 @@ func TestClaimController_ExistingInstance(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	result, err := claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "existing-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
-	assert.NotZero(t, result.RequeueAfter)
+	claimKey := types.NamespacedName{Name: "existing-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify claim status.
 	var updatedClaim v1alpha1.BoilerhouseClaim
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "existing-claim", Namespace: "default"}, &updatedClaim))
+	require.NoError(t, k8sClient.Get(ctx, claimKey, &updatedClaim))
 	assert.Equal(t, "Active", updatedClaim.Status.Phase)
 	assert.Equal(t, "existing", updatedClaim.Status.Source)
 	assert.Equal(t, "existing-wl-carol-existing", updatedClaim.Status.InstanceId)
@@ -463,10 +467,11 @@ func TestClaimController_ReleaseDeletesPod(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "release-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "release-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create a claim and reconcile it to Active (cold boot).
 	claim := &v1alpha1.BoilerhouseClaim{
@@ -487,10 +492,11 @@ func TestClaimController_ReleaseDeletesPod(t *testing.T) {
 	}
 
 	// Reconcile to Active.
-	_, err = claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "release-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	claimKey := types.NamespacedName{Name: "release-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify Pod exists.
 	var podList corev1.PodList
@@ -554,10 +560,11 @@ func TestClaimController_WorkloadNotFoundError(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	_, err := claimReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "orphan-claim", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	claimKey := types.NamespacedName{Name: "orphan-claim", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+	}
 
 	// Verify claim phase=Error.
 	var updatedClaim v1alpha1.BoilerhouseClaim

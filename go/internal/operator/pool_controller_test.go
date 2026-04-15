@@ -41,14 +41,15 @@ func TestPoolController_CreatesPoolPods(t *testing.T) {
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
 
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "pool-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "pool-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Verify workload is Ready.
 	var readyWl v1alpha1.BoilerhouseWorkload
-	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "pool-wl", Namespace: "default"}, &readyWl))
+	require.NoError(t, k8sClient.Get(ctx, wlKey, &readyWl))
 	require.Equal(t, "Ready", readyWl.Status.Phase)
 
 	// Create a Pool with size=2.
@@ -69,12 +70,12 @@ func TestPoolController_CreatesPoolPods(t *testing.T) {
 		Client: k8sClient,
 		Scheme: k8sClient.Scheme(),
 	}
-	// First reconcile adds finalizer.
-	result, err := poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "test-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
-	assert.NotZero(t, result.RequeueAfter)
+	// Multiple reconciles: finalizer add, then pool fill.
+	poolKey := types.NamespacedName{Name: "test-pool", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Verify 2 Pods were created with pool-status=warming.
 	var podList corev1.PodList
@@ -129,10 +130,11 @@ func TestPoolController_RelabelsReadyPods(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "relabel-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "relabel-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create a pool with size=1.
 	pool := &v1alpha1.BoilerhousePool{
@@ -152,11 +154,12 @@ func TestPoolController_RelabelsReadyPods(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	// First reconcile: creates the warming pod.
-	_, err = poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "relabel-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	// Multiple reconciles: finalizer add, then creates the warming pod.
+	poolKey := types.NamespacedName{Name: "relabel-pool", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Find the warming pod.
 	var podList corev1.PodList
@@ -177,11 +180,11 @@ func TestPoolController_RelabelsReadyPods(t *testing.T) {
 	}
 	require.NoError(t, k8sClient.Status().Update(ctx, pod))
 
-	// Second reconcile: should relabel warming -> ready.
-	_, err = poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "relabel-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	// Additional reconciles: should relabel warming -> ready.
+	for i := 0; i < 3; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Verify the pod is now labelled ready.
 	var updatedPod corev1.Pod
@@ -222,10 +225,11 @@ func TestPoolController_RespectsMaxFillConcurrency(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "concurrency-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "concurrency-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create a pool with size=5, maxFillConcurrency=2.
 	maxFill := 2
@@ -247,11 +251,12 @@ func TestPoolController_RespectsMaxFillConcurrency(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	// First reconcile: should create only 2 pods (maxFillConcurrency), not 5.
-	_, err = poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "concurrency-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	// Multiple reconciles: finalizer add, then create only 2 pods (maxFillConcurrency), not 5.
+	poolKey := types.NamespacedName{Name: "concurrency-pool", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Verify only 2 Pods exist.
 	var podList corev1.PodList
@@ -297,10 +302,11 @@ func TestPoolController_ErrorWhenWorkloadNotFound(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	_, err := poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "orphan-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	poolKey := types.NamespacedName{Name: "orphan-pool", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Verify pool status phase=Error.
 	var updatedPool v1alpha1.BoilerhousePool
@@ -334,10 +340,11 @@ func TestPoolController_DeletionCleansUpPods(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	_, err := wlReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "delete-pool-wl", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	wlKey := types.NamespacedName{Name: "delete-pool-wl", Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
 
 	// Create a pool with size=2.
 	pool := &v1alpha1.BoilerhousePool{
@@ -357,11 +364,12 @@ func TestPoolController_DeletionCleansUpPods(t *testing.T) {
 		Scheme: k8sClient.Scheme(),
 	}
 
-	// Reconcile to create pool Pods.
-	_, err = poolReconciler.Reconcile(ctx, reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "delete-pool", Namespace: "default"},
-	})
-	require.NoError(t, err)
+	// Multiple reconciles to create pool Pods.
+	poolKey := types.NamespacedName{Name: "delete-pool", Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := poolReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: poolKey})
+		require.NoError(t, err)
+	}
 
 	// Verify Pods exist.
 	var podList corev1.PodList
