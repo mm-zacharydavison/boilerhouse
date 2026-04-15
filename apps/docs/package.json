@@ -13,6 +13,8 @@
     "preview": "vitepress preview"
   },
   "devDependencies": {
-    "vitepress": "^1.6.3"
+    "vitepress": "^1.6.3",
+    "vitepress-theme-zac": "^0.1.2",
+    "vue": "^3.5.0"
   }
 }

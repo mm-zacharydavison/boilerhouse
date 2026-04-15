@@ -5,6 +5,18 @@ export default defineConfig({
   description: "Multi-tenant container orchestration platform",
   base: "/boilerhouse/",
   cleanUrls: true,
+  markdown: {
+    theme: "github-light",
+  },
+  vite: {
+    ssr: {
+      noExternal: [
+        "vitepress-theme-zac",
+        "@fontsource-variable/dm-sans",
+        "@fontsource-variable/jetbrains-mono",
+      ],
+    },
+  },
   themeConfig: {
     nav: [
       { text: "Guide", link: "/guide/what-is-boilerhouse" },
@@ -61,6 +73,8 @@ export default defineConfig({
             { text: "REST API", link: "/reference/api" },
             { text: "CLI", link: "/reference/cli" },
             { text: "Workload Schema", link: "/reference/workload-schema" },
+            { text: "CRDs", link: "/reference/crds" },
+            { text: "State Machines", link: "/reference/state-machines" },
             { text: "Environment Variables", link: "/reference/env" },
           ],
         },
