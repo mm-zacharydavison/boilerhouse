@@ -1,0 +1,173 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// instanceResponse is the JSON representation of a managed Pod.
+type instanceResponse struct {
+	Name       string            `json:"name"`
+	Phase      string            `json:"phase"`
+	TenantId   string            `json:"tenantId,omitempty"`
+	WorkloadRef string           `json:"workloadRef,omitempty"`
+	IP         string            `json:"ip,omitempty"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	CreatedAt  string            `json:"createdAt"`
+}
+
+func toInstanceResponse(pod *corev1.Pod) instanceResponse {
+	return instanceResponse{
+		Name:        pod.Name,
+		Phase:       string(pod.Status.Phase),
+		TenantId:    pod.Labels["boilerhouse.dev/tenant"],
+		WorkloadRef: pod.Labels["boilerhouse.dev/workload"],
+		IP:          pod.Status.PodIP,
+		Labels:      pod.Labels,
+		CreatedAt:   pod.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
+	var pods corev1.PodList
+	if err := s.client.List(r.Context(), &pods,
+		client.InNamespace(s.namespace),
+		client.MatchingLabels{"boilerhouse.dev/managed": "true"},
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list instances: "+err.Error())
+		return
+	}
+
+	items := make([]instanceResponse, 0, len(pods.Items))
+	for i := range pods.Items {
+		items = append(items, toInstanceResponse(&pods.Items[i]))
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var pod corev1.Pod
+	key := types.NamespacedName{Name: id, Namespace: s.namespace}
+	if err := s.client.Get(r.Context(), key, &pod); err != nil {
+		writeError(w, http.StatusNotFound, "instance not found: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toInstanceResponse(&pod))
+}
+
+func (s *Server) getInstanceLogs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Verify the pod exists via the controller-runtime client.
+	var pod corev1.Pod
+	key := types.NamespacedName{Name: id, Namespace: s.namespace}
+	if err := s.client.Get(r.Context(), key, &pod); err != nil {
+		writeError(w, http.StatusNotFound, "instance not found: "+err.Error())
+		return
+	}
+
+	// Use kubectl for log streaming since controller-runtime client
+	// does not support subresource streaming directly.
+	tailLines := r.URL.Query().Get("tail")
+	args := []string{"logs", id, "-n", s.namespace}
+	if tailLines != "" {
+		if n, err := strconv.Atoi(tailLines); err == nil && n > 0 {
+			args = append(args, "--tail", strconv.Itoa(n))
+		}
+	}
+
+	cmd := exec.CommandContext(r.Context(), "kubectl", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get logs: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write(out)
+}
+
+// execRequest is the JSON body for executing a command in an instance.
+type execRequest struct {
+	Command []string `json:"command"`
+}
+
+// execResponse is the JSON response from exec.
+type execResponse struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exitCode"`
+}
+
+func (s *Server) execInInstance(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req execRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if len(req.Command) == 0 {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+
+	// Use kubectl exec since controller-runtime client does not support
+	// SPDY exec directly without extra REST client config.
+	args := []string{"exec", id, "-n", s.namespace, "--"}
+	args = append(args, req.Command...)
+
+	cmd := exec.CommandContext(r.Context(), "kubectl", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	exitCode := 0
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			writeError(w, http.StatusInternalServerError, "exec failed: "+err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, execResponse{
+		Stdout:   strings.TrimRight(stdout.String(), "\n"),
+		Stderr:   strings.TrimRight(stderr.String(), "\n"),
+		ExitCode: exitCode,
+	})
+}
+
+func (s *Server) destroyInstance(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	pod := &corev1.Pod{}
+	key := types.NamespacedName{Name: id, Namespace: s.namespace}
+	if err := s.client.Get(r.Context(), key, pod); err != nil {
+		writeError(w, http.StatusNotFound, "instance not found: "+err.Error())
+		return
+	}
+
+	if err := s.client.Delete(r.Context(), pod); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to destroy instance: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed", "instance": id})
+}
+
