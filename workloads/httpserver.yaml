@@ -1,0 +1,33 @@
+name: httpserver
+version: "0.1.0"
+
+image:
+  ref: busybox:1.36
+
+resources:
+  vcpus: 1
+  memory_mb: 256
+
+network:
+  access: unrestricted
+  expose:
+    - guest: 8080
+      host_range: [30000, 31000]
+
+idle:
+  timeout_seconds: 300
+  action: hibernate
+
+health:
+  interval_seconds: 2
+  unhealthy_threshold: 30
+  http_get:
+    path: /
+    port: 8080
+
+entrypoint:
+  cmd: sh
+  args: ["-c", "mkdir -p /www && echo 'OK' > /www/index.html && busybox httpd -f -p 8080 -h /www"]
+
+metadata:
+  description: BusyBox HTTP server for connectivity testing

@@ -1,0 +1,23 @@
+name: minimal
+version: "0.1.0"
+
+image:
+  ref: alpine:3.19
+
+resources:
+  vcpus: 1
+  memory_mb: 128
+
+network:
+  access: "none"
+
+idle:
+  timeout_seconds: 300
+  action: hibernate
+
+entrypoint:
+  cmd: sh
+  args: ["-c", "while true; do sleep 3600; done"]
+
+metadata:
+  description: Minimal Alpine container for testing
