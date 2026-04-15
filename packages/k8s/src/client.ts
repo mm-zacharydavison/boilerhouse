@@ -103,14 +103,16 @@ export class KubeClient {
 				);
 			}
 
-			// Check for ImagePullBackOff or ErrImagePull in container status
+			// Check for fatal container errors that won't recover
 			const statuses = pod.status?.containerStatuses ?? [];
 			for (const cs of statuses) {
 				const waitReason = cs.state.waiting?.reason;
 				if (
 					waitReason === "ImagePullBackOff" ||
 					waitReason === "ErrImagePull" ||
-					waitReason === "InvalidImageName"
+					waitReason === "InvalidImageName" ||
+					waitReason === "CreateContainerConfigError" ||
+					waitReason === "CreateContainerError"
 				) {
 					throw new KubernetesRuntimeError(
 						`Pod ${name} failed to start: ${waitReason}: ${cs.state.waiting?.message ?? ""}`,

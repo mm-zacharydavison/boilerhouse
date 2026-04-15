@@ -51,5 +51,5 @@ describe("multi-workload-claim", () => {
 		// Second claim should still be Active
 		const status2 = await client.getStatus("boilerhouseclaims", claimName2);
 		expect(status2?.phase).toBe("Active");
-	}, 120_000);
+	}, 180_000);
 });

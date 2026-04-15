@@ -124,11 +124,11 @@ export class PoolManager {
 	 * Refills the pool up to the configured target size (up to
 	 * `max_fill_concurrency` instances at a time). Fire-and-forget safe.
 	 */
-	async replenish(workloadId: WorkloadId): Promise<void> {
+	async replenish(workloadId: WorkloadId, overrideTargetSize?: number): Promise<void> {
 		const workloadRow = this.db.select().from(workloads).where(eq(workloads.workloadId, workloadId)).get();
 		if (!workloadRow) return;
 		const workload = workloadRow.config as Workload;
-		const targetSize = workload.pool?.size ?? 1;
+		const targetSize = overrideTargetSize ?? workload.pool?.size ?? 1;
 		const maxConcurrency = workload.pool?.max_fill_concurrency ?? 2;
 
 		// Count current pool instances (warming + ready)

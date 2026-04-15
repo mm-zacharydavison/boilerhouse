@@ -11,6 +11,8 @@ import type {
 export interface ClaimControllerDeps {
   db: DrizzleDb;
   tenantManager: TenantManager;
+  /** Returns true if the instance was released by the idle handler. */
+  isIdleReleased?: (instanceId: string) => boolean;
 }
 
 /**
@@ -44,8 +46,12 @@ export async function reconcileClaim(
       return { phase: "Released" };
     }
 
-    // 2. Active: no-op
+    // 2. Active: check if idle-released, otherwise no-op
     if (currentPhase === "Active") {
+      const instanceId = crd.status?.instanceId as string | undefined;
+      if (instanceId && deps.isIdleReleased?.(instanceId)) {
+        return { phase: "Released" };
+      }
       return crd.status!;
     }
 

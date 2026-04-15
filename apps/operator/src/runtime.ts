@@ -164,7 +164,7 @@ export class KubernetesRuntime implements Runtime {
 			this.client.deleteNetworkPolicy(this.namespace, `${handle.instanceId}-restrict`).catch(() => {}),
 		]);
 
-		// Wait for pod to actually be deleted
+		// Wait for pod to actually be deleted (tolerate transient API errors)
 		const deadline = Date.now() + 30_000;
 		while (Date.now() < deadline) {
 			try {
@@ -174,7 +174,8 @@ export class KubernetesRuntime implements Runtime {
 				if (err instanceof KubernetesRuntimeError && err.statusCode === 404) {
 					break;
 				}
-				throw err;
+				// Transient API errors (5xx, network) — keep polling instead of aborting
+				await new Promise((r) => setTimeout(r, 1_000));
 			}
 		}
 
@@ -184,6 +185,27 @@ export class KubernetesRuntime implements Runtime {
 
 	async exec(handle: InstanceHandle, command: string[]): Promise<ExecResult> {
 		return this.client.exec(this.namespace, handle.instanceId, command, this.context);
+	}
+
+	async injectArchive(instanceId: InstanceId, destPath: string, tar: Buffer): Promise<void> {
+		// Pipe the tar archive into the container via kubectl exec
+		const args = ["kubectl"];
+		if (this.context) args.push("--context", this.context);
+		args.push("-n", this.namespace, "exec", "-i", instanceId, "--", "tar", "-xz", "-C", destPath);
+
+		const proc = Bun.spawn(args, {
+			stdin: tar,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+
+		const exitCode = await proc.exited;
+		if (exitCode !== 0) {
+			const stderr = await new Response(proc.stderr).text();
+			throw new KubernetesRuntimeError(
+				`Failed to inject archive into ${instanceId}: ${stderr.slice(0, 200)}`,
+			);
+		}
 	}
 
 	async getEndpoint(handle: InstanceHandle): Promise<Endpoint> {

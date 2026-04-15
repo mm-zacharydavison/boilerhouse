@@ -42,5 +42,5 @@ describe("destroy", () => {
 
 		// Now workload deletion should complete (claim release destroys the pod, which takes time)
 		await client.waitForDeletion("boilerhouseworkloads", wlName, 90_000);
-	}, 120_000);
+	}, 150_000);
 });

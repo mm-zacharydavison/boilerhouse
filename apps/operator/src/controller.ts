@@ -31,14 +31,18 @@ export class Controller<T extends { metadata: { name: string; namespace?: string
     this.log = createLogger(`controller:${options.name}`);
   }
 
-  enqueue(item: T): void {
+  enqueue(item: T, resetRetries = false): void {
     // Deduplicate: if same namespace+name already in queue, replace it
     const key = `${item.metadata.namespace ?? ""}/${item.metadata.name}`;
     const idx = this.queue.findIndex(
       (q) => `${q.item.metadata.namespace ?? ""}/${q.item.metadata.name}` === key,
     );
     if (idx >= 0) {
-      this.queue[idx] = { item, retries: this.queue[idx].retries, nextAttempt: Date.now() };
+      this.queue[idx] = {
+        item,
+        retries: resetRetries ? 0 : this.queue[idx].retries,
+        nextAttempt: Date.now(),
+      };
     } else {
       this.queue.push({ item, retries: 0, nextAttempt: Date.now() });
     }
@@ -66,11 +70,18 @@ export class Controller<T extends { metadata: { name: string; namespace?: string
 
       const backoffMs = Math.min(1000 * 2 ** entry.retries, 30_000);
       this.log.warn({ name, err: msg, retry: entry.retries + 1, backoffMs }, "requeuing");
-      this.queue.push({
-        item: entry.item,
-        retries: entry.retries + 1,
-        nextAttempt: Date.now() + backoffMs,
-      });
+      // Dedup: a watch event may have already re-enqueued a fresher version
+      const key = `${entry.item.metadata.namespace ?? ""}/${entry.item.metadata.name}`;
+      const existingIdx = this.queue.findIndex(
+        (q) => `${q.item.metadata.namespace ?? ""}/${q.item.metadata.name}` === key,
+      );
+      if (existingIdx < 0) {
+        this.queue.push({
+          item: entry.item,
+          retries: entry.retries + 1,
+          nextAttempt: Date.now() + backoffMs,
+        });
+      }
     }
 
     return true;
@@ -82,16 +93,15 @@ export class Controller<T extends { metadata: { name: string; namespace?: string
     while (this.running && !signal?.aborted) {
       const processed = await this.processOnce();
       if (!processed) {
-        // Wait for new items — set wakeup BEFORE checking queue to avoid race:
-        // an enqueue() between processOnce() returning false and wakeup being set
-        // would otherwise wait up to 5s.
+        // Wait for new items or until the nearest backoff expires.
+        // Set wakeup BEFORE computing sleep so an enqueue() between
+        // processOnce() returning false and the setTimeout fires immediately.
+        const nearestMs = this.queue.length > 0
+          ? Math.max(1, Math.min(...this.queue.map((q) => q.nextAttempt)) - Date.now())
+          : 5000;
         await new Promise<void>((resolve) => {
           this.wakeup = resolve;
-          if (this.queue.length > 0) {
-            resolve();
-            return;
-          }
-          setTimeout(resolve, 5000); // periodic wakeup
+          setTimeout(resolve, nearestMs);
         });
         this.wakeup = null;
       }

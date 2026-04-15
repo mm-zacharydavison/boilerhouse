@@ -69,7 +69,7 @@ describe("workload-update", () => {
 		const poolName = uniqueName("pool");
 		tracker.track("boilerhousepools", poolName);
 		await client.applyPool(pool(poolName, wlName, 2));
-		await client.waitForPhase("boilerhousepools", poolName, "Ready");
+		await client.waitForPhase("boilerhousepools", poolName, "Healthy");
 
 		// Update the workload
 		const updated = httpserverWorkload(wlName);
@@ -79,10 +79,10 @@ describe("workload-update", () => {
 		await client.waitForPhase("boilerhouseworkloads", wlName, "Ready");
 
 		// Pool should re-stabilize to Ready
-		await client.waitForPhase("boilerhousepools", poolName, "Ready", 180_000);
+		await client.waitForPhase("boilerhousepools", poolName, "Healthy", 180_000);
 
 		const poolStatus = await client.getStatus("boilerhousepools", poolName);
-		expect(poolStatus?.phase).toBe("Ready");
+		expect(poolStatus?.phase).toBe("Healthy");
 		expect(poolStatus?.ready).toBe(2);
 	}, 180_000);
 });

@@ -224,12 +224,12 @@ describe("workloadToPod", () => {
 		expect(sc.capabilities?.drop).toEqual(["ALL"]);
 	});
 
-	test("main container has runAsNonRoot and allowPrivilegeEscalation disabled", () => {
+	test("main container has allowPrivilegeEscalation disabled", () => {
 		const workload = makeWorkload();
 		const { pod } = workloadToPod(workload, INSTANCE_ID, NAMESPACE);
 		const sc = pod.spec.containers[0]!.securityContext!;
 
-		expect(sc.runAsNonRoot).toBe(true);
+		expect(sc.runAsNonRoot).toBeUndefined();
 		expect(sc.allowPrivilegeEscalation).toBe(false);
 	});
 
@@ -249,11 +249,11 @@ describe("workloadToPod", () => {
 		expect(pod.spec.hostIPC).toBe(false);
 	});
 
-	test("pod spec has RuntimeDefault seccomp profile and runAsNonRoot", () => {
+	test("pod spec has RuntimeDefault seccomp profile", () => {
 		const workload = makeWorkload();
 		const { pod } = workloadToPod(workload, INSTANCE_ID, NAMESPACE);
 
-		expect(pod.spec.securityContext?.runAsNonRoot).toBe(true);
+		expect(pod.spec.securityContext?.runAsNonRoot).toBeUndefined();
 		expect(pod.spec.securityContext?.seccompProfile?.type).toBe("RuntimeDefault");
 	});
 

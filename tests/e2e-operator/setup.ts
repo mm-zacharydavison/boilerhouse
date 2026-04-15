@@ -42,8 +42,37 @@ beforeAll(async () => {
 
 	// 2b. Clean up stale test resources from previous runs.
 	// Unique naming prevents interference, but crashed runs can leave orphans.
+	// Delete managed pods/services/networkpolicies first — CRD finalizers
+	// depend on the operator being alive, but the operator from the previous
+	// run was killed. Cleaning pods directly avoids resource exhaustion.
+	for (const resource of ["pods", "services", "networkpolicies"]) {
+		try {
+			await run([
+				"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
+				"delete", resource, "-l", "boilerhouse.dev/managed=true",
+				"--grace-period=0", "--force", "--timeout=15s",
+			]);
+		} catch {
+			// No managed resources of this type — ignore
+		}
+	}
+	// Strip finalizers from stuck CRDs, then delete them
 	for (const crd of ["boilerhousetriggers", "boilerhouseclaims", "boilerhousepools", "boilerhouseworkloads"]) {
 		try {
+			// Remove finalizers so deletion isn't blocked by the dead operator
+			const listProc = Bun.spawn([
+				"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
+				"get", `${crd}.boilerhouse.dev`, "-o", "jsonpath={.items[*].metadata.name}",
+			], { stdout: "pipe", stderr: "pipe" });
+			const names = (await new Response(listProc.stdout).text()).trim().split(/\s+/).filter(Boolean);
+			await listProc.exited;
+			for (const name of names) {
+				await run([
+					"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
+					"patch", `${crd}.boilerhouse.dev`, name,
+					"--type=merge", "-p", '{"metadata":{"finalizers":[]}}',
+				]).catch(() => {});
+			}
 			await run([
 				"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
 				"delete", `${crd}.boilerhouse.dev`, "--all", "--timeout=15s",

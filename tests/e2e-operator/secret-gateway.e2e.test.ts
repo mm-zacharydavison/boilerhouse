@@ -23,12 +23,17 @@ describe("secret-gateway", () => {
 	});
 
 	test("create secret, workload with credentials, claim, verify pod starts, verify secret not in env", async () => {
-		// Create K8s Secret
-		const result = Bun.spawnSync([
+		// Create K8s Secret (idempotent via dry-run + apply)
+		const dryRun = Bun.spawnSync([
 			"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
 			"create", "secret", "generic", secretName,
 			"--from-literal=token=sk-ant-e2e-test-key",
+			"--dry-run=client", "-o", "yaml",
 		]);
+		const result = Bun.spawnSync([
+			"kubectl", "--context", CONTEXT, "-n", NAMESPACE,
+			"apply", "-f", "-",
+		], { stdin: dryRun.stdout });
 		expect(result.exitCode).toBe(0);
 		secretCreated = true;
 
