@@ -43,6 +43,17 @@ fi
 
 echo "minikube cluster ready (profile: $PROFILE)"
 
+# ── Kill stale processes ────────────────────────────────────────────────────
+
+for port in 3000 3001 8082 9465; do
+  PID=$(lsof -i :"$port" -t 2>/dev/null || true)
+  if [ -n "$PID" ]; then
+    echo "Killing stale process on port $port (PID $PID)"
+    kill $PID 2>/dev/null || true
+  fi
+done
+sleep 0.5
+
 # ── Apply CRDs ───────────────────────────────────────────────────────────────
 
 echo "Applying CRDs..."
@@ -58,7 +69,7 @@ echo "CRDs applied"
 echo ""
 echo "Starting operator..."
 cd "$SCRIPT_DIR/go"
-K8S_NAMESPACE=boilerhouse go run ./cmd/operator/ &
+LEADER_ELECT=false HEALTH_PORT=8082 METRICS_PORT=9465 K8S_NAMESPACE=boilerhouse go run ./cmd/operator/ &
 OPERATOR_PID=$!
 echo "Operator running (PID $OPERATOR_PID)"
 
