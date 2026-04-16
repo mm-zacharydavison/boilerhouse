@@ -224,7 +224,7 @@ function InstanceRow({
 					<Loader2 size={13} className="text-muted animate-spin mr-1" />
 				) : (
 					<div className="flex items-center gap-0.5">
-						{instance.tenantId && instance.phase === "Running" && (
+						{instance.phase === "Running" && (
 							<IconButton icon={Plug} title="Connect" variant="info" onClick={() => onConnect(instance)} />
 						)}
 						<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onDestroy(instance.name)} />
