@@ -26,5 +26,6 @@ spec:
       path: /
       port: 8080
   entrypoint:
-    cmd: sh
-    args: ["-c", "mkdir -p /www && echo 'OK' > /www/index.html && busybox httpd -f -p 8080 -h /www"]
+    cmd: python3
+    args: ["server.py"]
+    workdir: /app
