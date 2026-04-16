@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,9 @@ func (r *WorkloadReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 	}
 
 	// If image.dockerfile is set, build the image.
+	log := ctrl.LoggerFrom(ctx)
 	if wl.Spec.Image.Dockerfile != "" {
+		log.Info("workload has dockerfile", "dockerfile", wl.Spec.Image.Dockerfile, "phase", wl.Status.Phase)
 		imageTag := fmt.Sprintf("boilerhouse/%s:%s", wl.Name, wl.Spec.Version)
 
 		// Set Creating while building.
@@ -106,7 +109,8 @@ func (r *WorkloadReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 // buildImage builds a container image from a Dockerfile and loads it into the
-// local cluster's image cache. Tries minikube first, falls back to docker build.
+// cluster's container runtime. Uses `docker build` with minikube's docker-env
+// so the image is built directly in minikube's Docker daemon.
 func (r *WorkloadReconciler) buildImage(ctx context.Context, dockerfile, imageTag string) error {
 	dockerfilePath := dockerfile
 	if r.WorkloadsDir != "" {
@@ -114,20 +118,24 @@ func (r *WorkloadReconciler) buildImage(ctx context.Context, dockerfile, imageTa
 	}
 	buildContext := filepath.Dir(dockerfilePath)
 
-	// Try minikube image build first (builds directly in minikube's container runtime).
-	if minikubeProfile := detectMinikubeProfile(); minikubeProfile != "" {
-		cmd := exec.CommandContext(ctx, "minikube", "-p", minikubeProfile,
-			"image", "build", "-t", imageTag, "-f", dockerfilePath, buildContext)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("minikube image build: %w (stderr: %s)", err, stderr.String())
+	// Get minikube's docker environment so we build directly in minikube's daemon.
+	env := os.Environ()
+	if profile := detectMinikubeProfile(); profile != "" {
+		envCmd := exec.CommandContext(ctx, "minikube", "-p", profile, "docker-env", "--shell", "none")
+		out, err := envCmd.Output()
+		if err == nil {
+			// Parse KEY=VALUE lines and add to environment.
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") && strings.Contains(line, "=") {
+					env = append(env, line)
+				}
+			}
 		}
-		return nil
 	}
 
-	// Fallback: docker build + load into cluster.
 	cmd := exec.CommandContext(ctx, "docker", "build", "-t", imageTag, "-f", dockerfilePath, buildContext)
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
