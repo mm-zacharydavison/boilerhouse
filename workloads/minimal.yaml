@@ -17,4 +17,5 @@ spec:
     timeoutSeconds: 300
     action: hibernate
   entrypoint:
-    cmd: /sbin/init
+    cmd: sh
+    args: ["-c", "echo 'minimal container ready' && exec sleep infinity"]
