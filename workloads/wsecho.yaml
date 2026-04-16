@@ -6,7 +6,7 @@ metadata:
 spec:
   version: "0.1.0"
   image:
-    ref: boilerhouse/wsecho:latest
+    ref: busybox:1.36
   resources:
     vcpus: 1
     memoryMb: 256
@@ -15,7 +15,6 @@ spec:
     access: unrestricted
     expose:
       - guest: 8080
-      - guest: 8081
     websocket: /ws
   idle:
     timeoutSeconds: 300
@@ -25,8 +24,7 @@ spec:
     unhealthyThreshold: 30
     httpGet:
       path: /
-      port: 8081
+      port: 8080
   entrypoint:
-    cmd: python3
-    args: ["server.py"]
-    workdir: /app
+    cmd: sh
+    args: ["-c", "mkdir -p /www && echo 'OK' > /www/index.html && busybox httpd -f -p 8080 -h /www"]

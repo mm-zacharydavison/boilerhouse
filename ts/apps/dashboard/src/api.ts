@@ -144,8 +144,15 @@ export const api = {
 
 	fetchInstance: (id: string) => get<InstanceResponse>(`/instances/${encodeURIComponent(id)}`),
 
-	fetchInstanceLogs: (id: string, tail = 200) =>
-		get<string>(`/instances/${encodeURIComponent(id)}/logs?tail=${tail}`).catch(() => null),
+	fetchInstanceLogs: async (id: string, tail = 200): Promise<string | null> => {
+		try {
+			const res = await fetch(`${BASE}/instances/${encodeURIComponent(id)}/logs?tail=${tail}`);
+			if (!res.ok) return null;
+			return res.text();
+		} catch {
+			return null;
+		}
+	},
 
 	destroyInstance: (id: string) =>
 		post<{ status: string; instance: string }>(

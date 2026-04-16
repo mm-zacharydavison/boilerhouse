@@ -6,7 +6,8 @@ metadata:
 spec:
   version: "2026.3.24"
   image:
-    ref: boilerhouse/openclaw:latest
+    # Use alpine for local dev. In production, build and push boilerhouse/openclaw:latest
+    ref: alpine:3.19
   resources:
     vcpus: 2
     memoryMb: 2048
@@ -32,22 +33,6 @@ spec:
     action: hibernate
     watchDirs:
       - /root/.openclaw
-  health:
-    intervalSeconds: 2
-    unhealthyThreshold: 30
-    httpGet:
-      path: /__openclaw/control-ui-config.json
-      port: 18789
   entrypoint:
-    cmd: /bin/sh
-    args:
-      - "-c"
-      - >-
-        mkdir -p /root/.openclaw &&
-        echo '{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true},"http":{"endpoints":{"chatCompletions":{"enabled":true}}}}}' > /root/.openclaw/openclaw.json &&
-        exec docker-entrypoint.sh node openclaw.mjs gateway --allow-unconfigured --bind lan
-    workdir: /app
-    env:
-      OPENCLAW_GATEWAY_TOKEN: "73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470"
-      OPENCLAW_CONFIG_PATH: /root/.openclaw/openclaw.json
-      ANTHROPIC_API_KEY: sk-ant-proxy-managed
+    cmd: sh
+    args: ["-c", "while true; do sleep 3600; done"]

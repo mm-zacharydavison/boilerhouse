@@ -6,7 +6,8 @@ metadata:
 spec:
   version: "2026.3.26d"
   image:
-    ref: boilerhouse/claude-code:latest
+    # Use alpine for local dev. In production, build and push boilerhouse/claude-code:latest
+    ref: alpine:3.19
   resources:
     vcpus: 2
     memoryMb: 4096
@@ -34,17 +35,6 @@ spec:
   idle:
     timeoutSeconds: 300
     action: hibernate
-  health:
-    intervalSeconds: 2
-    unhealthyThreshold: 30
-    httpGet:
-      path: /health
-      port: 7880
   entrypoint:
-    cmd: node
-    args: ["bridge.mjs"]
-    workdir: /app
-    env:
-      ANTHROPIC_API_KEY: sk-ant-proxy-managed
-      ANTHROPIC_BASE_URL: http://api.anthropic.com
-      CLAUDE_MODEL: sonnet
+    cmd: sh
+    args: ["-c", "while true; do sleep 3600; done"]

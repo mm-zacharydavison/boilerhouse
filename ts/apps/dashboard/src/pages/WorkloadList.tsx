@@ -60,7 +60,7 @@ function formatDate(dateStr: string): string {
 }
 
 function shortId(id: string): string {
-	return id.length > 12 ? id.slice(0, 12) : id;
+	return id;
 }
 
 // --- Icon Action Button ---
