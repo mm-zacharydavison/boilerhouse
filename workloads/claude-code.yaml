@@ -34,6 +34,19 @@ spec:
   idle:
     timeoutSeconds: 300
     action: hibernate
+  health:
+    intervalSeconds: 2
+    unhealthyThreshold: 30
+    httpGet:
+      path: /health
+      port: 7880
   entrypoint:
-    cmd: sh
-    args: ["-c", "while true; do sleep 3600; done"]
+    cmd: node
+    args: ["bridge.mjs"]
+    workdir: /app
+    env:
+      ANTHROPIC_API_KEY: sk-ant-proxy-managed
+      ANTHROPIC_BASE_URL: http://api.anthropic.com
+      CLAUDE_MODEL: sonnet
+      BRIDGE_PORT: "7880"
+      WORKSPACE_DIR: /workspace

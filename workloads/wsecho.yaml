@@ -15,6 +15,7 @@ spec:
     access: unrestricted
     expose:
       - guest: 8080
+      - guest: 8081
     websocket: /ws
   idle:
     timeoutSeconds: 300
@@ -24,7 +25,7 @@ spec:
     unhealthyThreshold: 30
     httpGet:
       path: /
-      port: 8080
+      port: 8081
   entrypoint:
     cmd: python3
     args: ["server.py"]

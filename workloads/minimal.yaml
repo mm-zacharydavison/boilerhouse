@@ -17,5 +17,4 @@ spec:
     timeoutSeconds: 300
     action: hibernate
   entrypoint:
-    cmd: sh
-    args: ["-c", "while true; do sleep 3600; done"]
+    cmd: /sbin/init
