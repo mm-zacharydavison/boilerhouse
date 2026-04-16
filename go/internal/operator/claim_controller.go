@@ -51,6 +51,11 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req reconcile.Request) 
 	switch claim.Status.Phase {
 	case "Active":
 		return r.handleActive(ctx, &claim)
+	case "Released":
+		// Terminal state — do not reconcile further.
+		// The claim persists so the snapshot is discoverable.
+		// To revive, delete this claim and create a new one.
+		return reconcile.Result{}, nil
 	default:
 		// Empty, Pending, or any other non-active phase: handle as new claim.
 		return r.handleNewClaim(ctx, req, &claim)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -76,6 +77,32 @@ func (s *Server) claimInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	claimName := fmt.Sprintf("claim-%s-%s", tenantID, wlName)
+
+	// If a Released claim exists, delete it first (allows revive after hibernate).
+	var existing v1alpha1.BoilerhouseClaim
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: claimName, Namespace: s.namespace}, &existing); err == nil {
+		if existing.Status.Phase == "Released" {
+			// Strip finalizer to allow immediate deletion.
+			if len(existing.Finalizers) > 0 {
+				existing.Finalizers = nil
+				if err := s.client.Update(r.Context(), &existing); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to clear finalizer on old claim: "+err.Error())
+					return
+				}
+			}
+			if err := s.client.Delete(r.Context(), &existing); err != nil && !apierrors.IsNotFound(err) {
+				writeError(w, http.StatusInternalServerError, "failed to delete old claim: "+err.Error())
+				return
+			}
+			// Wait briefly for deletion to propagate.
+			time.Sleep(500 * time.Millisecond)
+		} else if existing.Status.Phase == "Active" {
+			// Already active — return existing claim info.
+			writeJSON(w, http.StatusOK, toClaimResponse(&existing))
+			return
+		}
+	}
+
 	now := metav1.Now()
 
 	claim := &v1alpha1.BoilerhouseClaim{
