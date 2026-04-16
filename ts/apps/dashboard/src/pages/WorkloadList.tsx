@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { ChevronDown, ChevronRight, Trash2, UserPlus, Loader2, Plug } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, UserPlus, Loader2, Plug, Moon } from "lucide-react";
 import { useApi, useWebSocket } from "../hooks";
 import {
 	api,
@@ -187,12 +187,14 @@ const DATE_W = 88;
 function InstanceRow({
 	instance,
 	onDestroy,
+	onHibernate,
 	onConnect,
 	workloadName,
 	busy,
 }: {
 	instance: InstanceResponse;
 	onDestroy: (id: string) => void;
+	onHibernate: (tenantId: string, workloadName: string) => void;
 	onConnect: (instance: InstanceResponse) => void;
 	workloadName: string;
 	/** When true, action buttons are replaced with a spinner. */
@@ -227,6 +229,9 @@ function InstanceRow({
 						{instance.phase === "Running" && (
 							<IconButton icon={Plug} title="Connect" variant="info" onClick={() => onConnect(instance)} />
 						)}
+						{instance.tenantId && instance.phase === "Running" && (
+							<IconButton icon={Moon} title="Hibernate" variant="warning" onClick={() => onHibernate(instance.tenantId!, workloadName)} />
+						)}
 						<IconButton icon={Trash2} title="Destroy" variant="danger" onClick={() => onDestroy(instance.name)} />
 					</div>
 				)
@@ -258,6 +263,7 @@ function InstanceSection({
 	label,
 	instances,
 	onDestroy,
+	onHibernate,
 	onConnect,
 	workloadName,
 	busyInstances,
@@ -265,6 +271,7 @@ function InstanceSection({
 	label: string;
 	instances: InstanceNode[];
 	onDestroy: (id: string) => void;
+	onHibernate: (tenantId: string, workloadName: string) => void;
 	onConnect: (instance: InstanceResponse) => void;
 	workloadName: string;
 	busyInstances: Set<string>;
@@ -283,6 +290,7 @@ function InstanceSection({
 					key={inst.instance.name}
 					instance={inst.instance}
 					onDestroy={onDestroy}
+					onHibernate={onHibernate}
 					onConnect={onConnect}
 					workloadName={workloadName}
 					busy={busyInstances.has(inst.instance.name)}
@@ -299,6 +307,7 @@ function WorkloadGroup({
 	expanded,
 	onToggle,
 	onDestroy,
+	onHibernate,
 	onConnect,
 	navigate,
 	busyInstances,
@@ -309,6 +318,7 @@ function WorkloadGroup({
 	expanded: boolean;
 	onToggle: () => void;
 	onDestroy: (id: string) => void;
+	onHibernate: (tenantId: string, workloadName: string) => void;
 	onConnect: (instance: InstanceResponse) => void;
 	navigate: (path: string) => void;
 	busyInstances: Set<string>;
@@ -366,6 +376,7 @@ function WorkloadGroup({
 								label="pool"
 								instances={poolInstances}
 								onDestroy={onDestroy}
+								onHibernate={onHibernate}
 								onConnect={onConnect}
 								workloadName={workload.name}
 								busyInstances={busyInstances}
@@ -378,6 +389,7 @@ function WorkloadGroup({
 							label="claimed"
 							instances={claimedInstances}
 							onDestroy={onDestroy}
+							onHibernate={onHibernate}
 							onConnect={onConnect}
 							workloadName={workload.name}
 							busyInstances={busyInstances}
@@ -464,6 +476,15 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		refetchAll();
 	}
 
+	async function handleHibernate(tenantId: string, workloadName: string) {
+		try {
+			await api.releaseWorkload(tenantId, workloadName);
+			refetchAll();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : "Hibernate failed");
+		}
+	}
+
 	async function handleDestroy(instanceName: string) {
 		setBusyInstances((prev) => new Set(prev).add(instanceName));
 		try {
@@ -494,6 +515,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 							expanded={expanded.has(node.workload.name)}
 							onToggle={() => toggleExpanded(node.workload.name)}
 							onDestroy={handleDestroy}
+							onHibernate={handleHibernate}
 							onConnect={(instance) => setConnectTarget({ instance, workloadName: node.workload.name })}
 							navigate={navigate}
 							busyInstances={busyInstances}

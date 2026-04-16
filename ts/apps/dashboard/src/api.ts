@@ -164,6 +164,11 @@ export const api = {
 			workload: workloadName,
 		}),
 
+	releaseWorkload: (tenantId: string, workloadName: string) =>
+		postJson<{ status: string }>(`/tenants/${encodeURIComponent(tenantId)}/release`, {
+			workload: workloadName,
+		}),
+
 	// Triggers
 	fetchTriggers: () => get<TriggerResponse[]>("/triggers"),
 
