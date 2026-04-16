@@ -493,6 +493,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 			debounceRef.current = setTimeout(() => {
 				refetchWorkloads();
 				refetchInstances();
+				refetchSnapshots();
 			}, 200);
 		}
 	}, [refetchWorkloads, refetchInstances]));
@@ -555,7 +556,11 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		const key = `${tenantId}:${workloadName}`;
 		setBusyTenants((prev) => new Set(prev).add(key));
 		try {
-			await api.claimWorkload(tenantId, workloadName);
+			const res = await api.claimWorkload(tenantId, workloadName);
+			// A pool pod was consumed — show warming placeholder for the replacement.
+			if (res.source === "pool" || res.source === "pool+data") {
+				setPendingWarms((prev) => new Set(prev).add(workloadName));
+			}
 			refetchAll();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Revive failed");
