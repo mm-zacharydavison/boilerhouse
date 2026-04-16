@@ -1,0 +1,6 @@
+# Compiled binaries from `go build ./cmd/...` at the module root.
+# Note: `api` and `trigger` are also legitimate source directories (go/api/,
+# go/cmd/trigger/), so only list the operator binary here. If you build the
+# others at the module root, add explicit entries like `/api-server` by
+# building with `go build -o` to a distinct name.
+/operator
