@@ -570,6 +570,12 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	}
 
 	async function handleHibernate(tenantId: string, workloadName: string) {
+		// Find the instance name so we can show a spinner on the row.
+		const inst = (instancesApi.data ?? []).find(
+			(i) => i.tenantId === tenantId && i.workloadRef === workloadName,
+		);
+		const instanceName = inst?.name;
+		if (instanceName) setBusyInstances((prev) => new Set(prev).add(instanceName));
 		const tenantKey = `${tenantId}:${workloadName}`;
 		setBusyTenants((prev) => new Set(prev).add(tenantKey));
 		try {
@@ -579,6 +585,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 			alert(err instanceof Error ? err.message : "Hibernate failed");
 		} finally {
 			setBusyTenants((prev) => { const next = new Set(prev); next.delete(tenantKey); return next; });
+			if (instanceName) setBusyInstances((prev) => { const next = new Set(prev); next.delete(instanceName); return next; });
 		}
 	}
 
