@@ -75,6 +75,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiResult<T> {
 	fetcherRef.current = fetcher;
 
 	const hasData = useRef(false);
+	const lastJSON = useRef<string>("");
 
 	const refetch = useCallback(() => {
 		// Only show loading spinner on initial fetch, not on refreshes
@@ -86,7 +87,12 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiResult<T> {
 			.current()
 			.then((result) => {
 				hasData.current = true;
-				setData(result);
+				// Skip setState if data hasn't changed (prevents unnecessary re-renders)
+				const json = JSON.stringify(result);
+				if (json !== lastJSON.current) {
+					lastJSON.current = json;
+					setData(result);
+				}
 			})
 			.catch((err: unknown) => {
 				setError(err instanceof Error ? err.message : String(err));

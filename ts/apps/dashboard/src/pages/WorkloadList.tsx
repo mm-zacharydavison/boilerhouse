@@ -407,7 +407,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 			debounceRef.current = setTimeout(() => {
 				refetchWorkloads();
 				refetchInstances();
-			}, 500);
+			}, 200);
 		}
 	}, [refetchWorkloads, refetchInstances]));
 
