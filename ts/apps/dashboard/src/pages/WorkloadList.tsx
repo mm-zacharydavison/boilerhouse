@@ -6,6 +6,7 @@ import {
 	type WorkloadResponse,
 	type InstanceResponse,
 	type ClaimResponse,
+	type SnapshotEntry,
 } from "../api";
 import {
 	LoadingState,
@@ -23,10 +24,10 @@ interface InstanceNode {
 
 interface WorkloadTreeNode {
 	workload: WorkloadResponse;
-	/** Unclaimed pool instances (tenantId is empty/missing). */
 	poolInstances: InstanceNode[];
-	/** Instances claimed by a tenant (tenantId is present). */
 	claimedInstances: InstanceNode[];
+	/** Tenants with snapshots but no active claim (hibernated). */
+	hibernatedTenants: SnapshotEntry[];
 }
 
 // --- Tree builder ---
@@ -34,6 +35,7 @@ interface WorkloadTreeNode {
 function buildWorkloadTree(
 	workloads: WorkloadResponse[],
 	instances: InstanceResponse[],
+	snapshots: SnapshotEntry[],
 ): WorkloadTreeNode[] {
 	const instancesByWorkload = new Map<string, InstanceResponse[]>();
 	for (const inst of instances) {
@@ -44,12 +46,28 @@ function buildWorkloadTree(
 		instancesByWorkload.set(wlName, list);
 	}
 
+	// Group snapshots by workload
+	const snapshotsByWorkload = new Map<string, SnapshotEntry[]>();
+	for (const snap of snapshots) {
+		const list = snapshotsByWorkload.get(snap.workloadRef) ?? [];
+		list.push(snap);
+		snapshotsByWorkload.set(snap.workloadRef, list);
+	}
+
 	return workloads.map((workload) => {
 		const all = instancesByWorkload.get(workload.name) ?? [];
+		const claimedInstances = all.filter((i) => !!i.tenantId);
+		const activeTenantIds = new Set(claimedInstances.map((i) => i.tenantId!));
+
+		// Hibernated = has snapshot but no active claim
+		const allSnapshots = snapshotsByWorkload.get(workload.name) ?? [];
+		const hibernatedTenants = allSnapshots.filter((s) => !activeTenantIds.has(s.tenantId));
+
 		return {
 			workload,
 			poolInstances: all.filter((i) => !i.tenantId).map((inst) => ({ instance: inst })),
-			claimedInstances: all.filter((i) => !!i.tenantId).map((inst) => ({ instance: inst })),
+			claimedInstances: claimedInstances.map((inst) => ({ instance: inst })),
+			hibernatedTenants,
 		};
 	});
 }
@@ -312,6 +330,7 @@ function WorkloadGroup({
 	navigate,
 	busyInstances,
 	onClaim,
+	onRevive,
 	pendingWarm,
 }: {
 	node: WorkloadTreeNode;
@@ -319,15 +338,16 @@ function WorkloadGroup({
 	onToggle: () => void;
 	onDestroy: (id: string) => void;
 	onHibernate: (tenantId: string, workloadName: string) => void;
+	onRevive: (tenantId: string, workloadName: string) => void;
 	onConnect: (instance: InstanceResponse) => void;
 	navigate: (path: string) => void;
 	busyInstances: Set<string>;
 	onClaim?: (workloadName: string, source: string) => void;
 	pendingWarm?: boolean;
 }) {
-	const { workload, poolInstances, claimedInstances } = node;
+	const { workload, poolInstances, claimedInstances, hibernatedTenants } = node;
 	const Chevron = expanded ? ChevronDown : ChevronRight;
-	const hasInstances = poolInstances.length > 0 || claimedInstances.length > 0 || !!pendingWarm;
+	const hasInstances = poolInstances.length > 0 || claimedInstances.length > 0 || hibernatedTenants.length > 0 || !!pendingWarm;
 	const phase = workload.status.phase ?? "Unknown";
 
 	return (
@@ -395,6 +415,32 @@ function WorkloadGroup({
 							busyInstances={busyInstances}
 						/>
 					)}
+					{hibernatedTenants.length > 0 && (
+						<>
+							<div
+								className="flex items-center h-6 px-2 border-b border-border/10"
+								style={{ paddingLeft: GUTTER_W + STATUS_W + 8 }}
+							>
+								<span className="text-xs text-muted font-mono uppercase tracking-wider">hibernated</span>
+								<span className="text-xs text-muted font-mono ml-1.5">({hibernatedTenants.length})</span>
+							</div>
+							{hibernatedTenants.map((snap) => (
+								<div key={snap.tenantId} className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
+									<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
+										<span className="font-mono text-sm leading-none text-status-blue cursor-default" title="hibernated">◑</span>
+									</span>
+									<span className="text-muted-light">{snap.tenantId}</span>
+									<span className="flex-1" />
+									<IconButton
+										icon={UserPlus}
+										title="Revive (claim with snapshot)"
+										variant="info"
+										onClick={() => onRevive(snap.tenantId, workload.name)}
+									/>
+								</div>
+							))}
+						</>
+					)}
 				</div>
 			)}
 		</div>
@@ -406,6 +452,7 @@ function WorkloadGroup({
 export function WorkloadList({ navigate }: { navigate: (path: string) => void }) {
 	const workloadsApi = useApi<WorkloadResponse[]>(api.fetchWorkloads);
 	const instancesApi = useApi<InstanceResponse[]>(useCallback(() => api.fetchInstances(), []));
+	const snapshotsApi = useApi<SnapshotEntry[]>(api.fetchSnapshots);
 
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [initialized, setInitialized] = useState(false);
@@ -416,6 +463,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	// Auto-refresh when instance state changes (debounced to avoid flicker)
 	const { refetch: refetchWorkloads } = workloadsApi;
 	const { refetch: refetchInstances } = instancesApi;
+	const { refetch: refetchSnapshots } = snapshotsApi;
 	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useWebSocket(useCallback((event) => {
 		const e = event as { type: string; workloadRef?: string; tenantId?: string | null };
@@ -453,6 +501,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	const tree = buildWorkloadTree(
 		workloadsApi.data,
 		instancesApi.data ?? [],
+		snapshotsApi.data ?? [],
 	);
 
 	function toggleExpanded(workloadName: string) {
@@ -467,6 +516,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	function refetchAll() {
 		workloadsApi.refetch();
 		instancesApi.refetch();
+		snapshotsApi.refetch();
 	}
 
 	function handleClaim(workloadName: string, source: string) {
@@ -482,6 +532,15 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 			refetchAll();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Hibernate failed");
+		}
+	}
+
+	async function handleRevive(tenantId: string, workloadName: string) {
+		try {
+			await api.claimWorkload(tenantId, workloadName);
+			refetchAll();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : "Revive failed");
 		}
 	}
 
@@ -520,6 +579,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 							navigate={navigate}
 							busyInstances={busyInstances}
 							onClaim={handleClaim}
+							onRevive={handleRevive}
 							pendingWarm={pendingWarms.has(node.workload.name)}
 						/>
 					))}

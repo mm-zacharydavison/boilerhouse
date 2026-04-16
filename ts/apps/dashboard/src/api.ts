@@ -131,6 +131,13 @@ export interface TriggerResponse {
 	createdAt: string;
 }
 
+// Snapshot entry from the snapshots PVC
+export interface SnapshotEntry {
+	tenantId: string;
+	workloadRef: string;
+	path: string;
+}
+
 // --- API methods ---
 
 export const api = {
@@ -168,6 +175,11 @@ export const api = {
 		postJson<{ status: string }>(`/tenants/${encodeURIComponent(tenantId)}/release`, {
 			workload: workloadName,
 		}),
+
+	// Snapshots
+	fetchSnapshots: () => get<SnapshotEntry[]>("/snapshots"),
+	fetchWorkloadSnapshots: (name: string) =>
+		get<SnapshotEntry[]>(`/workloads/${encodeURIComponent(name)}/snapshots`),
 
 	// Triggers
 	fetchTriggers: () => get<TriggerResponse[]>("/triggers"),
