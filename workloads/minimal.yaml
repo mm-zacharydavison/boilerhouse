@@ -1,23 +1,21 @@
-name: minimal
-version: "0.1.0"
-
-image:
-  ref: alpine:3.19
-
-resources:
-  vcpus: 1
-  memory_mb: 128
-
-network:
-  access: "none"
-
-idle:
-  timeout_seconds: 300
-  action: hibernate
-
-entrypoint:
-  cmd: sh
-  args: ["-c", "while true; do sleep 3600; done"]
-
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
 metadata:
-  description: Minimal Alpine container for testing
+  name: minimal
+  namespace: boilerhouse
+spec:
+  version: "0.1.0"
+  image:
+    ref: alpine:3.19
+  resources:
+    vcpus: 1
+    memoryMb: 128
+    diskGb: 1
+  network:
+    access: "none"
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  entrypoint:
+    cmd: sh
+    args: ["-c", "while true; do sleep 3600; done"]

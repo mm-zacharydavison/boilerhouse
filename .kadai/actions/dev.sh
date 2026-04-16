@@ -64,6 +64,12 @@ elif [ -d "$SCRIPT_DIR/config/crd/bases" ]; then
 fi
 echo "CRDs applied"
 
+# ── Apply workloads ─────────────────────────────────────────────────────────
+
+echo "Applying workloads..."
+kubectl apply -f "$SCRIPT_DIR/workloads/" 2>/dev/null
+echo "Workloads applied"
+
 # ── Start operator in background ─────────────────────────────────────────────
 
 echo ""
@@ -90,4 +96,4 @@ echo "Dashboard running (PID $DASHBOARD_PID)"
 echo ""
 echo "Starting API server on :3000..."
 cd "$SCRIPT_DIR/go"
-PORT=3000 LISTEN_HOST=127.0.0.1 K8S_NAMESPACE=boilerhouse WORKLOADS_DIR="$SCRIPT_DIR/workloads" exec go run ./cmd/api/
+PORT=3000 LISTEN_HOST=127.0.0.1 K8S_NAMESPACE=boilerhouse exec go run ./cmd/api/
