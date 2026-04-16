@@ -581,9 +581,11 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		try {
 			await api.releaseWorkload(tenantId, workloadName);
 			refetchAll();
+			// Keep busy state — the spinner stays until the instance disappears
+			// from the next data refresh. No need to clear manually.
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Hibernate failed");
-		} finally {
+			// Only clear on error so the user can retry.
 			setBusyTenants((prev) => { const next = new Set(prev); next.delete(tenantKey); return next; });
 			if (instanceName) setBusyInstances((prev) => { const next = new Set(prev); next.delete(instanceName); return next; });
 		}
