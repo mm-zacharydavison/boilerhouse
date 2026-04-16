@@ -137,11 +137,15 @@ spec:
               image:
                 description: Image defines the container image.
                 properties:
-                  ref:
-                    description: Ref is the container image reference.
+                  dockerfile:
+                    description: |-
+                      Dockerfile is the path to a Dockerfile relative to the workloads directory.
+                      When set, the operator builds the image and tags it as boilerhouse/<name>:<version>.
                     type: string
-                required:
-                - ref
+                  ref:
+                    description: Ref is a container image reference (e.g., alpine:3.19,
+                      ghcr.io/org/img:tag).
+                    type: string
                 type: object
               network:
                 description: Network defines network configuration.

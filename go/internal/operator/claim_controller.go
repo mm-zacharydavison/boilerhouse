@@ -209,6 +209,7 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 		WorkloadName: claim.Spec.WorkloadRef,
 		TenantId:     claim.Spec.TenantId,
 		Namespace:    claim.Namespace,
+		ImageRef:     ResolvedImageRef(wl),
 	}
 
 	// Resolve credentials and build proxy config if workload has credentials.

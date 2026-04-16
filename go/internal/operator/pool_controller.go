@@ -122,6 +122,7 @@ func (r *PoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 				WorkloadName: pool.Spec.WorkloadRef,
 				Namespace:    pool.Namespace,
 				PoolStatus:   "warming",
+				ImageRef:     ResolvedImageRef(&wl),
 			})
 			if err != nil {
 				return reconcile.Result{}, fmt.Errorf("translating pool pod: %w", err)

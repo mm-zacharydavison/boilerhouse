@@ -6,7 +6,7 @@ metadata:
 spec:
   version: "0.1.0"
   image:
-    ref: busybox:1.36
+    dockerfile: httpserver/Dockerfile
   resources:
     vcpus: 1
     memoryMb: 256

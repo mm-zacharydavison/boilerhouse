@@ -61,9 +61,12 @@ func main() {
 	}
 
 	// Register all controllers.
+	workloadsDir := os.Getenv("WORKLOADS_DIR")
+
 	if err := (&operator.WorkloadReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		WorkloadsDir: workloadsDir,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller", "controller", "WorkloadReconciler")
 		os.Exit(1)

@@ -45,8 +45,10 @@ func TestTriggerController_ValidTriggerBecomesActive(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-	_, err := wlReconciler.Reconcile(ctx, wlReq)
-	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		_, err := wlReconciler.Reconcile(ctx, wlReq)
+		require.NoError(t, err)
+	}
 
 	// Verify workload is Ready.
 	var readyWl v1alpha1.BoilerhouseWorkload

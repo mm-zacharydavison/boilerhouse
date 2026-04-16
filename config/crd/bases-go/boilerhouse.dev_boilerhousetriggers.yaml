@@ -86,6 +86,9 @@ spec:
                   prefix:
                     description: Prefix is a prefix applied to the tenant identifier.
                     type: string
+                  static:
+                    description: Static sets a fixed tenant identifier for all events.
+                    type: string
                 type: object
               type:
                 description: Type is the trigger type.

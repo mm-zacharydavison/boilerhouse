@@ -6,8 +6,7 @@ metadata:
 spec:
   version: "2026.3.24"
   image:
-    # Use alpine for local dev. In production, build and push boilerhouse/openclaw:latest
-    ref: alpine:3.19
+    dockerfile: openclaw/Dockerfile
   resources:
     vcpus: 2
     memoryMb: 2048

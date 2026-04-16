@@ -33,6 +33,7 @@ type TranslateOpts struct {
 	TenantId     string // empty for pool pods
 	Namespace    string
 	PoolStatus   string // "warming", "ready", or "" for non-pool
+	ImageRef     string // resolved image reference (handles dockerfile builds)
 	ProxyConfig  *ProxyConfig // nil if no sidecar needed
 }
 
@@ -148,9 +149,20 @@ func buildPod(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels 
 func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*corev1.Container, error) {
 	falseVal := false
 
+	imageRef := opts.ImageRef
+	if imageRef == "" {
+		imageRef = spec.Image.Ref
+	}
+
+	pullPolicy := corev1.PullIfNotPresent
+	if spec.Image.Dockerfile != "" {
+		pullPolicy = corev1.PullNever
+	}
+
 	container := &corev1.Container{
-		Name:  "main",
-		Image: spec.Image.Ref,
+		Name:            "main",
+		Image:           imageRef,
+		ImagePullPolicy: pullPolicy,
 		SecurityContext: &corev1.SecurityContext{
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},

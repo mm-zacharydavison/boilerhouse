@@ -6,9 +6,15 @@ import (
 )
 
 // WorkloadImage defines the container image for a workload.
+// Exactly one of Ref or Dockerfile must be set.
 type WorkloadImage struct {
-	// Ref is the container image reference.
-	Ref string `json:"ref"`
+	// Ref is a container image reference (e.g., alpine:3.19, ghcr.io/org/img:tag).
+	// +optional
+	Ref string `json:"ref,omitempty"`
+	// Dockerfile is the path to a Dockerfile relative to the workloads directory.
+	// When set, the operator builds the image and tags it as boilerhouse/<name>:<version>.
+	// +optional
+	Dockerfile string `json:"dockerfile,omitempty"`
 }
 
 // WorkloadResources defines resource requirements for a workload.

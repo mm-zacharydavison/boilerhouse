@@ -6,7 +6,7 @@ metadata:
 spec:
   version: "0.1.0"
   image:
-    ref: alpine:3.19
+    dockerfile: minimal/Dockerfile
   resources:
     vcpus: 1
     memoryMb: 128

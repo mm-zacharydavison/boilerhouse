@@ -77,7 +77,7 @@ echo "Workloads applied"
 echo ""
 echo "Starting operator..."
 cd "$SCRIPT_DIR/go"
-LEADER_ELECT=false HEALTH_PORT=8082 METRICS_PORT=9465 K8S_NAMESPACE=boilerhouse go run ./cmd/operator/ &
+LEADER_ELECT=false HEALTH_PORT=8082 METRICS_PORT=9465 K8S_NAMESPACE=boilerhouse WORKLOADS_DIR="$SCRIPT_DIR/workloads" go run ./cmd/operator/ &
 OPERATOR_PID=$!
 echo "Operator running (PID $OPERATOR_PID)"
 
