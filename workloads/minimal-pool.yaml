@@ -1,9 +1,9 @@
 apiVersion: boilerhouse.dev/v1alpha1
 kind: BoilerhousePool
 metadata:
-  name: httpserver-pool
+  name: minimal-pool
   namespace: boilerhouse
 spec:
-  workloadRef: httpserver
+  workloadRef: minimal
   size: 1
-  maxFillConcurrency: 2
+  maxFillConcurrency: 1

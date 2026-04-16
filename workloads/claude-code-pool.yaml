@@ -5,5 +5,5 @@ metadata:
   namespace: boilerhouse
 spec:
   workloadRef: claude-code
-  size: 2
+  size: 1
   maxFillConcurrency: 1

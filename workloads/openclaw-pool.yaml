@@ -1,9 +1,9 @@
 apiVersion: boilerhouse.dev/v1alpha1
 kind: BoilerhousePool
 metadata:
-  name: httpserver-pool
+  name: openclaw-pool
   namespace: boilerhouse
 spec:
-  workloadRef: httpserver
+  workloadRef: openclaw
   size: 1
-  maxFillConcurrency: 2
+  maxFillConcurrency: 1
