@@ -17,12 +17,21 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
+// envtestResult holds the output of setupEnvtest.
+type envtestResult struct {
+	ctx        context.Context
+	client     client.Client
+	restConfig *rest.Config
+	cleanup    func()
+}
+
 // setupEnvtest starts an envtest environment with the Boilerhouse CRDs loaded.
-func setupEnvtest(t *testing.T) (context.Context, client.Client, func()) {
+func setupEnvtest(t *testing.T) envtestResult {
 	t.Helper()
 
 	_, thisFile, _, _ := runtime.Caller(0)
@@ -60,7 +69,7 @@ func setupEnvtest(t *testing.T) (context.Context, client.Client, func()) {
 		}
 	}
 
-	return ctx, k8sClient, cleanup
+	return envtestResult{ctx: ctx, client: k8sClient, restConfig: cfg, cleanup: cleanup}
 }
 
 // newTestServer creates a Server backed by envtest for integration testing.
@@ -68,17 +77,18 @@ func setupEnvtest(t *testing.T) (context.Context, client.Client, func()) {
 func newTestServer(t *testing.T) (*Server, func()) {
 	t.Helper()
 
-	_, k8sClient, cleanup := setupEnvtest(t)
+	env := setupEnvtest(t)
 
 	// envtest comes with a "default" namespace, so we use that.
 	srv := &Server{
-		client:    k8sClient,
-		namespace: "default",
-		apiKey:    "",
+		client:     env.client,
+		restConfig: env.restConfig,
+		namespace:  "default",
+		apiKey:     "",
 	}
 	srv.router = srv.buildRouter()
 
-	return srv, cleanup
+	return srv, env.cleanup
 }
 
 func TestHealthEndpoint(t *testing.T) {

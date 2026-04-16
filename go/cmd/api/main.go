@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,7 +42,15 @@ func main() {
 		namespace = "boilerhouse"
 	}
 
-	server := api.NewServer(k8sClient, namespace)
+	// Load workloads from WORKLOADS_DIR if set.
+	if dir := os.Getenv("WORKLOADS_DIR"); dir != "" {
+		slog.Info("loading workloads from directory", "dir", dir)
+		if err := api.LoadWorkloadsFromDir(context.Background(), k8sClient, dir, namespace); err != nil {
+			slog.Error("failed to load workloads", "error", err)
+		}
+	}
+
+	server := api.NewServer(k8sClient, cfg, namespace)
 
 	port := os.Getenv("PORT")
 	if port == "" {

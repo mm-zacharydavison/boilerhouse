@@ -8,27 +8,32 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Server is the Boilerhouse REST API server. It translates HTTP requests
 // into Kubernetes resource operations using the controller-runtime client.
 type Server struct {
-	client    client.Client
-	namespace string
-	apiKey    string
-	router    chi.Router
+	client     client.Client
+	restConfig *rest.Config
+	namespace  string
+	apiKey     string
+	router     chi.Router
 }
 
 // NewServer creates a new API server backed by the given Kubernetes client.
 // The namespace determines where CRDs and Pods are managed.
 // If BOILERHOUSE_API_KEY is set, Bearer-token auth is required on all
-// routes except /health.
-func NewServer(k8sClient client.Client, namespace string) *Server {
+// routes except /health and /ws.
+// The restConfig is optional; when provided it enables the /ws WebSocket
+// endpoint for live dashboard event streaming.
+func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace string) *Server {
 	s := &Server{
-		client:    k8sClient,
-		namespace: namespace,
-		apiKey:    os.Getenv("BOILERHOUSE_API_KEY"),
+		client:     k8sClient,
+		restConfig: restConfig,
+		namespace:  namespace,
+		apiKey:     os.Getenv("BOILERHOUSE_API_KEY"),
 	}
 	s.router = s.buildRouter()
 	return s
@@ -44,6 +49,10 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(s.securityHeaders)
+
+	// WebSocket endpoint — outside auth middleware so the dashboard can
+	// connect without an API key (the TS proxy doesn't forward it).
+	r.Get("/ws", s.handleWebSocket)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Health is always accessible (no auth required).
