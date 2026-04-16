@@ -26,7 +26,7 @@ function App() {
 	} else if ((params = matchRoute(path, "/instances/:id"))) {
 		content = <InstanceDetail key={params.id} instanceId={params.id!} navigate={navigate} />;
 	} else if (path === "/triggers") {
-		content = <TriggerList tick={tick} />;
+		content = <TriggerList />;
 	} else {
 		content = (
 			<div className="text-center py-20 text-muted">
