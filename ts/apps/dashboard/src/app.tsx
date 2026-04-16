@@ -1,8 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Flame, Package, Zap } from "lucide-react";
 import { createRoot } from "react-dom/client";
-import { useHashRoute, matchRoute, useWebSocket } from "./hooks";
+import { useHashRoute, matchRoute } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
 import { WorkloadDetail } from "./pages/WorkloadDetail";
 import { InstanceDetail } from "./pages/InstanceDetail";
@@ -15,24 +15,16 @@ const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 
 function App() {
 	const [path, navigate] = useHashRoute();
-	// Increment to force refetch on WS events
-	const [tick, setTick] = useState(0);
-	const refetch = useCallback(() => setTick((t) => t + 1), []);
-
-	useWebSocket((event: unknown) => {
-		const e = event as { type?: string };
-		if (e.type !== "bootstrap.log") refetch();
-	});
 
 	let content: React.ReactNode;
 	let params: Record<string, string> | null;
 
 	if (path === "/" || path === "/workloads") {
-		content = <WorkloadList key={tick} navigate={navigate} />;
+		content = <WorkloadList navigate={navigate} />;
 	} else if ((params = matchRoute(path, "/workloads/:name"))) {
-		content = <WorkloadDetail key={`${params.name}-${tick}`} name={params.name!} navigate={navigate} />;
+		content = <WorkloadDetail key={params.name} name={params.name!} navigate={navigate} />;
 	} else if ((params = matchRoute(path, "/instances/:id"))) {
-		content = <InstanceDetail key={`${params.id}-${tick}`} instanceId={params.id!} navigate={navigate} />;
+		content = <InstanceDetail key={params.id} instanceId={params.id!} navigate={navigate} />;
 	} else if (path === "/triggers") {
 		content = <TriggerList tick={tick} />;
 	} else {

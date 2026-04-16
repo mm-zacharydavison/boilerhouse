@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ChevronDown, ChevronRight, Trash2, UserPlus, Loader2 } from "lucide-react";
 import { useApi, useWebSocket } from "../hooks";
 import {
@@ -387,13 +387,13 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	const [busyInstances, setBusyInstances] = useState<Set<string>>(new Set());
 	const [pendingWarms, setPendingWarms] = useState<Set<string>>(new Set());
 
-	// Auto-refresh when instance state changes
+	// Auto-refresh when instance state changes (debounced to avoid flicker)
 	const { refetch: refetchWorkloads } = workloadsApi;
 	const { refetch: refetchInstances } = instancesApi;
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useWebSocket(useCallback((event) => {
 		const e = event as { type: string; workloadRef?: string; tenantId?: string | null };
 		if (e.type === "instance.state" || e.type === "tenant.released" || e.type === "tenant.claimed" || e.type === "pool.instance.ready") {
-			// Clear pending warm once the real pool instance starts appearing
 			if (e.type === "instance.state" && !e.tenantId && e.workloadRef) {
 				setPendingWarms((prev) => {
 					if (!prev.has(e.workloadRef!)) return prev;
@@ -402,8 +402,12 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 					return next;
 				});
 			}
-			refetchWorkloads();
-			refetchInstances();
+			// Debounce: batch rapid events into a single refetch
+			if (debounceRef.current) clearTimeout(debounceRef.current);
+			debounceRef.current = setTimeout(() => {
+				refetchWorkloads();
+				refetchInstances();
+			}, 500);
 		}
 	}, [refetchWorkloads, refetchInstances]));
 
