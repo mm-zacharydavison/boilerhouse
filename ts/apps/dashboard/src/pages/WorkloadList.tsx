@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ChevronDown, ChevronRight, Trash2, UserPlus, Loader2, Plug, Moon } from "lucide-react";
 import { useApi, useWebSocket } from "../hooks";
 import {
@@ -200,6 +200,35 @@ const STATUS_W = 16;
 /** Width of the date column (right-aligned). */
 const DATE_W = 88;
 
+// --- Idle Timer Hook ---
+
+function useIdleTimerPct(
+	lastActivity: string | undefined,
+	claimedAt: string | undefined,
+	timeoutSeconds: number | undefined,
+): number | null {
+	const [pct, setPct] = useState<number | null>(null);
+
+	useEffect(() => {
+		if (!timeoutSeconds) return;
+		const startStr = lastActivity ?? claimedAt;
+		if (!startStr) return;
+
+		function compute() {
+			const start = new Date(startStr!).getTime();
+			const elapsed = (Date.now() - start) / 1000;
+			const remaining = Math.max(0, timeoutSeconds! - elapsed);
+			setPct(remaining / timeoutSeconds!);
+		}
+
+		compute();
+		const id = setInterval(compute, 1000);
+		return () => clearInterval(id);
+	}, [lastActivity, claimedAt, timeoutSeconds]);
+
+	return pct;
+}
+
 // --- Instance Row ---
 
 function InstanceRow({
@@ -210,6 +239,7 @@ function InstanceRow({
 	workloadName,
 	busy,
 	placeholder,
+	idleTimeoutSeconds,
 }: {
 	instance?: InstanceResponse;
 	onDestroy: (id: string) => void;
@@ -217,9 +247,15 @@ function InstanceRow({
 	onConnect: (instance: InstanceResponse) => void;
 	workloadName: string;
 	busy?: boolean;
-	/** When true, renders a "warming..." placeholder row instead of real instance data. */
 	placeholder?: boolean;
+	idleTimeoutSeconds?: number;
 }) {
+	const idlePct = useIdleTimerPct(
+		instance?.lastActivity,
+		instance?.claimedAt,
+		instance?.tenantId && instance?.phase === "Running" ? idleTimeoutSeconds : undefined,
+	);
+
 	if (placeholder) {
 		return (
 			<div className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
@@ -235,6 +271,12 @@ function InstanceRow({
 
 	return (
 		<div className="relative flex items-center h-7 px-2 text-sm font-mono border-b border-border/10 overflow-hidden">
+			{idlePct !== null && (
+				<div
+					className="absolute inset-y-0 left-0 pointer-events-none transition-[width] duration-1000 ease-linear"
+					style={{ width: `${idlePct * 100}%`, backgroundColor: "rgba(255,255,255,0.06)" }}
+				/>
+			)}
 			<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
 				<StatusIndicator status={instance.phase} />
 			</span>
@@ -288,6 +330,7 @@ function InstanceSection({
 	workloadName,
 	busyInstances,
 	pendingWarm,
+	idleTimeoutSeconds,
 }: {
 	label: string;
 	instances: InstanceNode[];
@@ -297,6 +340,7 @@ function InstanceSection({
 	workloadName: string;
 	busyInstances: Set<string>;
 	pendingWarm?: boolean;
+	idleTimeoutSeconds?: number;
 }) {
 	return (
 		<>
@@ -316,6 +360,7 @@ function InstanceSection({
 					onConnect={onConnect}
 					workloadName={workloadName}
 					busy={busyInstances.has(inst.instance.name)}
+				idleTimeoutSeconds={idleTimeoutSeconds}
 				/>
 			))}
 			{pendingWarm && (
@@ -429,6 +474,7 @@ function WorkloadGroup({
 							onConnect={onConnect}
 							workloadName={workload.name}
 							busyInstances={busyInstances}
+							idleTimeoutSeconds={workload.spec.idle?.timeoutSeconds}
 						/>
 					)}
 					{hibernatedTenants.length > 0 && (

@@ -99,6 +99,8 @@ export interface InstanceResponse {
 	ip?: string;
 	labels?: Record<string, string>;
 	createdAt: string;
+	lastActivity?: string;
+	claimedAt?: string;
 }
 
 // Claim response from POST /tenants/:id/claim

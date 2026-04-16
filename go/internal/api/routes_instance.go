@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,13 +17,15 @@ import (
 
 // instanceResponse is the JSON representation of a managed Pod.
 type instanceResponse struct {
-	Name       string            `json:"name"`
-	Phase      string            `json:"phase"`
-	TenantId   string            `json:"tenantId,omitempty"`
-	WorkloadRef string           `json:"workloadRef,omitempty"`
-	IP         string            `json:"ip,omitempty"`
-	Labels     map[string]string `json:"labels,omitempty"`
-	CreatedAt  string            `json:"createdAt"`
+	Name         string            `json:"name"`
+	Phase        string            `json:"phase"`
+	TenantId     string            `json:"tenantId,omitempty"`
+	WorkloadRef  string            `json:"workloadRef,omitempty"`
+	IP           string            `json:"ip,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	CreatedAt    string            `json:"createdAt"`
+	LastActivity string            `json:"lastActivity,omitempty"`
+	ClaimedAt    string            `json:"claimedAt,omitempty"`
 }
 
 func toInstanceResponse(pod *corev1.Pod) instanceResponse {
@@ -47,9 +50,29 @@ func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch all claims to enrich instances with activity/claim timestamps.
+	var claims v1alpha1.BoilerhouseClaimList
+	claimByInstance := map[string]*v1alpha1.BoilerhouseClaim{}
+	if err := s.client.List(r.Context(), &claims, client.InNamespace(s.namespace)); err == nil {
+		for i := range claims.Items {
+			if claims.Items[i].Status.InstanceId != "" {
+				claimByInstance[claims.Items[i].Status.InstanceId] = &claims.Items[i]
+			}
+		}
+	}
+
 	items := make([]instanceResponse, 0, len(pods.Items))
 	for i := range pods.Items {
-		items = append(items, toInstanceResponse(&pods.Items[i]))
+		resp := toInstanceResponse(&pods.Items[i])
+		if claim, ok := claimByInstance[resp.Name]; ok {
+			if claim.Annotations != nil {
+				resp.LastActivity = claim.Annotations["boilerhouse.dev/last-activity"]
+			}
+			if claim.Status.ClaimedAt != nil {
+				resp.ClaimedAt = claim.Status.ClaimedAt.UTC().Format("2006-01-02T15:04:05Z")
+			}
+		}
+		items = append(items, resp)
 	}
 	writeJSON(w, http.StatusOK, items)
 }
