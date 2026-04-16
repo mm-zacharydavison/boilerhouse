@@ -329,6 +329,7 @@ function WorkloadGroup({
 	onConnect,
 	navigate,
 	busyInstances,
+	busyTenants,
 	onClaim,
 	onRevive,
 	pendingWarm,
@@ -342,6 +343,7 @@ function WorkloadGroup({
 	onConnect: (instance: InstanceResponse) => void;
 	navigate: (path: string) => void;
 	busyInstances: Set<string>;
+	busyTenants: Set<string>;
 	onClaim?: (workloadName: string, source: string) => void;
 	pendingWarm?: boolean;
 }) {
@@ -424,21 +426,30 @@ function WorkloadGroup({
 								<span className="text-xs text-muted font-mono uppercase tracking-wider">hibernated</span>
 								<span className="text-xs text-muted font-mono ml-1.5">({hibernatedTenants.length})</span>
 							</div>
-							{hibernatedTenants.map((snap) => (
-								<div key={snap.tenantId} className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
-									<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
-										<span className="font-mono text-sm leading-none text-status-blue cursor-default" title="hibernated">◑</span>
-									</span>
-									<span className="text-muted-light">{snap.tenantId}</span>
-									<span className="flex-1" />
-									<IconButton
-										icon={UserPlus}
-										title="Revive (claim with snapshot)"
-										variant="info"
-										onClick={() => onRevive(snap.tenantId, workload.name)}
-									/>
-								</div>
-							))}
+							{hibernatedTenants.map((snap) => {
+								const busy = busyTenants.has(`${snap.tenantId}:${workload.name}`);
+								return (
+									<div key={snap.tenantId} className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
+										<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
+											{busy
+												? <Loader2 size={10} className="text-muted animate-spin" />
+												: <span className="font-mono text-sm leading-none text-status-blue cursor-default" title="hibernated">◑</span>
+											}
+										</span>
+										<span className="text-muted-light">{snap.tenantId}</span>
+										<span className="flex-1" />
+										{busy
+											? <Loader2 size={13} className="text-muted animate-spin mr-1" />
+											: <IconButton
+												icon={UserPlus}
+												title="Revive (claim with snapshot)"
+												variant="info"
+												onClick={() => onRevive(snap.tenantId, workload.name)}
+											/>
+										}
+									</div>
+								);
+							})}
 						</>
 					)}
 				</div>
@@ -459,6 +470,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	const [busyInstances, setBusyInstances] = useState<Set<string>>(new Set());
 	const [pendingWarms, setPendingWarms] = useState<Set<string>>(new Set());
 	const [connectTarget, setConnectTarget] = useState<{ instance: InstanceResponse; workloadName: string } | null>(null);
+	const [busyTenants, setBusyTenants] = useState<Set<string>>(new Set());
 
 	// Auto-refresh when instance state changes (debounced to avoid flicker)
 	const { refetch: refetchWorkloads } = workloadsApi;
@@ -527,20 +539,28 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	}
 
 	async function handleHibernate(tenantId: string, workloadName: string) {
+		const tenantKey = `${tenantId}:${workloadName}`;
+		setBusyTenants((prev) => new Set(prev).add(tenantKey));
 		try {
 			await api.releaseWorkload(tenantId, workloadName);
 			refetchAll();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Hibernate failed");
+		} finally {
+			setBusyTenants((prev) => { const next = new Set(prev); next.delete(tenantKey); return next; });
 		}
 	}
 
 	async function handleRevive(tenantId: string, workloadName: string) {
+		const key = `${tenantId}:${workloadName}`;
+		setBusyTenants((prev) => new Set(prev).add(key));
 		try {
 			await api.claimWorkload(tenantId, workloadName);
 			refetchAll();
 		} catch (err) {
 			alert(err instanceof Error ? err.message : "Revive failed");
+		} finally {
+			setBusyTenants((prev) => { const next = new Set(prev); next.delete(key); return next; });
 		}
 	}
 
@@ -578,6 +598,7 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 							onConnect={(instance) => setConnectTarget({ instance, workloadName: node.workload.name })}
 							navigate={navigate}
 							busyInstances={busyInstances}
+							busyTenants={busyTenants}
 							onClaim={handleClaim}
 							onRevive={handleRevive}
 							pendingWarm={pendingWarms.has(node.workload.name)}
