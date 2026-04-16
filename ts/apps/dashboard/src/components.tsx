@@ -274,6 +274,52 @@ export function Modal({
 	);
 }
 
+// --- Connection Modal ---
+
+export function ConnectionModal({
+	instance,
+	workloadName,
+	onClose,
+}: {
+	instance: { name: string; ip?: string; labels?: Record<string, string> };
+	workloadName: string;
+	onClose: () => void;
+}) {
+	// Extract ports from labels or use common defaults
+	const ports = instance.labels?.["boilerhouse.dev/ports"]?.split(",").map(Number).filter(Boolean) ?? [];
+	const host = instance.ip || "unknown";
+
+	return (
+		<Modal title="Connection Details" onClose={onClose}>
+			<div className="space-y-3">
+				<div className="grid grid-cols-2 gap-3">
+					<InfoCard label="Pod" value={instance.name} />
+					<InfoCard label="Host" value={host} />
+				</div>
+				{host !== "unknown" && (
+					<div className="bg-surface-2 rounded-md p-3">
+						<p className="text-xs font-tight uppercase tracking-wider text-muted mb-2">Connect via</p>
+						{ports.length > 0 ? (
+							ports.map((port) => {
+								const url = `http://${host}:${port}/`;
+								return (
+									<pre key={port} className="text-xs font-mono text-muted-light select-all mt-1 whitespace-pre-wrap break-all">
+										curl <a href={url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{url}</a>
+									</pre>
+								);
+							})
+						) : (
+							<pre className="text-xs font-mono text-muted-light select-all mt-1 whitespace-pre-wrap break-all">
+								kubectl exec -it {instance.name} -n boilerhouse -- sh
+							</pre>
+						)}
+					</div>
+				)}
+			</div>
+		</Modal>
+	);
+}
+
 // --- Action Button ---
 
 const ACTION_VARIANTS: Record<string, string> = {
