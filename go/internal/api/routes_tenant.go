@@ -144,7 +144,19 @@ func (s *Server) pollClaim(ctx context.Context, name string, timeout, interval t
 
 func (s *Server) releaseInstance(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
-	claimName := fmt.Sprintf("claim-%s", tenantID)
+
+	var req claimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	wlName := req.workloadName()
+	if wlName == "" {
+		writeError(w, http.StatusBadRequest, "workload is required")
+		return
+	}
+
+	claimName := fmt.Sprintf("claim-%s-%s", tenantID, wlName)
 
 	claim := &v1alpha1.BoilerhouseClaim{
 		ObjectMeta: metav1.ObjectMeta{
