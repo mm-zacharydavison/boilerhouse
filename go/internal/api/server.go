@@ -15,11 +15,12 @@ import (
 // Server is the Boilerhouse REST API server. It translates HTTP requests
 // into Kubernetes resource operations using the controller-runtime client.
 type Server struct {
-	client     client.Client
-	restConfig *rest.Config
-	namespace  string
-	apiKey     string
-	router     chi.Router
+	client      client.Client
+	restConfig  *rest.Config
+	namespace   string
+	apiKey      string
+	corsOrigins []string
+	router      chi.Router
 }
 
 // NewServer creates a new API server backed by the given Kubernetes client.
@@ -29,11 +30,21 @@ type Server struct {
 // The restConfig is optional; when provided it enables the /ws WebSocket
 // endpoint for live dashboard event streaming.
 func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace string) *Server {
+	var corsOrigins []string
+	if v := os.Getenv("CORS_ORIGIN"); v != "" {
+		for _, o := range strings.Split(v, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				corsOrigins = append(corsOrigins, o)
+			}
+		}
+	}
+
 	s := &Server{
-		client:     k8sClient,
-		restConfig: restConfig,
-		namespace:  namespace,
-		apiKey:     os.Getenv("BOILERHOUSE_API_KEY"),
+		client:      k8sClient,
+		restConfig:  restConfig,
+		namespace:   namespace,
+		apiKey:      os.Getenv("BOILERHOUSE_API_KEY"),
+		corsOrigins: corsOrigins,
 	}
 	s.router = s.buildRouter()
 	return s
@@ -49,6 +60,7 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(s.securityHeaders)
+	r.Use(s.cors)
 
 	// WebSocket endpoint — outside auth middleware so the dashboard can
 	// connect without an API key (the TS proxy doesn't forward it).
@@ -108,6 +120,38 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cors applies CORS headers when the request Origin is in the allowlist.
+// No-op when CORS_ORIGIN is not set. Responds to OPTIONS preflight requests
+// with 204 + the CORS headers.
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(s.corsOrigins) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		origin := r.Header.Get("Origin")
+		allowed := false
+		for _, o := range s.corsOrigins {
+			if o == "*" || o == origin {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

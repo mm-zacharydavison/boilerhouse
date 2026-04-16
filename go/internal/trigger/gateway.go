@@ -160,6 +160,9 @@ func (g *Gateway) buildAdapter(trigger *v1alpha1.BoilerhouseTrigger) (Adapter, e
 			return nil, fmt.Errorf("invalid cron interval %q: %w", cfg.Interval, err)
 		}
 		return NewCronAdapter(interval, cfg.Payload), nil
+	case "telegram":
+		cfg := parseTelegramAdapterConfig(trigger)
+		return NewTelegramAdapter(cfg), nil
 	default:
 		return nil, fmt.Errorf("unsupported trigger type: %s", trigger.Spec.Type)
 	}
@@ -322,6 +325,16 @@ func parseCronConfig(trigger *v1alpha1.BoilerhouseTrigger) cronConfig {
 	cfg := cronConfig{
 		Interval: "1m",
 	}
+	if trigger.Spec.Config != nil && trigger.Spec.Config.Raw != nil {
+		_ = json.Unmarshal(trigger.Spec.Config.Raw, &cfg)
+	}
+	return cfg
+}
+
+// parseTelegramAdapterConfig extracts the telegram adapter config from a
+// trigger's raw config as a generic map.
+func parseTelegramAdapterConfig(trigger *v1alpha1.BoilerhouseTrigger) map[string]any {
+	cfg := map[string]any{}
 	if trigger.Spec.Config != nil && trigger.Spec.Config.Raw != nil {
 		_ = json.Unmarshal(trigger.Spec.Config.Raw, &cfg)
 	}
