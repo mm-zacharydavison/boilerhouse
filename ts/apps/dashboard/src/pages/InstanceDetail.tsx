@@ -15,6 +15,7 @@ export function InstanceDetail({
 	const [logsError, setLogsError] = useState<string | null>(null);
 	const [logsLoading, setLogsLoading] = useState(false);
 	const [autoRefresh, setAutoRefresh] = useState(true);
+	const [copied, setCopied] = useState(false);
 	const logContainerRef = useRef<HTMLDivElement>(null);
 
 	const isLive = data && data.phase !== "Succeeded" && data.phase !== "Failed";
@@ -100,6 +101,17 @@ export function InstanceDetail({
 									onClick={fetchLogs}
 								/>
 							</>
+						)}
+						{logs && logs.length > 0 && (
+							<ActionButton
+								label={copied ? "copied!" : "copy"}
+								variant="info"
+								onClick={() => {
+									navigator.clipboard.writeText(logs);
+									setCopied(true);
+									setTimeout(() => setCopied(false), 2000);
+								}}
+							/>
 						)}
 					</div>
 				</div>
