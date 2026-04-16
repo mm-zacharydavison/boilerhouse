@@ -55,10 +55,6 @@ entrypoint:
     OPENCLAW_CONFIG_PATH: /root/.openclaw/openclaw.json
     ANTHROPIC_API_KEY: sk-ant-proxy-managed
 
-pool:
-  size: 0
-  max_fill_concurrency: 1
-
 metadata:
   description: OpenClaw autonomous AI agent
   homepage: https://github.com/openclaw/openclaw

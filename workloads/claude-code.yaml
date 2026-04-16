@@ -52,9 +52,5 @@ entrypoint:
     ANTHROPIC_BASE_URL: http://api.anthropic.com
     CLAUDE_MODEL: sonnet
 
-pool:
-  size: 0
-  max_fill_concurrency: 1
-
 metadata:
   description: Claude Code coding agent

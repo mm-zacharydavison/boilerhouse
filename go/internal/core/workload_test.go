@@ -85,9 +85,6 @@ entrypoint:
   env:
     CLAUDE_MODE: headless
     LOG_LEVEL: info
-pool:
-  size: 5
-  max_fill_concurrency: 3
 metadata:
   team: platform
   tier: premium
@@ -144,10 +141,6 @@ metadata:
 	assert.Equal(t, "headless", w.Entrypoint.Env["CLAUDE_MODE"])
 	assert.Equal(t, "info", w.Entrypoint.Env["LOG_LEVEL"])
 
-	// Pool
-	assert.Equal(t, 5, w.Pool.Size)
-	assert.Equal(t, 3, w.Pool.MaxFillConcurrency)
-
 	// Metadata
 	assert.Equal(t, "platform", w.Metadata["team"])
 	assert.Equal(t, "premium", w.Metadata["tier"])
@@ -168,8 +161,6 @@ resources:
 
 	assert.Equal(t, 2, w.Resources.DiskGB, "disk_gb default should be 2")
 	assert.Equal(t, true, w.Filesystem.EncryptOverlays, "encrypt_overlays default should be true")
-	assert.Equal(t, 3, w.Pool.Size, "pool.size default should be 3")
-	assert.Equal(t, 2, w.Pool.MaxFillConcurrency, "pool.max_fill_concurrency default should be 2")
 	assert.Equal(t, 60, w.Health.CheckTimeoutSeconds, "health.check_timeout_seconds default should be 60")
 	assert.Equal(t, "hibernate", w.Idle.Action, "idle.action default should be hibernate")
 }

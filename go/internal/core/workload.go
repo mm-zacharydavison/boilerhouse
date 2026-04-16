@@ -19,7 +19,6 @@ type Workload struct {
 	Idle       WorkloadIdle       `json:"idle"`
 	Health     WorkloadHealth     `json:"health"`
 	Entrypoint WorkloadEntrypoint `json:"entrypoint"`
-	Pool       WorkloadPool       `json:"pool"`
 	Metadata   map[string]any     `json:"metadata,omitempty"`
 }
 
@@ -99,12 +98,6 @@ type WorkloadEntrypoint struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-// WorkloadPool configures the pre-warmed instance pool.
-type WorkloadPool struct {
-	Size               int `json:"size"`
-	MaxFillConcurrency int `json:"max_fill_concurrency"`
-}
-
 // ── ParseWorkload ───────────────────────────────────────────────────────────
 
 // ParseWorkload unmarshals YAML data into a Workload, applies defaults,
@@ -135,12 +128,6 @@ func applyDefaults(w *Workload) {
 	}
 	if w.Health.CheckTimeoutSeconds == 0 {
 		w.Health.CheckTimeoutSeconds = 60
-	}
-	if w.Pool.Size == 0 {
-		w.Pool.Size = 3
-	}
-	if w.Pool.MaxFillConcurrency == 0 {
-		w.Pool.MaxFillConcurrency = 2
 	}
 	if !w.Filesystem.EncryptOverlays && len(w.Filesystem.OverlayDirs) == 0 {
 		// Only default to true when the field was not explicitly set.
