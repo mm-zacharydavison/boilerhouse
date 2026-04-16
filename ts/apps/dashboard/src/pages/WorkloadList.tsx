@@ -262,19 +262,6 @@ function InstanceRow({
 	);
 }
 
-// --- Pending Warm Placeholder ---
-
-function PendingWarmRow() {
-	return (
-		<div className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
-			<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
-				<Loader2 size={10} className="text-muted animate-spin" />
-			</span>
-			<span className="text-muted text-xs">warming...</span>
-		</div>
-	);
-}
-
 // --- Instance Section ---
 
 function InstanceSection({
@@ -396,14 +383,20 @@ function WorkloadGroup({
 						<>
 							<InstanceSection
 								label="pool"
-								instances={poolInstances}
+								instances={pendingWarm
+									? [...poolInstances, { instance: {
+										name: `warming-${workload.name}`,
+										phase: "Pending",
+										workloadRef: workload.name,
+										createdAt: new Date().toISOString(),
+									} as InstanceResponse }]
+									: poolInstances}
 								onDestroy={onDestroy}
 								onHibernate={onHibernate}
 								onConnect={onConnect}
 								workloadName={workload.name}
 								busyInstances={busyInstances}
 							/>
-							{pendingWarm && <PendingWarmRow />}
 						</>
 					)}
 					{claimedInstances.length > 0 && (
