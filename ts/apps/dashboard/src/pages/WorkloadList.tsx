@@ -482,7 +482,9 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [initialized, setInitialized] = useState(false);
 	const [busyInstances, setBusyInstances] = useState<Set<string>>(new Set());
-	const [pendingWarms, setPendingWarms] = useState<Set<string>>(new Set());
+	// Maps workload name → expected pool count (set when a claim consumes a pool pod).
+	// The warming placeholder stays until the real pool count reaches this number.
+	const [pendingWarms, setPendingWarms] = useState<Map<string, number>>(new Map());
 	const [connectTarget, setConnectTarget] = useState<{ instance: InstanceResponse; workloadName: string } | null>(null);
 	const [busyTenants, setBusyTenants] = useState<Set<string>>(new Set());
 
@@ -494,15 +496,8 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 	useWebSocket(useCallback((event) => {
 		const e = event as { type: string; workloadRef?: string; tenantId?: string | null };
 		if (e.type === "instance.state" || e.type === "tenant.released" || e.type === "tenant.claimed" || e.type === "pool.instance.ready") {
-			if (e.type === "instance.state" && !e.tenantId && e.workloadRef) {
-				setPendingWarms((prev) => {
-					if (!prev.has(e.workloadRef!)) return prev;
-					const next = new Set(prev);
-					next.delete(e.workloadRef!);
-					return next;
-				});
-			}
-			// Debounce: batch rapid events into a single refetch
+			// Debounce: batch rapid events into a single refetch.
+			// Don't clear pendingWarms here — let the data update handle it.
 			if (debounceRef.current) clearTimeout(debounceRef.current);
 			debounceRef.current = setTimeout(() => {
 				refetchWorkloads();
@@ -531,6 +526,24 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 		snapshotsApi.data ?? [],
 	);
 
+	// Clear pendingWarms once the pool count is restored (replacement pod appeared).
+	if (pendingWarms.size > 0) {
+		const toRemove: string[] = [];
+		for (const [wlName, expectedCount] of pendingWarms) {
+			const node = tree.find((n) => n.workload.name === wlName);
+			if (node && node.poolInstances.length >= expectedCount) {
+				toRemove.push(wlName);
+			}
+		}
+		if (toRemove.length > 0) {
+			setPendingWarms((prev) => {
+				const next = new Map(prev);
+				for (const name of toRemove) next.delete(name);
+				return next;
+			});
+		}
+	}
+
 	function toggleExpanded(workloadName: string) {
 		setExpanded((prev) => {
 			const next = new Set(prev);
@@ -548,7 +561,10 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 
 	function handleClaim(workloadName: string, source: string) {
 		if (source === "pool" || source === "pool+data") {
-			setPendingWarms((prev) => new Set(prev).add(workloadName));
+			// Record current pool count — the placeholder stays until count is restored.
+			const node = tree.find((n) => n.workload.name === workloadName);
+			const currentPoolCount = node?.poolInstances.length ?? 0;
+			setPendingWarms((prev) => new Map(prev).set(workloadName, currentPoolCount));
 		}
 		refetchAll();
 	}
@@ -573,7 +589,9 @@ export function WorkloadList({ navigate }: { navigate: (path: string) => void })
 			const res = await api.claimWorkload(tenantId, workloadName);
 			// A pool pod was consumed — show warming placeholder for the replacement.
 			if (res.source === "pool" || res.source === "pool+data") {
-				setPendingWarms((prev) => new Set(prev).add(workloadName));
+				const node = tree.find((n) => n.workload.name === workloadName);
+				const currentPoolCount = node?.poolInstances.length ?? 0;
+				setPendingWarms((prev) => new Map(prev).set(workloadName, currentPoolCount));
 			}
 			refetchAll();
 		} catch (err) {
