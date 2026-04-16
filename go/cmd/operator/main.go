@@ -77,9 +77,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	snapshots := operator.NewSnapshotManager(namespace, mgr.GetClient())
+
 	if err := (&operator.ClaimReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Snapshots: snapshots,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller", "controller", "ClaimReconciler")
 		os.Exit(1)

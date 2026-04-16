@@ -10,7 +10,6 @@ import (
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -239,10 +238,10 @@ func TestIntegration_TenantRecreateGetsDifferentInstance(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. TestIntegration_OverlayRestore
+// 3. TestIntegration_OverlayEmptyDir
 // ---------------------------------------------------------------------------
 
-func TestIntegration_OverlayRestore(t *testing.T) {
+func TestIntegration_OverlayEmptyDir(t *testing.T) {
 	ctx, k8sClient, cleanup := setupEnvtest(t)
 	defer cleanup()
 
@@ -275,28 +274,7 @@ func TestIntegration_OverlayRestore(t *testing.T) {
 	wlKey := types.NamespacedName{Name: "overlay-wl", Namespace: "default"}
 	reconcileWorkloadUntilPhase(t, wlReconciler, k8sClient, wlKey, "Ready", 5)
 
-	// Pre-create the PVC that simulates a previous session's overlay data.
-	// The claim controller's Translate() generates a PVC spec but createTenantPod()
-	// only creates the Pod. In a full system, the PVC is provisioned separately.
-	// Here we create it to simulate a tenant that previously had data written.
-	pvcKey := types.NamespacedName{Name: "overlay-tenant-overlay-overlay-wl", Namespace: "default"}
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcKey.Name,
-			Namespace: pvcKey.Namespace,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
-				},
-			},
-		},
-	}
-	require.NoError(t, k8sClient.Create(ctx, pvc))
-
-	// First claim for tenant-overlay. Since PVC exists, source should be cold+data.
+	// First claim for tenant-overlay. No SnapshotManager, so source is "cold".
 	claim1 := &v1alpha1.BoilerhouseClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "overlay-claim1", Namespace: "default"},
 		Spec: v1alpha1.BoilerhouseClaimSpec{
@@ -314,27 +292,22 @@ func TestIntegration_OverlayRestore(t *testing.T) {
 	instanceId1 := activeClaim1.Status.InstanceId
 	require.NotEmpty(t, instanceId1)
 
-	// First boot should detect the existing PVC.
-	assert.Equal(t, "cold+data", activeClaim1.Status.Source,
-		"first claim should detect existing PVC and report cold+data")
+	// Cold boot (snapshot-based restore requires kubectl, unavailable in envtest).
+	assert.Equal(t, "cold", activeClaim1.Status.Source,
+		"source should be cold (snapshot injection requires live cluster)")
 
-	// Verify Pod is created with PVC volume mount.
+	// Verify Pod is created with emptyDir volume for overlay.
 	var pod1 corev1.Pod
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: instanceId1, Namespace: "default"}, &pod1))
-	require.Len(t, pod1.Spec.Volumes, 1, "pod should have one volume")
-	assert.Equal(t, "overlay", pod1.Spec.Volumes[0].Name)
-	require.NotNil(t, pod1.Spec.Volumes[0].PersistentVolumeClaim)
-	assert.Equal(t, "overlay-tenant-overlay-overlay-wl", pod1.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
+	require.Len(t, pod1.Spec.Volumes, 1, "pod should have one emptyDir volume")
+	assert.Equal(t, "overlay-0", pod1.Spec.Volumes[0].Name)
+	assert.NotNil(t, pod1.Spec.Volumes[0].EmptyDir)
 
 	// Verify volume mount on container.
 	require.NotEmpty(t, pod1.Spec.Containers[0].VolumeMounts)
 	assert.Equal(t, "/data", pod1.Spec.Containers[0].VolumeMounts[0].MountPath)
 
-	// Verify PVC still exists in the cluster.
-	var existingPVC corev1.PersistentVolumeClaim
-	require.NoError(t, k8sClient.Get(ctx, pvcKey, &existingPVC), "PVC should exist")
-
-	// Delete the claim and reconcile. hibernate action preserves PVC.
+	// Delete the claim and reconcile.
 	require.NoError(t, k8sClient.Delete(ctx, &activeClaim1))
 	reconcileN(t, claimReconciler, claim1Key, 5)
 
@@ -343,11 +316,7 @@ func TestIntegration_OverlayRestore(t *testing.T) {
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: instanceId1, Namespace: "default"}, &deletedPod)
 	assert.True(t, apierrors.IsNotFound(err), "pod should be deleted after claim deletion")
 
-	// Verify PVC still exists (hibernate preserves it).
-	err = k8sClient.Get(ctx, pvcKey, &existingPVC)
-	require.NoError(t, err, "PVC should still exist after hibernate (not destroyed)")
-
-	// Second claim for the same tenant — should reuse PVC.
+	// Second claim for the same tenant — gets a fresh cold boot (no snapshot in envtest).
 	claim2 := &v1alpha1.BoilerhouseClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "overlay-claim2", Namespace: "default"},
 		Spec: v1alpha1.BoilerhouseClaimSpec{
@@ -365,15 +334,15 @@ func TestIntegration_OverlayRestore(t *testing.T) {
 	instanceId2 := activeClaim2.Status.InstanceId
 	require.NotEmpty(t, instanceId2)
 
-	// Verify new Pod is created and mounts the SAME PVC.
+	// Verify new Pod also has emptyDir overlay.
 	var pod2 corev1.Pod
 	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: instanceId2, Namespace: "default"}, &pod2))
 	require.Len(t, pod2.Spec.Volumes, 1)
-	assert.Equal(t, "overlay-tenant-overlay-overlay-wl", pod2.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
+	assert.NotNil(t, pod2.Spec.Volumes[0].EmptyDir)
 
-	// Verify source is "cold+data" (PVC existed before this boot).
-	assert.Equal(t, "cold+data", activeClaim2.Status.Source,
-		"source should be cold+data indicating PVC reuse")
+	// Source is "cold" without a snapshot manager.
+	assert.Equal(t, "cold", activeClaim2.Status.Source,
+		"source should be cold without snapshot manager")
 }
 
 // ---------------------------------------------------------------------------

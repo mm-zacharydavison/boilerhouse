@@ -92,9 +92,6 @@ func TestTranslate_MinimalWorkload(t *testing.T) {
 	// No Service
 	assert.Nil(t, result.Service)
 
-	// No PVC
-	assert.Nil(t, result.PVC)
-
 	// ConfigMap nil for now
 	assert.Nil(t, result.ConfigMap)
 }
@@ -123,28 +120,20 @@ func TestTranslate_WorkloadWithOverlayDirs(t *testing.T) {
 	result, err := Translate(spec, opts)
 	require.NoError(t, err)
 
-	// PVC created
-	require.NotNil(t, result.PVC)
-	assert.Equal(t, "overlay-tenant-abc-overlay-wl", result.PVC.Name)
-	assert.Equal(t, "default", result.PVC.Namespace)
-	assert.Contains(t, result.PVC.Spec.AccessModes, corev1.ReadWriteOnce)
-
-	// Storage request
-	storageQty := result.PVC.Spec.Resources.Requests[corev1.ResourceStorage]
-	assert.Equal(t, resource.MustParse("20Gi"), storageQty)
-
-	// Pod has volume mounts using subpaths
+	// Overlay dirs use emptyDir volumes (no PVC).
 	container := result.Pod.Spec.Containers[0]
 	require.Len(t, container.VolumeMounts, 2)
 	assert.Equal(t, "/data", container.VolumeMounts[0].MountPath)
-	assert.Equal(t, "data", container.VolumeMounts[0].SubPath)
+	assert.Equal(t, "overlay-0", container.VolumeMounts[0].Name)
 	assert.Equal(t, "/config", container.VolumeMounts[1].MountPath)
-	assert.Equal(t, "config", container.VolumeMounts[1].SubPath)
+	assert.Equal(t, "overlay-1", container.VolumeMounts[1].Name)
 
-	// Pod has PVC volume
-	require.Len(t, result.Pod.Spec.Volumes, 1)
-	require.NotNil(t, result.Pod.Spec.Volumes[0].PersistentVolumeClaim)
-	assert.Equal(t, "overlay-tenant-abc-overlay-wl", result.Pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
+	// Pod has emptyDir volumes (one per overlay dir).
+	require.Len(t, result.Pod.Spec.Volumes, 2)
+	assert.Equal(t, "overlay-0", result.Pod.Spec.Volumes[0].Name)
+	assert.NotNil(t, result.Pod.Spec.Volumes[0].EmptyDir)
+	assert.Equal(t, "overlay-1", result.Pod.Spec.Volumes[1].Name)
+	assert.NotNil(t, result.Pod.Spec.Volumes[1].EmptyDir)
 
 	// Tenant label set
 	assert.Equal(t, "tenant-abc", result.Pod.Labels["boilerhouse.dev/tenant"])
@@ -425,8 +414,13 @@ func TestTranslate_PoolPod(t *testing.T) {
 	_, hasTenant := result.Pod.Labels["boilerhouse.dev/tenant"]
 	assert.False(t, hasTenant)
 
-	// No PVC (no tenant, even though overlay dirs are set)
-	assert.Nil(t, result.PVC)
+	// Pool pods still get emptyDir volumes for overlay dirs.
+	container := result.Pod.Spec.Containers[0]
+	require.Len(t, container.VolumeMounts, 1)
+	assert.Equal(t, "/data", container.VolumeMounts[0].MountPath)
+	assert.Equal(t, "overlay-0", container.VolumeMounts[0].Name)
+	require.Len(t, result.Pod.Spec.Volumes, 1)
+	assert.NotNil(t, result.Pod.Spec.Volumes[0].EmptyDir)
 }
 
 func TestTranslate_ResourceLimits(t *testing.T) {

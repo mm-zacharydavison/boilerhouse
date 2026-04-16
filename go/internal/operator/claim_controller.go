@@ -27,7 +27,8 @@ const (
 // ClaimReconciler reconciles BoilerhouseClaim objects.
 type ClaimReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Snapshots *SnapshotManager
 }
 
 // Reconcile handles a single reconciliation loop for a BoilerhouseClaim.
@@ -152,53 +153,48 @@ func (r *ClaimReconciler) findPoolPod(ctx context.Context, ns, workloadRef strin
 }
 
 // claimFromPool acquires a pool Pod for a tenant.
+// If the tenant has a stored snapshot, the pool Pod is relabeled and the
+// snapshot is injected via tar extract; otherwise just relabel.
 func (r *ClaimReconciler) claimFromPool(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, poolPod *corev1.Pod, wl *v1alpha1.BoilerhouseWorkload) (reconcile.Result, error) {
 	tenantId := claim.Spec.TenantId
 	workloadRef := claim.Spec.WorkloadRef
-	ns := claim.Namespace
 
-	pvcExists := r.pvcExists(ctx, ns, tenantId, workloadRef)
-
-	if pvcExists {
-		// Tenant has existing data: delete pool Pod, create new Pod with PVC.
-		if err := r.Delete(ctx, poolPod); err != nil && !apierrors.IsNotFound(err) {
-			return reconcile.Result{}, fmt.Errorf("deleting pool pod for pvc replacement: %w", err)
-		}
-
-		pod, err := r.createTenantPod(ctx, claim, wl)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-		return r.activateClaim(ctx, claim, pod, "pool+data")
-	}
-
-	// No PVC: relabel the pool Pod.
+	// Relabel the pool Pod for this tenant.
 	poolPod.Labels[LabelTenant] = tenantId
 	poolPod.Labels[LabelPoolStatus] = "acquired"
 	if err := r.Update(ctx, poolPod); err != nil {
 		return reconcile.Result{}, fmt.Errorf("relabeling pool pod: %w", err)
 	}
+
+	// Check for a stored snapshot and inject it if present.
+	if r.Snapshots != nil {
+		hasSnap, err := r.Snapshots.HasSnapshot(ctx, tenantId, workloadRef)
+		if err != nil {
+			// Log but don't fail the claim — the Pod is still usable.
+			ctrl.LoggerFrom(ctx).Error(err, "checking for snapshot", "tenant", tenantId, "workload", workloadRef)
+		} else if hasSnap {
+			if err := r.Snapshots.InjectSnapshot(ctx, poolPod.Name, tenantId, workloadRef); err != nil {
+				ctrl.LoggerFrom(ctx).Error(err, "injecting snapshot", "tenant", tenantId, "workload", workloadRef)
+			} else {
+				return r.activateClaim(ctx, claim, poolPod, "pool+data")
+			}
+		}
+	}
+
 	return r.activateClaim(ctx, claim, poolPod, "pool")
 }
 
 // coldBoot creates a new Pod from scratch for a tenant.
+// If a snapshot exists, it will be injected once the Pod is running.
+// Note: snapshot injection requires the Pod to be running, so for cold boots
+// the injection happens on a subsequent reconcile when the Pod is ready.
 func (r *ClaimReconciler) coldBoot(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (reconcile.Result, error) {
-	tenantId := claim.Spec.TenantId
-	workloadRef := claim.Spec.WorkloadRef
-	ns := claim.Namespace
-
-	pvcExists := r.pvcExists(ctx, ns, tenantId, workloadRef)
-
 	pod, err := r.createTenantPod(ctx, claim, wl)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	source := "cold"
-	if pvcExists {
-		source = "cold+data"
-	}
-	return r.activateClaim(ctx, claim, pod, source)
+	return r.activateClaim(ctx, claim, pod, "cold")
 }
 
 // createTenantPod translates a workload spec and creates the Pod.
@@ -374,31 +370,41 @@ func (r *ClaimReconciler) handleActive(ctx context.Context, claim *v1alpha1.Boil
 	return reconcile.Result{RequeueAfter: remaining}, nil
 }
 
-// releaseClaim deletes the Pod (and optionally PVC) and sets phase=Released.
+// releaseClaim extracts a snapshot (if applicable), deletes the Pod, and sets phase=Released.
 func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, action string) (reconcile.Result, error) {
 	tenantId := claim.Spec.TenantId
 	workloadRef := claim.Spec.WorkloadRef
 	ns := claim.Namespace
 
-	// Delete the Pod.
 	pod, err := r.findTenantPod(ctx, ns, tenantId, workloadRef)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+
 	if pod != nil {
+		// Extract snapshot before deleting, if action is hibernate and we have overlay dirs.
+		if action == "hibernate" && r.Snapshots != nil {
+			var wl v1alpha1.BoilerhouseWorkload
+			wlKey := types.NamespacedName{Name: workloadRef, Namespace: ns}
+			if err := r.Get(ctx, wlKey, &wl); err == nil {
+				if wl.Spec.Filesystem != nil && len(wl.Spec.Filesystem.OverlayDirs) > 0 {
+					if err := r.Snapshots.ExtractAndStore(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
+						ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on release", "tenant", tenantId, "workload", workloadRef)
+					}
+				}
+			}
+		}
+
+		// If action=destroy, also delete any stored snapshot.
+		if action == "destroy" && r.Snapshots != nil {
+			if err := r.Snapshots.DeleteSnapshot(ctx, tenantId, workloadRef); err != nil {
+				ctrl.LoggerFrom(ctx).Error(err, "deleting snapshot on destroy", "tenant", tenantId, "workload", workloadRef)
+			}
+		}
+
+		// Delete the Pod.
 		if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, fmt.Errorf("deleting pod on release: %w", err)
-		}
-	}
-
-	// If action=destroy, also delete the PVC.
-	if action == "destroy" {
-		pvcName := fmt.Sprintf("overlay-%s-%s", tenantId, workloadRef)
-		var pvc corev1.PersistentVolumeClaim
-		if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: ns}, &pvc); err == nil {
-			if err := r.Delete(ctx, &pvc); err != nil && !apierrors.IsNotFound(err) {
-				return reconcile.Result{}, fmt.Errorf("deleting pvc on release: %w", err)
-			}
 		}
 	}
 
@@ -412,6 +418,7 @@ func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.Boil
 }
 
 // handleDeletion handles the cleanup when a claim is being deleted.
+// If the workload has overlay dirs, a snapshot is extracted before the Pod is deleted.
 func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.BoilerhouseClaim) (reconcile.Result, error) {
 	if !controllerutil.ContainsFinalizer(claim, finalizerName) {
 		return reconcile.Result{}, nil
@@ -421,29 +428,42 @@ func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.Bo
 	workloadRef := claim.Spec.WorkloadRef
 	ns := claim.Namespace
 
-	// Delete the tenant's Pod.
+	// Look up the workload to determine idle action and overlay dirs.
+	var wl v1alpha1.BoilerhouseWorkload
+	wlKey := types.NamespacedName{Name: workloadRef, Namespace: ns}
+	idleAction := "hibernate" // default
+	if err := r.Get(ctx, wlKey, &wl); err == nil {
+		if wl.Spec.Idle != nil && wl.Spec.Idle.Action != "" {
+			idleAction = wl.Spec.Idle.Action
+		}
+	}
+
+	// Find the tenant's Pod.
 	pod, err := r.findTenantPod(ctx, ns, tenantId, workloadRef)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	if pod != nil {
-		if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
-			return reconcile.Result{}, fmt.Errorf("deleting pod on claim deletion: %w", err)
-		}
-	}
 
-	// Look up the workload idle action to decide about PVC.
-	var wl v1alpha1.BoilerhouseWorkload
-	wlKey := types.NamespacedName{Name: workloadRef, Namespace: ns}
-	if err := r.Get(ctx, wlKey, &wl); err == nil {
-		if wl.Spec.Idle != nil && wl.Spec.Idle.Action == "destroy" {
-			pvcName := fmt.Sprintf("overlay-%s-%s", tenantId, workloadRef)
-			var pvc corev1.PersistentVolumeClaim
-			if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: ns}, &pvc); err == nil {
-				if err := r.Delete(ctx, &pvc); err != nil && !apierrors.IsNotFound(err) {
-					return reconcile.Result{}, fmt.Errorf("deleting pvc on claim deletion: %w", err)
+	if pod != nil {
+		// Extract snapshot before deletion if action is hibernate.
+		if idleAction == "hibernate" && r.Snapshots != nil {
+			if wl.Spec.Filesystem != nil && len(wl.Spec.Filesystem.OverlayDirs) > 0 {
+				if err := r.Snapshots.ExtractAndStore(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
+					ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on deletion", "tenant", tenantId, "workload", workloadRef)
 				}
 			}
+		}
+
+		// If action=destroy, delete the snapshot too.
+		if idleAction == "destroy" && r.Snapshots != nil {
+			if err := r.Snapshots.DeleteSnapshot(ctx, tenantId, workloadRef); err != nil {
+				ctrl.LoggerFrom(ctx).Error(err, "deleting snapshot on destroy", "tenant", tenantId, "workload", workloadRef)
+			}
+		}
+
+		// Delete the Pod.
+		if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("deleting pod on claim deletion: %w", err)
 		}
 	}
 
@@ -456,13 +476,6 @@ func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.Bo
 	return reconcile.Result{}, nil
 }
 
-// pvcExists checks if a PVC exists for the given tenant and workload.
-func (r *ClaimReconciler) pvcExists(ctx context.Context, ns, tenantId, workloadRef string) bool {
-	pvcName := fmt.Sprintf("overlay-%s-%s", tenantId, workloadRef)
-	var pvc corev1.PersistentVolumeClaim
-	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: ns}, &pvc)
-	return err == nil
-}
 
 // SetupWithManager registers the ClaimReconciler with the controller manager.
 func (r *ClaimReconciler) SetupWithManager(mgr ctrl.Manager) error {

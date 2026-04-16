@@ -3,7 +3,6 @@ package operator
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 
 	"github.com/zdavison/boilerhouse/go/internal/envoy"
@@ -42,7 +41,6 @@ type TranslateResult struct {
 	Pod           *corev1.Pod
 	Service       *corev1.Service
 	NetworkPolicy *networkingv1.NetworkPolicy
-	PVC           *corev1.PersistentVolumeClaim
 	ConfigMap     *corev1.ConfigMap // for Envoy sidecar proxy config
 }
 
@@ -65,9 +63,8 @@ func Translate(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*Tran
 
 	result.NetworkPolicy = buildNetworkPolicy(spec, opts, labels)
 
-	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 && opts.TenantId != "" {
-		result.PVC = buildPVC(spec, opts, labels)
-	}
+	// PVC creation removed: overlay persistence now uses snapshot-based approach.
+	// Overlay dirs use emptyDir volumes in the Pod spec (see buildPod).
 
 	// Inject Envoy sidecar if ProxyConfig is provided.
 	if opts.ProxyConfig != nil {
@@ -122,32 +119,27 @@ func buildPod(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels 
 		},
 	}
 
-	// Overlay volume mounts (only if tenant is set)
-	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 && opts.TenantId != "" {
-		pvcName := pvcName(opts)
-		volumeName := "overlay"
-
-		pod.Spec.Volumes = []corev1.Volume{
-			{
-				Name: volumeName,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: pvcName,
-					},
-				},
-			},
-		}
-
+	// Overlay volume mounts: use emptyDir volumes for all overlay dirs.
+	// Persistence is handled by the snapshot manager (tar extract/inject),
+	// not per-tenant PVCs.
+	if spec.Filesystem != nil && len(spec.Filesystem.OverlayDirs) > 0 {
+		var volumes []corev1.Volume
 		var mounts []corev1.VolumeMount
-		for _, dir := range spec.Filesystem.OverlayDirs {
-			subPath := filepath.Base(dir)
+		for i, dir := range spec.Filesystem.OverlayDirs {
+			volName := fmt.Sprintf("overlay-%d", i)
+			volumes = append(volumes, corev1.Volume{
+				Name: volName,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			})
 			mounts = append(mounts, corev1.VolumeMount{
-				Name:      volumeName,
+				Name:      volName,
 				MountPath: dir,
-				SubPath:   subPath,
 			})
 		}
-		pod.Spec.Containers[0].VolumeMounts = mounts
+		pod.Spec.Volumes = append(pod.Spec.Volumes, volumes...)
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mounts...)
 	}
 
 	return pod, nil
@@ -384,27 +376,6 @@ func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkP
 	}
 }
 
-func buildPVC(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) *corev1.PersistentVolumeClaim {
-	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName(opts),
-			Namespace: opts.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", spec.Resources.DiskGb)),
-				},
-			},
-		},
-	}
-}
-
-func pvcName(opts TranslateOpts) string {
-	return fmt.Sprintf("overlay-%s-%s", opts.TenantId, opts.WorkloadName)
-}
 
 // buildProxyConfigMap creates a ConfigMap with the Envoy YAML config and CA cert
 // for the sidecar proxy.

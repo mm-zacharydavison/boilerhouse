@@ -67,7 +67,9 @@ echo "CRDs applied"
 # ── Apply workloads ─────────────────────────────────────────────────────────
 
 echo "Applying workloads..."
-kubectl apply -f "$SCRIPT_DIR/workloads/" 2>/dev/null
+for f in "$SCRIPT_DIR"/workloads/*.yaml; do
+  kubectl apply -f "$f"
+done
 echo "Workloads applied"
 
 # ── Start operator in background ─────────────────────────────────────────────

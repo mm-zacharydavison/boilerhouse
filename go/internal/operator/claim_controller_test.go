@@ -8,7 +8,6 @@ import (
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,7 +105,7 @@ func TestClaimController_ColdBootNewTenant(t *testing.T) {
 	assert.Equal(t, "true", pod.Labels[LabelManaged])
 }
 
-func TestClaimController_ColdBootWithPVC(t *testing.T) {
+func TestClaimController_ColdBootWithOverlayDirs(t *testing.T) {
 	ctx, k8sClient, cleanup := setupEnvtest(t)
 	defer cleanup()
 
@@ -118,7 +117,7 @@ func TestClaimController_ColdBootWithPVC(t *testing.T) {
 
 	wl := &v1alpha1.BoilerhouseWorkload{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pvc-wl",
+			Name:      "overlay-wl",
 			Namespace: "default",
 		},
 		Spec: v1alpha1.BoilerhouseWorkloadSpec{
@@ -138,77 +137,60 @@ func TestClaimController_ColdBootWithPVC(t *testing.T) {
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, wl))
-	wlKey := types.NamespacedName{Name: "pvc-wl", Namespace: "default"}
+	wlKey := types.NamespacedName{Name: "overlay-wl", Namespace: "default"}
 	for i := 0; i < 3; i++ {
 		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
 		require.NoError(t, err)
 	}
 
-	// Pre-create the PVC that would exist from a previous session.
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "overlay-alice-pvc-wl",
-			Namespace: "default",
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("5Gi"),
-				},
-			},
-		},
-	}
-	require.NoError(t, k8sClient.Create(ctx, pvc))
-
 	// Create a claim for tenant alice.
 	claim := &v1alpha1.BoilerhouseClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pvc-claim",
+			Name:      "overlay-claim",
 			Namespace: "default",
 		},
 		Spec: v1alpha1.BoilerhouseClaimSpec{
 			TenantId:    "alice",
-			WorkloadRef: "pvc-wl",
+			WorkloadRef: "overlay-wl",
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, claim))
 
-	// Reconcile the claim.
+	// Reconcile the claim (no SnapshotManager — snapshot injection is skipped).
 	claimReconciler := &ClaimReconciler{
 		Client: k8sClient,
 		Scheme: k8sClient.Scheme(),
 	}
 
-	claimKey := types.NamespacedName{Name: "pvc-claim", Namespace: "default"}
+	claimKey := types.NamespacedName{Name: "overlay-claim", Namespace: "default"}
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
 	}
 
-	// Verify claim status.
+	// Verify claim status: cold boot (no PVC check, snapshot injection
+	// requires kubectl which is unavailable in envtest).
 	var updatedClaim v1alpha1.BoilerhouseClaim
 	require.NoError(t, k8sClient.Get(ctx, claimKey, &updatedClaim))
 	assert.Equal(t, "Active", updatedClaim.Status.Phase)
-	assert.Equal(t, "cold+data", updatedClaim.Status.Source)
+	assert.Equal(t, "cold", updatedClaim.Status.Source)
 
-	// Verify Pod has PVC volume mount.
+	// Verify Pod has emptyDir volume for overlay.
 	var podList corev1.PodList
 	require.NoError(t, k8sClient.List(ctx, &podList,
 		client.InNamespace("default"),
 		client.MatchingLabels{
-			LabelTenant:  "alice",
-			LabelWorkload: "pvc-wl",
+			LabelTenant:   "alice",
+			LabelWorkload: "overlay-wl",
 		},
 	))
 	require.Len(t, podList.Items, 1)
 	pod := podList.Items[0]
 
-	// Check that the Pod has a PVC volume.
+	// Check that the Pod has an emptyDir volume.
 	require.Len(t, pod.Spec.Volumes, 1)
-	assert.Equal(t, "overlay", pod.Spec.Volumes[0].Name)
-	assert.NotNil(t, pod.Spec.Volumes[0].PersistentVolumeClaim)
-	assert.Equal(t, "overlay-alice-pvc-wl", pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
+	assert.Equal(t, "overlay-0", pod.Spec.Volumes[0].Name)
+	assert.NotNil(t, pod.Spec.Volumes[0].EmptyDir)
 
 	// Check that the container has a volume mount.
 	require.NotEmpty(t, pod.Spec.Containers[0].VolumeMounts)
