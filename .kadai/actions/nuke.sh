@@ -1,61 +1,52 @@
 #!/bin/bash
-# kadai:name Nuke Local Data
+# kadai:name Nuke
 # kadai:emoji 💣
-# kadai:description Delete local database, data, and boilerhouse docker containers
-# kadai:confirm true
+# kadai:description Delete all Boilerhouse resources from the cluster (workloads, pools, claims, triggers, pods, pvcs)
 
 set -euo pipefail
 
-# Resolve paths relative to project root
-SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-API_DIR="$SCRIPT_DIR/apps/api"
+PROFILE="boilerhouse"
+NAMESPACE="boilerhouse"
 
-DB_PATH="${DB_PATH:-$API_DIR/boilerhouse.db}"
-STORAGE_PATH="${STORAGE_PATH:-$API_DIR/data}"
-
-DRY_RUN=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=true
-  echo "[dry-run] Would delete the following:"
+if ! kubectl config use-context "$PROFILE" &>/dev/null 2>&1; then
+  echo "Cannot switch to context '$PROFILE'. Is minikube running?"
+  exit 1
 fi
 
-nuke() {
-  local target="$1"
-  if [[ -e "$target" ]]; then
-    if $DRY_RUN; then
-      echo "  $target"
-    else
-      rm -rf "$target"
-      echo "Deleted $target"
-    fi
-  fi
-}
+echo "Nuking all Boilerhouse resources in namespace '$NAMESPACE'..."
+echo ""
 
-# SQLite database + WAL/SHM journal files
-nuke "$DB_PATH"
-nuke "$DB_PATH-wal"
-nuke "$DB_PATH-shm"
+# Delete in dependency order: claims first (releases pods), then pools, then workloads.
+# Strip finalizers from stuck resources to avoid hangs.
 
-# Data directory (snapshots + tenant overlays)
-nuke "$STORAGE_PATH"
+for crd in boilerhouseclaims boilerhousepools boilerhousetriggers boilerhouseworkloads; do
+  echo "Deleting $crd..."
+  # Strip finalizers first to avoid stuck deletions
+  kubectl -n "$NAMESPACE" get "$crd" -o name 2>/dev/null | while read -r name; do
+    kubectl -n "$NAMESPACE" patch "$name" -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+  done
+  kubectl -n "$NAMESPACE" delete "$crd" --all --timeout=15s 2>/dev/null || true
+done
 
-# Remove all boilerhouse-labelled docker containers
-if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  CONTAINER_IDS=$(docker ps -aq --filter "label=boilerhouse.managed" 2>/dev/null || true)
-  if [[ -n "$CONTAINER_IDS" ]]; then
-    echo ""
-    if $DRY_RUN; then
-      CONTAINER_COUNT=$(echo "$CONTAINER_IDS" | wc -l | tr -d ' ')
-      echo "  Would remove $CONTAINER_COUNT boilerhouse container(s)"
-    else
-      echo "Removing boilerhouse docker containers..."
-      echo "$CONTAINER_IDS" | xargs docker rm -f 2>/dev/null || true
-      echo "All boilerhouse containers removed."
-    fi
-  fi
-fi
+echo ""
+echo "Deleting managed pods..."
+kubectl -n "$NAMESPACE" delete pods -l boilerhouse.dev/managed=true --grace-period=0 --force --timeout=15s 2>/dev/null || true
 
-if ! $DRY_RUN; then
-  echo ""
-  echo "Done. All local data has been nuked."
-fi
+echo "Deleting snapshot helper pod..."
+kubectl -n "$NAMESPACE" delete pod boilerhouse-snapshot-helper --grace-period=0 --force --timeout=10s 2>/dev/null || true
+
+echo "Deleting PVCs..."
+kubectl -n "$NAMESPACE" delete pvc --all --timeout=15s 2>/dev/null || true
+
+echo "Deleting services..."
+kubectl -n "$NAMESPACE" delete svc -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+
+echo "Deleting configmaps..."
+kubectl -n "$NAMESPACE" delete configmap -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+
+echo "Deleting network policies..."
+kubectl -n "$NAMESPACE" delete networkpolicy -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+
+echo ""
+echo "Done. Cluster is clean."
+kubectl -n "$NAMESPACE" get all 2>/dev/null || true

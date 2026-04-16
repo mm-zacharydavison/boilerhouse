@@ -1,31 +1,30 @@
 #!/bin/bash
 # kadai:name Operator E2E Tests
 # kadai:emoji ☸️
-# kadai:description Run E2E tests against the K8s operator on minikube
+# kadai:description Run E2E tests against the Go operator on minikube
 # kadai:category tests
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-PROFILE="boilerhouse-test"
+cd "$SCRIPT_DIR/go"
 
-# ── Ensure minikube is ready ────────────────────────────────────────────────
+# ── Verify minikube is running ──────────────────────────────────────────────
 
-if ! minikube status -p "$PROFILE" &>/dev/null; then
-  echo "Minikube cluster not running — starting..."
-  bash "$SCRIPT_DIR/.kadai/actions/minikube.sh"
-else
-  echo "✓ Minikube cluster '$PROFILE' is running"
+PROFILE="boilerhouse"
 
-  # Ensure CRDs and RBAC are applied even if cluster was already running
-  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/crds/" > /dev/null
-  kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/deploy/rbac.yaml" > /dev/null
-  echo "✓ CRDs and RBAC applied"
+if ! minikube status -p "$PROFILE" &>/dev/null 2>&1; then
+  echo "minikube profile '$PROFILE' not running."
+  echo "Start it with: bunx kadai run minikube"
+  exit 1
 fi
 
-# ── Run tests ───────────────────────────────────────────────────────────────
-# The test preload script (setup.ts) handles starting/stopping the operator.
+echo "minikube cluster '$PROFILE' is running"
+kubectl config use-context "$PROFILE" &>/dev/null 2>&1 || true
+
+# ── Run E2E tests ───────────────────────────────────────────────────────────
+# The tests build and start the operator themselves (see main_test.go).
 
 echo ""
 echo "Running operator E2E tests..."
-exec bun test tests/e2e-operator/ --preload ./tests/e2e-operator/setup.ts --timeout 120000
+exec go test -tags e2e -v -timeout 600s ./tests/e2e/

@@ -1,1 +1,0 @@
-ALTER TABLE `triggers` ADD `last_invoked_at` integer;

@@ -1,0 +1,32 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: wsecho
+  namespace: boilerhouse
+spec:
+  version: "0.1.0"
+  image:
+    dockerfile: wsecho/Dockerfile
+  resources:
+    vcpus: 1
+    memoryMb: 256
+    diskGb: 1
+  network:
+    access: unrestricted
+    expose:
+      - guest: 8080
+      - guest: 8081
+    websocket: /ws
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  health:
+    intervalSeconds: 2
+    unhealthyThreshold: 30
+    httpGet:
+      path: /
+      port: 8081
+  entrypoint:
+    cmd: python3
+    args: ["server.py"]
+    workdir: /app

@@ -1,125 +1,56 @@
 #!/bin/bash
-# kadai:name Minikube
+# kadai:name minikube
 # kadai:emoji ☸️
-# kadai:description Start/stop the minikube test cluster for K8s runtime tests
+# kadai:description Set up local K8s cluster (minikube)
 
 set -euo pipefail
 
-PROFILE="boilerhouse-test"
+SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 NAMESPACE="boilerhouse"
+PROFILE="boilerhouse"
 
-# ── Install minikube + kubectl if missing ─────────────────────────────────
+# ── Minikube ─────────────────────────────────────────────────────────────────
 
-install_minikube() {
-  echo "minikube not found — installing..."
-  case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install minikube
-      else
-        echo "Error: Homebrew not found. Install minikube manually." >&2
-        exit 1
-      fi
-      ;;
-    Linux)
-      curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-      sudo install minikube-linux-amd64 /usr/local/bin/minikube
-      rm minikube-linux-amd64
-      ;;
-  esac
-}
-
-install_kubectl() {
-  echo "kubectl not found — installing..."
-  case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install kubectl
-      else
-        echo "Error: Homebrew not found. Install kubectl manually." >&2
-        exit 1
-      fi
-      ;;
-    Linux)
-      curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-      sudo install kubectl /usr/local/bin/kubectl
-      rm kubectl
-      ;;
-  esac
-}
-
-command -v minikube &>/dev/null || install_minikube
-command -v kubectl &>/dev/null || install_kubectl
-
-# ── Cluster lifecycle ─────────────────────────────────────────────────────
-
-# If cluster is already running, offer status and exit
-if minikube status -p "$PROFILE" &>/dev/null; then
-  echo "Cluster '$PROFILE' is already running."
-  echo "  API server: $(minikube ip -p "$PROFILE"):8443"
-  echo ""
-  echo "To stop:   minikube stop -p $PROFILE"
-  echo "To delete: minikube delete -p $PROFILE"
-  exit 0
+if ! command -v minikube &>/dev/null; then
+  echo "minikube not found — install it:"
+  echo "  macOS:  brew install minikube"
+  echo "  Linux:  curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube"
+  exit 1
 fi
 
-echo "Starting minikube cluster '$PROFILE'..."
-minikube start -p "$PROFILE" \
-  --driver=docker \
-  --cpus=2 \
-  --memory=2048
+if minikube status -p "$PROFILE" &>/dev/null 2>&1; then
+  echo "minikube profile '$PROFILE' is running"
+else
+  echo "Starting minikube profile '$PROFILE'..."
+  minikube start -p "$PROFILE" --driver=docker --cpus=4 --memory=4096
+fi
 
-# ── Namespace + RBAC ──────────────────────────────────────────────────────
+# Ensure kubectl uses the minikube context
+kubectl config use-context "$PROFILE" &>/dev/null 2>&1 || true
 
-kubectl --context="$PROFILE" get namespace "$NAMESPACE" &>/dev/null \
-  || kubectl --context="$PROFILE" create namespace "$NAMESPACE"
+# ── Namespace ────────────────────────────────────────────────────────────────
 
-kubectl --context="$PROFILE" -n "$NAMESPACE" apply -f - <<'EOF'
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: boilerhouse-runtime
-  namespace: boilerhouse
-rules:
-  - apiGroups: [""]
-    resources: [pods, pods/exec, pods/log, services, configmaps]
-    verbs: [get, list, create, delete, watch]
-  - apiGroups: ["networking.k8s.io"]
-    resources: [networkpolicies]
-    verbs: [get, list, create, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: boilerhouse-runtime
-  namespace: boilerhouse
-subjects:
-  - kind: ServiceAccount
-    name: default
-    namespace: boilerhouse
-roleRef:
-  kind: Role
-  name: boilerhouse-runtime
-  apiGroup: rbac.authorization.k8s.io
-EOF
+kubectl get namespace "$NAMESPACE" &>/dev/null 2>&1 \
+  || kubectl create namespace "$NAMESPACE"
+echo "Namespace '$NAMESPACE' ready"
 
-# ── Operator CRDs + RBAC ────────────────────────────────────────────────
-# Applied idempotently so re-running the action picks up any changes.
+# ── Apply CRDs ───────────────────────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+echo "Applying CRDs..."
+if [ -d "$SCRIPT_DIR/config/crd/bases-go" ]; then
+  kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/"
+elif [ -d "$SCRIPT_DIR/config/crd/bases" ]; then
+  kubectl apply -f "$SCRIPT_DIR/config/crd/bases/"
+fi
 
-echo "Applying operator CRDs..."
-kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/crds/"
+# ── RBAC ─────────────────────────────────────────────────────────────────────
 
-echo "Applying operator RBAC..."
-kubectl --context="$PROFILE" apply -f "$SCRIPT_DIR/apps/operator/deploy/rbac.yaml"
-
-# ── Pre-pull Envoy image for sidecar proxy tests ────────────────────────
-
-echo "Pulling Envoy image into minikube..."
-minikube -p "$PROFILE" image pull docker.io/envoyproxy/envoy:v1.32-latest
+echo "Applying RBAC..."
+kubectl apply -f "$SCRIPT_DIR/config/deploy/operator.yaml"
 
 echo ""
-echo "Minikube ready: profile=$PROFILE namespace=$NAMESPACE"
-echo "  API server: $(minikube ip -p "$PROFILE"):8443"
-echo "  Token:      kubectl --context=$PROFILE -n $NAMESPACE create token default"
+echo "Local K8s ready for Boilerhouse development"
+echo "  Namespace:  $NAMESPACE"
+echo ""
+echo "Start the operator:  cd go && go run ./cmd/operator/"
+echo "Start the API:       cd go && go run ./cmd/api/"

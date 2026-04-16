@@ -1,0 +1,29 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: httpserver
+  namespace: boilerhouse
+spec:
+  version: "0.1.0"
+  image:
+    dockerfile: httpserver/Dockerfile
+  resources:
+    vcpus: 1
+    memoryMb: 256
+    diskGb: 1
+  network:
+    access: unrestricted
+    expose:
+      - guest: 8080
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  health:
+    intervalSeconds: 2
+    unhealthyThreshold: 30
+    httpGet:
+      path: /
+      port: 8080
+  entrypoint:
+    cmd: python3
+    args: ["-m", "http.server", "8080"]

@@ -1,0 +1,21 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: minimal
+  namespace: boilerhouse
+spec:
+  version: "0.1.0"
+  image:
+    dockerfile: minimal/Dockerfile
+  resources:
+    vcpus: 1
+    memoryMb: 128
+    diskGb: 1
+  network:
+    access: "none"
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  entrypoint:
+    cmd: sh
+    args: ["-c", "echo 'minimal container ready' && exec sleep infinity"]

@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - ../crd/bases/boilerhouse.dev_workloads.yaml
+  - ../crd/bases/boilerhouse.dev_pools.yaml
+  - ../crd/bases/boilerhouse.dev_claims.yaml
+  - ../crd/bases/boilerhouse.dev_triggers.yaml
+  - operator.yaml
+  - api.yaml
+  - trigger.yaml

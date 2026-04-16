@@ -1,0 +1,10 @@
+{
+  "name": "boilerhouse-ts",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dashboard": "cd apps/dashboard && bun --hot src/server.ts",
+    "docs:dev": "cd apps/docs && bun run dev",
+    "docs:build": "cd apps/docs && bun run build"
+  }
+}

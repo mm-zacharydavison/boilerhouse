@@ -1,0 +1,9 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhousePool
+metadata:
+  name: minimal-pool
+  namespace: boilerhouse
+spec:
+  workloadRef: minimal
+  size: 1
+  maxFillConcurrency: 1

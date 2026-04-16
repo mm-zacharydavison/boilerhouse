@@ -1,0 +1,53 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: openclaw
+  namespace: boilerhouse
+spec:
+  version: "2026.3.24"
+  image:
+    dockerfile: openclaw/Dockerfile
+  resources:
+    vcpus: 2
+    memoryMb: 2048
+    diskGb: 10
+  network:
+    access: restricted
+    allowlist:
+      - api.anthropic.com
+      - api.openai.com
+      - registry.npmjs.org
+    expose:
+      - guest: 18789
+    websocket: /
+    credentials:
+      - domain: api.anthropic.com
+        headers:
+          x-api-key: "${tenant-secret:ANTHROPIC_API_KEY}"
+  filesystem:
+    overlayDirs:
+      - /root
+  idle:
+    timeoutSeconds: 60
+    action: hibernate
+    watchDirs:
+      - /root/.openclaw
+  health:
+    intervalSeconds: 2
+    unhealthyThreshold: 30
+    httpGet:
+      path: /__openclaw/control-ui-config.json
+      port: 18789
+  entrypoint:
+    cmd: /bin/sh
+    args:
+      - "-c"
+      - >-
+        mkdir -p /root/.openclaw &&
+        echo '{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true},"http":{"endpoints":{"chatCompletions":{"enabled":true}}}}}' > /root/.openclaw/openclaw.json &&
+        exec node openclaw.mjs gateway --allow-unconfigured --bind lan
+    workdir: /app
+    env:
+      OPENCLAW_GATEWAY_TOKEN: "73307c8aab2b025f959a53f5095c0addec0be76fe4b5d470"
+      OPENCLAW_CONFIG_PATH: /root/.openclaw/openclaw.json
+      ANTHROPIC_API_KEY: sk-ant-proxy-managed
