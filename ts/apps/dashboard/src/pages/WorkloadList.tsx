@@ -209,15 +209,30 @@ function InstanceRow({
 	onConnect,
 	workloadName,
 	busy,
+	placeholder,
 }: {
-	instance: InstanceResponse;
+	instance?: InstanceResponse;
 	onDestroy: (id: string) => void;
 	onHibernate: (tenantId: string, workloadName: string) => void;
 	onConnect: (instance: InstanceResponse) => void;
 	workloadName: string;
-	/** When true, action buttons are replaced with a spinner. */
 	busy?: boolean;
+	/** When true, renders a "warming..." placeholder row instead of real instance data. */
+	placeholder?: boolean;
 }) {
+	if (placeholder) {
+		return (
+			<div className="flex items-center h-7 px-2 text-sm font-mono border-b border-border/10">
+				<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
+					<Loader2 size={10} className="text-muted animate-spin" />
+				</span>
+				<span className="text-muted text-xs">warming...</span>
+			</div>
+		);
+	}
+
+	if (!instance) return null;
+
 	return (
 		<div className="relative flex items-center h-7 px-2 text-sm font-mono border-b border-border/10 overflow-hidden">
 			<span style={{ width: GUTTER_W + STATUS_W }} className="shrink-0 flex items-center justify-end pr-2">
@@ -272,6 +287,7 @@ function InstanceSection({
 	onConnect,
 	workloadName,
 	busyInstances,
+	pendingWarm,
 }: {
 	label: string;
 	instances: InstanceNode[];
@@ -280,6 +296,7 @@ function InstanceSection({
 	onConnect: (instance: InstanceResponse) => void;
 	workloadName: string;
 	busyInstances: Set<string>;
+	pendingWarm?: boolean;
 }) {
 	return (
 		<>
@@ -301,6 +318,16 @@ function InstanceSection({
 					busy={busyInstances.has(inst.instance.name)}
 				/>
 			))}
+			{pendingWarm && (
+				<InstanceRow
+					key="pending-warm"
+					placeholder
+					onDestroy={onDestroy}
+					onHibernate={onHibernate}
+					onConnect={onConnect}
+					workloadName={workloadName}
+				/>
+			)}
 		</>
 	);
 }
@@ -383,19 +410,13 @@ function WorkloadGroup({
 						<>
 							<InstanceSection
 								label="pool"
-								instances={pendingWarm
-									? [...poolInstances, { instance: {
-										name: `warming-${workload.name}`,
-										phase: "Pending",
-										workloadRef: workload.name,
-										createdAt: new Date().toISOString(),
-									} as InstanceResponse }]
-									: poolInstances}
+								instances={poolInstances}
 								onDestroy={onDestroy}
 								onHibernate={onHibernate}
 								onConnect={onConnect}
 								workloadName={workload.name}
 								busyInstances={busyInstances}
+								pendingWarm={pendingWarm}
 							/>
 						</>
 					)}
