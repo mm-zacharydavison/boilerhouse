@@ -99,11 +99,6 @@ func (s *Server) buildRouter() chi.Router {
 			r.Post("/instances/{id}/exec", s.execInInstance)
 			r.Post("/instances/{id}/destroy", s.destroyInstance)
 
-			// Secrets
-			r.Put("/tenants/{id}/secrets/{name}", s.setSecret)
-			r.Get("/tenants/{id}/secrets", s.listSecrets)
-			r.Delete("/tenants/{id}/secrets/{name}", s.deleteSecret)
-
 			// Triggers
 			r.Post("/triggers", s.createTrigger)
 			r.Get("/triggers", s.listTriggers)

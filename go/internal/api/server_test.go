@@ -334,49 +334,6 @@ func TestStatsEndpoint(t *testing.T) {
 	assert.Equal(t, 0, stats.Claims.Total)
 }
 
-func TestSecretRoutes(t *testing.T) {
-	srv, cleanup := newTestServer(t)
-	defer cleanup()
-
-	tenantID := "tenant-abc"
-
-	// Set a secret.
-	body, _ := json.Marshal(secretSetRequest{Value: "s3cret"})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/"+tenantID+"/secrets/db-password", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	// List secrets.
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/tenants/"+tenantID+"/secrets", nil)
-	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var keys []string
-	err := json.Unmarshal(rec.Body.Bytes(), &keys)
-	require.NoError(t, err)
-	assert.Contains(t, keys, "db-password")
-
-	// Delete the secret key.
-	req = httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/"+tenantID+"/secrets/db-password", nil)
-	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	// List again — should be empty.
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/tenants/"+tenantID+"/secrets", nil)
-	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var emptyKeys []string
-	err = json.Unmarshal(rec.Body.Bytes(), &emptyKeys)
-	require.NoError(t, err)
-	assert.Empty(t, emptyKeys)
-}
-
 func TestTriggerRoutes(t *testing.T) {
 	srv, cleanup := newTestServer(t)
 	defer cleanup()
