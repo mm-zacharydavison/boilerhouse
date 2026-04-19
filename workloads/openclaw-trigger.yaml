@@ -8,8 +8,8 @@
 #   kubectl -n boilerhouse create secret generic openclaw-gateway-token \
 #     --from-literal=token="<openclaw gateway token from the workload env>"
 #
-# Update the allowlist tenantIds with the telegram usernames/ids that
-# should be permitted to use this agent.
+# The tenantIds allowlist is injected by the preset script
+# (bunx kadai run presets/<agent>). Do not edit directly.
 apiVersion: boilerhouse.dev/v1alpha1
 kind: BoilerhouseTrigger
 metadata:
@@ -29,9 +29,7 @@ spec:
   guards:
     - type: allowlist
       config:
-        tenantIds:
-          - tg-alice
-          - tg-bob
+        tenantIds: ${TELEGRAM_ALLOWLIST_JSON}
         denyMessage: "You are not authorized to use this agent."
   config:
     botTokenSecretRef:
