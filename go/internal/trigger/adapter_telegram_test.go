@@ -153,6 +153,34 @@ func TestTelegramAdapter_RequiresBotToken(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestTelegramAdapter_RejectsBothTokenAndSecretRef(t *testing.T) {
+	_, err := parseTelegramConfig(map[string]any{
+		"botToken":          "literal",
+		"botTokenSecretRef": map[string]any{"name": "s", "key": "token"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestTelegramAdapter_ParsesSecretRef(t *testing.T) {
+	cfg, err := parseTelegramConfig(map[string]any{
+		"botTokenSecretRef": map[string]any{"name": "tg-secret", "key": "token"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.BotTokenSecretRef)
+	assert.Equal(t, "tg-secret", cfg.BotTokenSecretRef.Name)
+	assert.Equal(t, "token", cfg.BotTokenSecretRef.Key)
+	assert.Empty(t, cfg.BotToken)
+}
+
+func TestTelegramAdapter_SecretRefMissingFields(t *testing.T) {
+	_, err := parseTelegramConfig(map[string]any{
+		"botTokenSecretRef": map[string]any{"name": "s"}, // missing key
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name and key")
+}
+
 // --- Lifecycle test ---
 
 // TestTelegramAdapter_StartStop verifies the adapter calls getMe, polls

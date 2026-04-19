@@ -46,9 +46,16 @@ func NewTelegramAdapter(config map[string]any) *TelegramAdapter {
 // telegramConfig is the parsed adapter config.
 type telegramConfig struct {
 	BotToken           string
+	BotTokenSecretRef  *telegramSecretRef
 	UpdateTypes        []string
 	PollTimeoutSeconds int
 	APIBaseURL         string
+}
+
+// telegramSecretRef points at a Kubernetes Secret key holding the bot token.
+type telegramSecretRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
 }
 
 func parseTelegramConfig(raw map[string]any) (telegramConfig, error) {
@@ -62,10 +69,28 @@ func parseTelegramConfig(raw map[string]any) (telegramConfig, error) {
 		return cfg, fmt.Errorf("telegram adapter: config is required")
 	}
 
+	hasLiteral := false
 	if v, ok := raw["botToken"].(string); ok && v != "" {
 		cfg.BotToken = v
-	} else {
-		return cfg, fmt.Errorf("telegram adapter: botToken is required")
+		hasLiteral = true
+	}
+
+	hasRef := false
+	if v, ok := raw["botTokenSecretRef"].(map[string]any); ok {
+		name, _ := v["name"].(string)
+		key, _ := v["key"].(string)
+		if name == "" || key == "" {
+			return cfg, fmt.Errorf("telegram adapter: botTokenSecretRef requires name and key")
+		}
+		cfg.BotTokenSecretRef = &telegramSecretRef{Name: name, Key: key}
+		hasRef = true
+	}
+
+	switch {
+	case hasLiteral && hasRef:
+		return cfg, fmt.Errorf("telegram adapter: botToken and botTokenSecretRef are mutually exclusive")
+	case !hasLiteral && !hasRef:
+		return cfg, fmt.Errorf("telegram adapter: botToken or botTokenSecretRef is required")
 	}
 
 	if v, ok := raw["apiBaseUrl"].(string); ok && v != "" {

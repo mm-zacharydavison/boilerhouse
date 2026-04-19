@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -103,7 +104,7 @@ func (g *Gateway) syncOnce(ctx context.Context) error {
 		}
 
 		// Start a new adapter.
-		adapter, err := g.buildAdapter(trigger)
+		adapter, err := g.buildAdapter(ctx, trigger)
 		if err != nil {
 			g.log.Error("failed to build adapter", "trigger", name, "error", err)
 			continue
@@ -148,7 +149,7 @@ func (g *Gateway) stopAll() {
 }
 
 // buildAdapter creates the appropriate adapter for a trigger.
-func (g *Gateway) buildAdapter(trigger *v1alpha1.BoilerhouseTrigger) (Adapter, error) {
+func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) (Adapter, error) {
 	switch trigger.Spec.Type {
 	case "webhook":
 		cfg := parseWebhookConfig(trigger)
@@ -161,11 +162,42 @@ func (g *Gateway) buildAdapter(trigger *v1alpha1.BoilerhouseTrigger) (Adapter, e
 		}
 		return NewCronAdapter(interval, cfg.Payload), nil
 	case "telegram":
-		cfg := parseTelegramAdapterConfig(trigger)
-		return NewTelegramAdapter(cfg), nil
+		rawMap := parseTelegramAdapterConfig(trigger)
+
+		// Validate + normalize.
+		parsed, err := parseTelegramConfig(rawMap)
+		if err != nil {
+			return nil, err
+		}
+
+		// Resolve secretRef if present, substituting the token into rawMap.
+		if parsed.BotTokenSecretRef != nil {
+			token, err := g.resolveSecret(ctx, parsed.BotTokenSecretRef.Name, parsed.BotTokenSecretRef.Key)
+			if err != nil {
+				return nil, fmt.Errorf("telegram bot token secret: %w", err)
+			}
+			rawMap["botToken"] = token
+			delete(rawMap, "botTokenSecretRef")
+		}
+
+		return NewTelegramAdapter(rawMap), nil
 	default:
 		return nil, fmt.Errorf("unsupported trigger type: %s", trigger.Spec.Type)
 	}
+}
+
+// resolveSecret fetches a value from a Kubernetes Secret in the gateway's
+// namespace. Returns a clear error if the Secret or key is missing.
+func (g *Gateway) resolveSecret(ctx context.Context, name, key string) (string, error) {
+	var secret corev1.Secret
+	if err := g.client.Get(ctx, types.NamespacedName{Name: name, Namespace: g.namespace}, &secret); err != nil {
+		return "", err
+	}
+	value, ok := secret.Data[key]
+	if !ok {
+		return "", fmt.Errorf("key %q not found in secret %q", key, name)
+	}
+	return string(value), nil
 }
 
 // buildHandler creates the EventHandler pipeline for a trigger: resolve tenant,
