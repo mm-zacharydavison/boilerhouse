@@ -204,7 +204,7 @@ func (g *Gateway) resolveSecret(ctx context.Context, name, key string) (string, 
 // run guards, ensure claim, forward to driver.
 func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) EventHandler {
 	guards := g.buildGuards(ctx, trigger)
-	driver := NewDefaultDriver(nil)
+	driver := g.buildDriver(ctx, trigger)
 
 	return func(ctx context.Context, payload TriggerPayload) (any, error) {
 		// 1. Resolve tenant ID.
@@ -389,5 +389,68 @@ func parseAllowlistGuard(guardSpec v1alpha1.TriggerGuard) *AllowlistGuard {
 	return &AllowlistGuard{
 		TenantIds:   cfg.TenantIds,
 		DenyMessage: cfg.DenyMessage,
+	}
+}
+
+// --- driver resolution ---
+
+// buildDriver resolves the driver for a trigger. Always returns a usable
+// Driver; on failure returns a misconfiguredDriver whose Send reports why.
+func (g *Gateway) buildDriver(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) Driver {
+	switch trigger.Spec.Driver {
+	case "", "default":
+		return NewDefaultDriver(nil)
+	case "claude-code":
+		return NewClaudeCodeDriver()
+	case "openclaw":
+		token, err := g.resolveOpenclawToken(ctx, trigger)
+		if err != nil {
+			return &misconfiguredDriver{reason: err.Error()}
+		}
+		return NewOpenclawDriver(token)
+	default:
+		return &misconfiguredDriver{reason: fmt.Sprintf("unknown driver %q", trigger.Spec.Driver)}
+	}
+}
+
+// openclawOptions is the parsed form of Trigger.Spec.DriverOptions for the
+// openclaw driver. Exactly one of GatewayToken (literal) or
+// GatewayTokenSecretRef must be set.
+type openclawOptions struct {
+	GatewayToken          string             `json:"gatewayToken,omitempty"`
+	GatewayTokenSecretRef *openclawSecretRef `json:"gatewayTokenSecretRef,omitempty"`
+}
+
+type openclawSecretRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
+// resolveOpenclawToken extracts the gateway token from driver options, fetching
+// from a Secret if secretRef is used.
+func (g *Gateway) resolveOpenclawToken(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) (string, error) {
+	var opts openclawOptions
+	if trigger.Spec.DriverOptions != nil && trigger.Spec.DriverOptions.Raw != nil {
+		if err := json.Unmarshal(trigger.Spec.DriverOptions.Raw, &opts); err != nil {
+			return "", fmt.Errorf("openclaw driverOptions parse: %w", err)
+		}
+	}
+
+	hasLiteral := opts.GatewayToken != ""
+	hasRef := opts.GatewayTokenSecretRef != nil
+
+	switch {
+	case hasLiteral && hasRef:
+		return "", fmt.Errorf("openclaw: gatewayToken and gatewayTokenSecretRef are mutually exclusive")
+	case hasLiteral:
+		return opts.GatewayToken, nil
+	case hasRef:
+		token, err := g.resolveSecret(ctx, opts.GatewayTokenSecretRef.Name, opts.GatewayTokenSecretRef.Key)
+		if err != nil {
+			return "", fmt.Errorf("openclaw gateway token secret: %w", err)
+		}
+		return token, nil
+	default:
+		return "", fmt.Errorf("openclaw: gatewayToken or gatewayTokenSecretRef is required")
 	}
 }
