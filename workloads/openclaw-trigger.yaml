@@ -1,0 +1,41 @@
+# Telegram-triggered openclaw agent.
+#
+# Prereq: create these Secrets in the boilerhouse namespace before applying:
+#
+#   kubectl -n boilerhouse create secret generic telegram-bot-token \
+#     --from-literal=token="<your telegram bot token>"
+#
+#   kubectl -n boilerhouse create secret generic openclaw-gateway-token \
+#     --from-literal=token="<openclaw gateway token from the workload env>"
+#
+# Update the allowlist tenantIds with the telegram usernames/ids that
+# should be permitted to use this agent.
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseTrigger
+metadata:
+  name: tg-openclaw
+  namespace: boilerhouse
+spec:
+  type: telegram
+  workloadRef: openclaw
+  tenant:
+    from: usernameOrId
+    prefix: "tg-"
+  driver: openclaw
+  driverOptions:
+    gatewayTokenSecretRef:
+      name: openclaw-gateway-token
+      key: token
+  guards:
+    - type: allowlist
+      config:
+        tenantIds:
+          - tg-alice
+          - tg-bob
+        denyMessage: "You are not authorized to use this agent."
+  config:
+    botTokenSecretRef:
+      name: telegram-bot-token
+      key: token
+    updateTypes: [message]
+    pollTimeoutSeconds: 30

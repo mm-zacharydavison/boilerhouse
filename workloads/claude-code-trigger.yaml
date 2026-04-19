@@ -1,0 +1,34 @@
+# Telegram-triggered claude-code agent.
+#
+# Prereq: create this Secret in the boilerhouse namespace before applying:
+#
+#   kubectl -n boilerhouse create secret generic telegram-bot-token \
+#     --from-literal=token="<your telegram bot token>"
+#
+# Update the allowlist tenantIds with the telegram usernames/ids that
+# should be permitted to use this agent.
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseTrigger
+metadata:
+  name: tg-claude-code
+  namespace: boilerhouse
+spec:
+  type: telegram
+  workloadRef: claude-code
+  tenant:
+    from: usernameOrId
+    prefix: "tg-"
+  driver: claude-code
+  guards:
+    - type: allowlist
+      config:
+        tenantIds:
+          - tg-alice
+          - tg-bob
+        denyMessage: "You are not authorized to use this agent."
+  config:
+    botTokenSecretRef:
+      name: telegram-bot-token
+      key: token
+    updateTypes: [message]
+    pollTimeoutSeconds: 30
