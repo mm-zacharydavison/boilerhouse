@@ -11,7 +11,7 @@ import (
 
 // Driver sends a trigger payload to an instance endpoint and returns the response.
 type Driver interface {
-	Send(ctx context.Context, endpoint string, payload TriggerPayload) (any, error)
+	Send(ctx context.Context, endpoint, tenantId string, payload TriggerPayload) (any, error)
 }
 
 // DefaultDriver sends the payload as an HTTP POST with JSON body to the instance endpoint.
@@ -29,7 +29,7 @@ func NewDefaultDriver(httpClient *http.Client) *DefaultDriver {
 }
 
 // Send POSTs the payload as JSON to the endpoint and returns the parsed response body.
-func (d *DefaultDriver) Send(ctx context.Context, endpoint string, payload TriggerPayload) (any, error) {
+func (d *DefaultDriver) Send(ctx context.Context, endpoint, _ string, payload TriggerPayload) (any, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("driver: marshal payload: %w", err)
@@ -65,4 +65,15 @@ func (d *DefaultDriver) Send(ctx context.Context, endpoint string, payload Trigg
 	}
 
 	return result, nil
+}
+
+// misconfiguredDriver denies every event with a fixed reason. Used when
+// buildDriver cannot construct a usable driver (unknown name, unresolvable
+// secret). Consistent with APIGuard's misconfigured state.
+type misconfiguredDriver struct {
+	reason string
+}
+
+func (d *misconfiguredDriver) Send(_ context.Context, _, _ string, _ TriggerPayload) (any, error) {
+	return nil, fmt.Errorf("driver misconfigured: %s", d.reason)
 }

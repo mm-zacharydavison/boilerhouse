@@ -195,7 +195,7 @@ func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.Boilerhous
 		}
 
 		// 4. Forward event to instance via driver.
-		result, err := driver.Send(ctx, endpoint, payload)
+		result, err := driver.Send(ctx, endpoint, tenantId, payload)
 		if err != nil {
 			return nil, fmt.Errorf("driver send: %w", err)
 		}

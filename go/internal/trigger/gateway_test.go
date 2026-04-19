@@ -260,7 +260,7 @@ func TestDefaultDriver_SendsPayload(t *testing.T) {
 		Raw:    map[string]any{"key": "value"},
 	}
 
-	result, err := driver.Send(context.Background(), server.URL, payload)
+	result, err := driver.Send(context.Background(), server.URL, "", payload)
 	require.NoError(t, err)
 
 	// Verify the driver received the correct payload.
@@ -282,7 +282,7 @@ func TestDefaultDriver_HandlesErrorResponse(t *testing.T) {
 	driver := NewDefaultDriver(server.Client())
 	payload := TriggerPayload{Source: "webhook"}
 
-	_, err := driver.Send(context.Background(), server.URL, payload)
+	_, err := driver.Send(context.Background(), server.URL, "", payload)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
 }
