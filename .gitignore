@@ -13,3 +13,4 @@ data/
 tests/security/container-breakout/.cache/
 .bun-install-cache/
 .boilerhouse-preset/
+.worktrees/
