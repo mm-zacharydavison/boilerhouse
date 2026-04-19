@@ -69,8 +69,9 @@ func TestClaimController_ColdBootNewTenant(t *testing.T) {
 
 	// Reconcile the claim.
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	// Multiple reconciles: finalizer add, Pending, then cold boot to Active.
@@ -158,8 +159,9 @@ func TestClaimController_ColdBootWithOverlayDirs(t *testing.T) {
 
 	// Reconcile the claim (no SnapshotManager — snapshot injection is skipped).
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	claimKey := types.NamespacedName{Name: "overlay-claim", Namespace: "default"}
@@ -281,8 +283,9 @@ func TestClaimController_ClaimFromPool(t *testing.T) {
 
 	// Reconcile the claim.
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	claimKey := types.NamespacedName{Name: "pool-claim", Namespace: "default"}
@@ -389,8 +392,9 @@ func TestClaimController_ExistingInstance(t *testing.T) {
 
 	// Reconcile the claim.
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	claimKey := types.NamespacedName{Name: "existing-claim", Namespace: "default"}
@@ -469,8 +473,9 @@ func TestClaimController_ReleaseDeletesPod(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, claim))
 
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	// Reconcile to Active.
@@ -538,8 +543,9 @@ func TestClaimController_WorkloadNotFoundError(t *testing.T) {
 	require.NoError(t, k8sClient.Create(ctx, claim))
 
 	claimReconciler := &ClaimReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:    k8sClient,
+		Scheme:    k8sClient.Scheme(),
+		Namespace: "default",
 	}
 
 	claimKey := types.NamespacedName{Name: "orphan-claim", Namespace: "default"}

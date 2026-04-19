@@ -2,11 +2,7 @@ package operator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"regexp"
-	"strings"
 
 	"github.com/zdavison/boilerhouse/go/internal/envoy"
 	corev1 "k8s.io/api/core/v1"
@@ -108,37 +104,10 @@ func InjectSidecar(pod *corev1.Pod, configMapName string) {
 	}
 }
 
-var (
-	globalSecretRe = regexp.MustCompile(`\$\{global-secret:([^}]+)\}`)
-	tenantSecretRe = regexp.MustCompile(`\$\{tenant-secret:([^}]+)\}`)
-)
-
-// ResolveCredentials resolves secret references in workload credential headers.
-// ${global-secret:NAME} is resolved from environment variables.
-// ${tenant-secret:NAME} is resolved from a K8s Secret named "bh-secret-<tenantId>".
-func ResolveCredentials(ctx context.Context, k8sClient client.Client, namespace string, tenantId string, credentials []v1alpha1.NetworkCredential) ([]envoy.ResolvedCredential, error) {
-	// Pre-fetch tenant secret (if any credential uses tenant-secret references).
-	var tenantSecretData map[string][]byte
-	tenantSecretNeeded := false
-	for _, cred := range credentials {
-		if cred.Headers != nil && cred.Headers.Raw != nil {
-			raw := string(cred.Headers.Raw)
-			if strings.Contains(raw, "${tenant-secret:") {
-				tenantSecretNeeded = true
-				break
-			}
-		}
-	}
-
-	if tenantSecretNeeded && tenantId != "" {
-		secretName := fmt.Sprintf("bh-secret-%s", tenantId)
-		var secret corev1.Secret
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &secret)
-		if err != nil {
-			return nil, fmt.Errorf("fetching tenant secret %s: %w", secretName, err)
-		}
-		tenantSecretData = secret.Data
-	}
+// ResolveCredentials resolves Secret references in workload credential headers.
+// All secretKeyRefs resolve from Secrets in the operator's namespace.
+func ResolveCredentials(ctx context.Context, k8sClient client.Client, namespace string, credentials []v1alpha1.NetworkCredential) ([]envoy.ResolvedCredential, error) {
+	secretCache := map[string]map[string][]byte{}
 
 	var resolved []envoy.ResolvedCredential
 	for _, cred := range credentials {
@@ -146,57 +115,57 @@ func ResolveCredentials(ctx context.Context, k8sClient client.Client, namespace 
 			continue
 		}
 
-		headers := make(map[string]string)
-		if cred.Headers != nil && cred.Headers.Raw != nil {
-			var raw map[string]string
-			if err := json.Unmarshal(cred.Headers.Raw, &raw); err != nil {
-				return nil, fmt.Errorf("parsing headers for domain %s: %w", cred.Domain, err)
+		headers := make(map[string]string, len(cred.Headers))
+		for _, h := range cred.Headers {
+			if h.Name == "" {
+				return nil, fmt.Errorf("credential for domain %s: header entry missing name", cred.Domain)
 			}
 
-			for key, val := range raw {
-				resolved, err := resolveValue(val, tenantSecretData)
+			switch {
+			case h.ValueFrom == nil && h.Value == "":
+				return nil, fmt.Errorf("credential for domain %s: header %q has neither value nor valueFrom", cred.Domain, h.Name)
+			case h.ValueFrom != nil && h.Value != "":
+				return nil, fmt.Errorf("credential for domain %s: header %q sets both value and valueFrom", cred.Domain, h.Name)
+			case h.ValueFrom != nil:
+				v, err := resolveSecretKeyRef(ctx, k8sClient, namespace, h.ValueFrom.SecretKeyRef, secretCache)
 				if err != nil {
-					return nil, fmt.Errorf("resolving header %s for domain %s: %w", key, cred.Domain, err)
+					return nil, fmt.Errorf("credential for domain %s, header %q: %w", cred.Domain, h.Name, err)
 				}
-				headers[key] = resolved
+				headers[h.Name] = v
+			default:
+				headers[h.Name] = h.Value
 			}
 		}
 
-		resolved = append(resolved, envoy.ResolvedCredential{
-			Domain:  cred.Domain,
-			Headers: headers,
-		})
+		resolved = append(resolved, envoy.ResolvedCredential{Domain: cred.Domain, Headers: headers})
 	}
 
 	return resolved, nil
 }
 
-// resolveValue replaces ${global-secret:NAME} and ${tenant-secret:NAME} references.
-func resolveValue(val string, tenantSecretData map[string][]byte) (string, error) {
-	// Resolve global secrets from env.
-	result := globalSecretRe.ReplaceAllStringFunc(val, func(match string) string {
-		parts := globalSecretRe.FindStringSubmatch(match)
-		if len(parts) < 2 {
-			return match
-		}
-		envVal := os.Getenv(parts[1])
-		return envVal
-	})
+// resolveSecretKeyRef fetches (and caches) a Secret in the operator namespace
+// and returns the value at ref.Key.
+func resolveSecretKeyRef(ctx context.Context, k8sClient client.Client, namespace string, ref *v1alpha1.SecretKeyRef, cache map[string]map[string][]byte) (string, error) {
+	if ref == nil {
+		return "", fmt.Errorf("valueFrom.secretKeyRef is nil")
+	}
+	if ref.Name == "" || ref.Key == "" {
+		return "", fmt.Errorf("secretKeyRef requires name and key")
+	}
 
-	// Resolve tenant secrets from K8s Secret data.
-	result = tenantSecretRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := tenantSecretRe.FindStringSubmatch(match)
-		if len(parts) < 2 {
-			return match
+	data, ok := cache[ref.Name]
+	if !ok {
+		var secret corev1.Secret
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: namespace}, &secret); err != nil {
+			return "", fmt.Errorf("secret %q: %w", ref.Name, err)
 		}
-		if tenantSecretData == nil {
-			return match
-		}
-		if v, ok := tenantSecretData[parts[1]]; ok {
-			return string(v)
-		}
-		return match
-	})
+		data = secret.Data
+		cache[ref.Name] = data
+	}
 
-	return result, nil
+	value, ok := data[ref.Key]
+	if !ok {
+		return "", fmt.Errorf("secret %q: key %q not found", ref.Name, ref.Key)
+	}
+	return string(value), nil
 }

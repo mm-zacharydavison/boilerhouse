@@ -86,6 +86,7 @@ func main() {
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Snapshots: snapshots,
+		Namespace: namespace,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller", "controller", "ClaimReconciler")
 		os.Exit(1)

@@ -171,20 +171,46 @@ spec:
                           description: Domain is the domain to apply credentials to.
                           type: string
                         headers:
-                          description: Headers is a free-form map of HTTP headers.
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        secretRef:
-                          description: SecretRef references a Kubernetes secret containing
-                            credentials.
-                          properties:
-                            key:
-                              description: Key is the key within the secret.
-                              type: string
-                            name:
-                              description: Name is the name of the secret.
-                              type: string
-                          type: object
+                          description: Headers to inject on requests to Domain.
+                          items:
+                            description: |-
+                              HeaderEntry is one injected header. Exactly one of Value or ValueFrom must
+                              be set.
+                            properties:
+                              name:
+                                description: Name is the HTTP header name.
+                                type: string
+                              value:
+                                description: Value is a literal header value.
+                                type: string
+                              valueFrom:
+                                description: |-
+                                  ValueFrom sources the value from a Kubernetes Secret in the operator's
+                                  namespace.
+                                properties:
+                                  secretKeyRef:
+                                    description: SecretKeyRef selects a key from a
+                                      Secret in the operator's namespace.
+                                    properties:
+                                      key:
+                                        description: Key is the key within the Secret's
+                                          data map.
+                                        type: string
+                                      name:
+                                        description: Name is the name of the Secret
+                                          in the operator's namespace.
+                                        type: string
+                                    required:
+                                    - key
+                                    - name
+                                    type: object
+                                required:
+                                - secretKeyRef
+                                type: object
+                            required:
+                            - name
+                            type: object
+                          type: array
                       type: object
                     type: array
                   expose:

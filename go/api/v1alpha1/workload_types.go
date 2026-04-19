@@ -39,23 +39,37 @@ type NetworkCredential struct {
 	// Domain is the domain to apply credentials to.
 	// +optional
 	Domain string `json:"domain,omitempty"`
-	// SecretRef references a Kubernetes secret containing credentials.
+	// Headers to inject on requests to Domain.
 	// +optional
-	SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
-	// Headers is a free-form map of HTTP headers.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Headers *runtime.RawExtension `json:"headers,omitempty"`
+	Headers []HeaderEntry `json:"headers,omitempty"`
 }
 
-// SecretKeyRef references a key within a Kubernetes Secret.
+// HeaderEntry is one injected header. Exactly one of Value or ValueFrom must
+// be set.
+type HeaderEntry struct {
+	// Name is the HTTP header name.
+	Name string `json:"name"`
+	// Value is a literal header value.
+	// +optional
+	Value string `json:"value,omitempty"`
+	// ValueFrom sources the value from a Kubernetes Secret in the operator's
+	// namespace.
+	// +optional
+	ValueFrom *HeaderValueSource `json:"valueFrom,omitempty"`
+}
+
+// HeaderValueSource describes how a header value is sourced.
+type HeaderValueSource struct {
+	// SecretKeyRef selects a key from a Secret in the operator's namespace.
+	SecretKeyRef *SecretKeyRef `json:"secretKeyRef"`
+}
+
+// SecretKeyRef references a single key within a Kubernetes Secret.
 type SecretKeyRef struct {
-	// Name is the name of the secret.
-	// +optional
-	Name string `json:"name,omitempty"`
-	// Key is the key within the secret.
-	// +optional
-	Key string `json:"key,omitempty"`
+	// Name is the name of the Secret in the operator's namespace.
+	Name string `json:"name"`
+	// Key is the key within the Secret's data map.
+	Key string `json:"key"`
 }
 
 // WorkloadNetwork defines network configuration for a workload.

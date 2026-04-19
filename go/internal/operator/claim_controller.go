@@ -29,6 +29,7 @@ type ClaimReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Snapshots *SnapshotManager
+	Namespace string
 }
 
 // Reconcile handles a single reconciliation loop for a BoilerhouseClaim.
@@ -247,7 +248,7 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 
 // buildProxyConfig resolves credentials, generates Envoy YAML and TLS certs.
 func (r *ClaimReconciler) buildProxyConfig(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (*ProxyConfig, error) {
-	resolved, err := ResolveCredentials(ctx, r.Client, claim.Namespace, claim.Spec.TenantId, wl.Spec.Network.Credentials)
+	resolved, err := ResolveCredentials(ctx, r.Client, r.Namespace, wl.Spec.Network.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("resolving credentials: %w", err)
 	}

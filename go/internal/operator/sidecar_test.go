@@ -2,8 +2,6 @@ package operator
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +10,7 @@ import (
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestInjectSidecar(t *testing.T) {
@@ -102,133 +100,276 @@ func TestInjectSidecar(t *testing.T) {
 	assert.True(t, caMount.ReadOnly)
 }
 
-func TestResolveCredentials_GlobalSecret(t *testing.T) {
-	// Set environment variable.
-	os.Setenv("OPENAI_API_KEY", "sk-test-global-123")
-	defer os.Unsetenv("OPENAI_API_KEY")
-
-	headersRaw, _ := json.Marshal(map[string]string{
-		"Authorization": "Bearer ${global-secret:OPENAI_API_KEY}",
-	})
-
+func TestResolveCredentials_Literal(t *testing.T) {
 	credentials := []v1alpha1.NetworkCredential{
 		{
-			Domain: "api.openai.com",
-			Headers: &runtime.RawExtension{
-				Raw: headersRaw,
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{Name: "x-static", Value: "literal"},
 			},
 		},
 	}
 
-	resolved, err := ResolveCredentials(context.Background(), nil, "default", "tenant-1", credentials)
+	resolved, err := ResolveCredentials(context.Background(), nil, "default", credentials)
 	require.NoError(t, err)
 	require.Len(t, resolved, 1)
-
-	assert.Equal(t, "api.openai.com", resolved[0].Domain)
-	assert.Equal(t, "Bearer sk-test-global-123", resolved[0].Headers["Authorization"])
+	assert.Equal(t, "api.example.com", resolved[0].Domain)
+	assert.Equal(t, "literal", resolved[0].Headers["x-static"])
 }
 
-func TestResolveCredentials_TenantSecret(t *testing.T) {
+func TestResolveCredentials_SecretKeyRef(t *testing.T) {
 	ctx, k8sClient, cleanup := setupEnvtest(t)
 	defer cleanup()
 
-	// Create tenant secret.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "bh-secret-tenant-abc",
+			Name:      "anthropic-api",
 			Namespace: "default",
 		},
-		Data: map[string][]byte{
-			"API_KEY": []byte("tenant-secret-value-xyz"),
-		},
+		Data: map[string][]byte{"key": []byte("sk-ant-123")},
 	}
 	require.NoError(t, k8sClient.Create(ctx, secret))
 
-	headersRaw, _ := json.Marshal(map[string]string{
-		"x-api-key": "${tenant-secret:API_KEY}",
-	})
+	credentials := []v1alpha1.NetworkCredential{
+		{
+			Domain: "api.anthropic.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name: "x-api-key",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "anthropic-api", Key: "key"},
+					},
+				},
+			},
+		},
+	}
+
+	resolved, err := ResolveCredentials(ctx, k8sClient, "default", credentials)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "sk-ant-123", resolved[0].Headers["x-api-key"])
+}
+
+func TestResolveCredentials_MixedLiteralAndRef(t *testing.T) {
+	ctx, k8sClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "default"},
+		Data:       map[string][]byte{"k": []byte("from-secret")},
+	}
+	require.NoError(t, k8sClient.Create(ctx, secret))
 
 	credentials := []v1alpha1.NetworkCredential{
 		{
 			Domain: "api.example.com",
-			Headers: &runtime.RawExtension{
-				Raw: headersRaw,
+			Headers: []v1alpha1.HeaderEntry{
+				{Name: "x-static", Value: "literal"},
+				{
+					Name: "x-dynamic",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "s", Key: "k"},
+					},
+				},
 			},
 		},
 	}
 
-	resolved, err := ResolveCredentials(ctx, k8sClient, "default", "tenant-abc", credentials)
+	resolved, err := ResolveCredentials(ctx, k8sClient, "default", credentials)
 	require.NoError(t, err)
 	require.Len(t, resolved, 1)
-
-	assert.Equal(t, "api.example.com", resolved[0].Domain)
-	assert.Equal(t, "tenant-secret-value-xyz", resolved[0].Headers["x-api-key"])
+	assert.Equal(t, "literal", resolved[0].Headers["x-static"])
+	assert.Equal(t, "from-secret", resolved[0].Headers["x-dynamic"])
 }
 
-func TestResolveCredentials_MixedSecrets(t *testing.T) {
+func TestResolveCredentials_SecretNotFound(t *testing.T) {
 	ctx, k8sClient, cleanup := setupEnvtest(t)
 	defer cleanup()
 
-	// Set global env.
-	os.Setenv("GLOBAL_TOKEN", "global-val")
-	defer os.Unsetenv("GLOBAL_TOKEN")
-
-	// Create tenant secret.
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "bh-secret-mix-tenant",
-			Namespace: "default",
-		},
-		Data: map[string][]byte{
-			"TENANT_KEY": []byte("tenant-val"),
-		},
-	}
-	require.NoError(t, k8sClient.Create(ctx, secret))
-
-	headersRaw, _ := json.Marshal(map[string]string{
-		"Authorization": "Bearer ${global-secret:GLOBAL_TOKEN}",
-		"x-tenant-key":  "${tenant-secret:TENANT_KEY}",
-	})
-
 	credentials := []v1alpha1.NetworkCredential{
 		{
-			Domain: "api.mixed.com",
-			Headers: &runtime.RawExtension{
-				Raw: headersRaw,
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name: "x-api-key",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "missing-secret", Key: "key"},
+					},
+				},
 			},
 		},
 	}
 
-	resolved, err := ResolveCredentials(ctx, k8sClient, "default", "mix-tenant", credentials)
-	require.NoError(t, err)
-	require.Len(t, resolved, 1)
-
-	assert.Equal(t, "Bearer global-val", resolved[0].Headers["Authorization"])
-	assert.Equal(t, "tenant-val", resolved[0].Headers["x-tenant-key"])
+	_, err := ResolveCredentials(ctx, k8sClient, "default", credentials)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "api.example.com")
+	assert.Contains(t, err.Error(), "x-api-key")
+	assert.Contains(t, err.Error(), "missing-secret")
 }
 
-func TestResolveCredentials_SkipsEmptyDomain(t *testing.T) {
-	headersRaw, _ := json.Marshal(map[string]string{
-		"Authorization": "Bearer test",
-	})
+func TestResolveCredentials_KeyNotFound(t *testing.T) {
+	ctx, k8sClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "default"},
+		Data:       map[string][]byte{"wrong": []byte("v")},
+	}
+	require.NoError(t, k8sClient.Create(ctx, secret))
 
 	credentials := []v1alpha1.NetworkCredential{
 		{
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name: "x-api-key",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "s", Key: "key"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := ResolveCredentials(ctx, k8sClient, "default", credentials)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "api.example.com")
+	assert.Contains(t, err.Error(), "x-api-key")
+	assert.Contains(t, err.Error(), `"key"`)
+}
+
+func TestResolveCredentials_RejectsBothValueAndValueFrom(t *testing.T) {
+	credentials := []v1alpha1.NetworkCredential{
+		{
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name:  "x",
+					Value: "literal",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "s", Key: "k"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := ResolveCredentials(context.Background(), nil, "default", credentials)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both value and valueFrom")
+}
+
+func TestResolveCredentials_RejectsNeitherValueNorValueFrom(t *testing.T) {
+	credentials := []v1alpha1.NetworkCredential{
+		{
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{Name: "x"},
+			},
+		},
+	}
+
+	_, err := ResolveCredentials(context.Background(), nil, "default", credentials)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither value nor valueFrom")
+}
+
+func TestResolveCredentials_MissingName(t *testing.T) {
+	credentials := []v1alpha1.NetworkCredential{
+		{
+			Domain: "api.example.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{Value: "literal"},
+			},
+		},
+	}
+
+	_, err := ResolveCredentials(context.Background(), nil, "default", credentials)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing name")
+}
+
+func TestResolveCredentials_SharedSecretFetchedOnce(t *testing.T) {
+	ctx, baseClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+		Data: map[string][]byte{
+			"a": []byte("val-a"),
+			"b": []byte("val-b"),
+		},
+	}
+	require.NoError(t, baseClient.Create(ctx, secret))
+
+	wrapped := &countingClient{Client: baseClient}
+
+	credentials := []v1alpha1.NetworkCredential{
+		{
+			Domain: "api.one.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name: "x-a",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "shared", Key: "a"},
+					},
+				},
+			},
+		},
+		{
+			Domain: "api.two.com",
+			Headers: []v1alpha1.HeaderEntry{
+				{
+					Name: "x-b",
+					ValueFrom: &v1alpha1.HeaderValueSource{
+						SecretKeyRef: &v1alpha1.SecretKeyRef{Name: "shared", Key: "b"},
+					},
+				},
+			},
+		},
+	}
+
+	resolved, err := ResolveCredentials(ctx, wrapped, "default", credentials)
+	require.NoError(t, err)
+	require.Len(t, resolved, 2)
+	assert.Equal(t, "val-a", resolved[0].Headers["x-a"])
+	assert.Equal(t, "val-b", resolved[1].Headers["x-b"])
+	assert.Equal(t, 1, wrapped.secretGets, "expected 1 Secret Get, got %d", wrapped.secretGets)
+}
+
+func TestResolveCredentials_SkipsEmptyDomain(t *testing.T) {
+	credentials := []v1alpha1.NetworkCredential{
+		{
 			Domain: "",
-			Headers: &runtime.RawExtension{
-				Raw: headersRaw,
+			Headers: []v1alpha1.HeaderEntry{
+				{Name: "x", Value: "literal"},
 			},
 		},
 		{
 			Domain: "api.valid.com",
-			Headers: &runtime.RawExtension{
-				Raw: headersRaw,
+			Headers: []v1alpha1.HeaderEntry{
+				{Name: "x", Value: "kept"},
 			},
 		},
 	}
 
-	resolved, err := ResolveCredentials(context.Background(), nil, "default", "tenant-1", credentials)
+	resolved, err := ResolveCredentials(context.Background(), nil, "default", credentials)
 	require.NoError(t, err)
 	require.Len(t, resolved, 1)
 	assert.Equal(t, "api.valid.com", resolved[0].Domain)
+	assert.Equal(t, "kept", resolved[0].Headers["x"])
+}
+
+// countingClient wraps a controller-runtime client and counts Get calls that
+// target a corev1.Secret. Used by TestResolveCredentials_SharedSecretFetchedOnce.
+type countingClient struct {
+	client.Client
+	secretGets int
+}
+
+func (c *countingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*corev1.Secret); ok {
+		c.secretGets++
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
 }

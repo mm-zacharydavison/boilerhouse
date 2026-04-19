@@ -86,7 +86,7 @@ func TestIntegration_InstanceLifecycle(t *testing.T) {
 	defer cleanup()
 
 	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Namespace: "default"}
 
 	// Create a workload and reconcile to Ready.
 	wl := &v1alpha1.BoilerhouseWorkload{
@@ -165,7 +165,7 @@ func TestIntegration_TenantRecreateGetsDifferentInstance(t *testing.T) {
 	defer cleanup()
 
 	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Namespace: "default"}
 
 	// Create workload and reconcile to Ready.
 	wl := &v1alpha1.BoilerhouseWorkload{
@@ -246,7 +246,7 @@ func TestIntegration_OverlayEmptyDir(t *testing.T) {
 	defer cleanup()
 
 	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Namespace: "default"}
 
 	// Create overlay workload (filesystem.overlayDirs: ["/data"], idle.action: hibernate).
 	wl := &v1alpha1.BoilerhouseWorkload{
@@ -354,7 +354,7 @@ func TestIntegration_DestroyWorkloadBlockedByClaim(t *testing.T) {
 	defer cleanup()
 
 	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Namespace: "default"}
 
 	// Create workload and reconcile to Ready (adds finalizer).
 	wl := &v1alpha1.BoilerhouseWorkload{
@@ -449,7 +449,7 @@ func TestIntegration_MultiTenantDistinctInstances(t *testing.T) {
 	defer cleanup()
 
 	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	claimReconciler := &ClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Namespace: "default"}
 
 	// Create workload and reconcile to Ready.
 	wl := &v1alpha1.BoilerhouseWorkload{
