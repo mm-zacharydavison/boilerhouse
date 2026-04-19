@@ -112,7 +112,7 @@ func (g *Gateway) syncOnce(ctx context.Context) error {
 		adapterCtx, cancel := context.WithCancel(ctx)
 		g.adapters[name] = runningAdapter{adapter: adapter, cancel: cancel}
 
-		handler := g.buildHandler(trigger)
+		handler := g.buildHandler(ctx, trigger)
 		go func(n string, a Adapter) {
 			g.log.Info("starting adapter", "trigger", n, "type", trigger.Spec.Type)
 			if err := a.Start(adapterCtx, handler); err != nil {
@@ -170,8 +170,8 @@ func (g *Gateway) buildAdapter(trigger *v1alpha1.BoilerhouseTrigger) (Adapter, e
 
 // buildHandler creates the EventHandler pipeline for a trigger: resolve tenant,
 // run guards, ensure claim, forward to driver.
-func (g *Gateway) buildHandler(trigger *v1alpha1.BoilerhouseTrigger) EventHandler {
-	guards := g.buildGuards(trigger)
+func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) EventHandler {
+	guards := g.buildGuards(ctx, trigger)
 	driver := NewDefaultDriver(nil)
 
 	return func(ctx context.Context, payload TriggerPayload) (any, error) {
@@ -205,12 +205,15 @@ func (g *Gateway) buildHandler(trigger *v1alpha1.BoilerhouseTrigger) EventHandle
 }
 
 // buildGuards constructs guard instances from the trigger spec.
-func (g *Gateway) buildGuards(trigger *v1alpha1.BoilerhouseTrigger) []Guard {
+func (g *Gateway) buildGuards(ctx context.Context, trigger *v1alpha1.BoilerhouseTrigger) []Guard {
 	var guards []Guard
 	for _, guardSpec := range trigger.Spec.Guards {
 		switch guardSpec.Type {
 		case "allowlist":
 			guard := parseAllowlistGuard(guardSpec)
+			guards = append(guards, guard)
+		case "api":
+			guard := parseAPIGuard(ctx, g.client, g.namespace, trigger.Name, guardSpec)
 			guards = append(guards, guard)
 		default:
 			g.log.Warn("unknown guard type, skipping", "type", guardSpec.Type)
