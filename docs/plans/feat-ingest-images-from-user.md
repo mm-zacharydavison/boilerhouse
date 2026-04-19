@@ -1,458 +1,252 @@
-# Feature Plan: Ingest Images from User
+# Feature Plan: Ingest Images from User (Go)
 
-Goal: allow users to send photos/images through Telegram or Slack chat, have the trigger
-layer download and normalise them, and forward image data to drivers (especially
-driver-claude-code) so vision-capable agents can process the image alongside text.
+Goal: allow users to send photos/images through Telegram (and future Slack), have the trigger gateway download and normalise them, and forward image data to the running workload Pod so vision-capable agents can process the image alongside text.
+
+The TS plan's design (base64-on-payload, per-adapter download helpers, optional auto-description for non-vision drivers) carries over verbatim. Only file paths, language, and the driver protocol change.
 
 ---
 
-## How Telegram and Slack deliver images
+## How Telegram delivers images
 
-### Telegram
+When a user sends a photo, the `message` object contains a `photo` array. Each element is a `PhotoSize` with `file_id`, `width`, `height`, `file_size`. The last element is the largest. To download:
 
-When a user sends a photo, the `message` object in the Update contains a `photo` array
-instead of (or alongside) a `text` field. Each element is a `PhotoSize` object:
+1. `GET /bot{token}/getFile?file_id={file_id}` → `result.file_path`
+2. `GET /file/bot{token}/{file_path}` → raw image bytes
 
-```json
-{
-  "file_id": "AgACAgIAAxkB...",
-  "file_unique_id": "AQADqrExMx...",
-  "width": 1280,
-  "height": 720,
-  "file_size": 98304
+A `caption` field carries optional text. Documents with `mime_type` starting with `image/` are treated as photos.
+
+Slack adapter is **not yet implemented in Go** (only telegram/webhook/cron live in `go/internal/trigger/`). Slack image ingestion is deferred until the Slack adapter exists; this plan covers Telegram and the cross-cutting payload changes.
+
+---
+
+## Changes
+
+### 1. `go/internal/trigger/adapter.go`
+
+Extend `TriggerPayload` with an optional `Images` field:
+
+```go
+type ImageAttachment struct {
+    MimeType  string `json:"mimeType"`  // e.g. "image/jpeg"
+    Data      string `json:"data"`      // base64-encoded bytes (no data-URI prefix)
+    SourceRef string `json:"sourceRef"` // original filename or telegram file_id
+}
+
+type TriggerPayload struct {
+    Text   string             `json:"text"`
+    Source string             `json:"source"`
+    Raw    any                `json:"raw"`
+    Images []ImageAttachment  `json:"images,omitempty"`
 }
 ```
 
-Telegram always provides multiple sizes; the last element is the largest. To download a
-photo, the bot must:
-1. Call `GET /bot{token}/getFile?file_id={file_id}` → receives `{ result: { file_path: "photos/file_0.jpg" } }`
-2. Download from `https://api.telegram.org/file/bot{token}/{file_path}`
+Base64 keeps the payload JSON-serialisable across the driver wire format. Drivers that want raw bytes decode inline. URL-passing was rejected (would force the workload Pod to authenticate to Telegram/Slack — leaks bot tokens into containers).
 
-A `caption` field on the message carries optional text the user typed alongside the photo;
-this maps to the existing `text` field in the payload.
+---
 
-Documents with `mime_type` starting with `image/` should be treated the same as photos
-(users sometimes send images as files). The `document` field on `message` carries
-`file_id`, `mime_type`, and `file_name`.
+### 2. `go/internal/trigger/adapter_telegram.go`
 
-### Slack
+#### a. Extend `parsedTelegramUpdate`
 
-Slack delivers file shares inside `message` events. When a file is attached the event
-includes a `files` array:
+```go
+type parsedTelegramUpdate struct {
+    // ... existing fields ...
+    PhotoFileID       string
+    Caption           string
+    DocumentFileID    string
+    DocumentMimeType  string
+}
+```
 
-```json
-{
-  "type": "message",
-  "files": [
-    {
-      "id": "F12345",
-      "name": "image.png",
-      "mimetype": "image/png",
-      "url_private": "https://files.slack.com/files-pri/T.../image.png",
-      "url_private_download": "https://files.slack.com/files-pri/T.../download/image.png"
+#### b. Extract in `parseTelegramUpdate`
+
+After the existing `text` extraction (around `adapter_telegram.go:431`), pull image data from `msg`:
+
+```go
+if photos, ok := msg["photo"].([]any); ok && len(photos) > 0 {
+    last := photos[len(photos)-1].(map[string]any)
+    if id, ok := last["file_id"].(string); ok {
+        photoFileID = id
     }
-  ]
+}
+if cap, ok := msg["caption"].(string); ok {
+    caption = cap
+}
+if doc, ok := msg["document"].(map[string]any); ok {
+    if mime, ok := doc["mime_type"].(string); ok && strings.HasPrefix(mime, "image/") {
+        if id, ok := doc["file_id"].(string); ok {
+            documentFileID = id
+            documentMimeType = mime
+        }
+    }
 }
 ```
 
-Downloading requires an `Authorization: Bearer {botToken}` header because Slack's file
-URLs are private. The `url_private_download` field is preferred; `url_private` also works.
+#### c. Add `downloadTelegramFile` helper
 
----
+```go
+// downloadTelegramFile fetches a Telegram file by file_id, returning base64-encoded
+// bytes and a derived MIME type. Uses the adapter's httpClient so timeouts apply.
+func downloadTelegramFile(
+    ctx context.Context,
+    httpClient *http.Client,
+    apiBaseURL, botToken, fileID string,
+) (data string, mimeType string, err error) {
+    // Step 1: getFile
+    getURL := fmt.Sprintf("%s/bot%s/getFile?file_id=%s", apiBaseURL, botToken, url.QueryEscape(fileID))
+    req, _ := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+    resp, err := httpClient.Do(req)
+    if err != nil { return "", "", err }
+    defer resp.Body.Close()
 
-## Changes per file
+    var meta struct {
+        OK     bool `json:"ok"`
+        Result struct {
+            FilePath string `json:"file_path"`
+            FileSize int64  `json:"file_size"`
+        } `json:"result"`
+        Description string `json:"description"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil { return "", "", err }
+    if !meta.OK { return "", "", fmt.Errorf("getFile: %s", meta.Description) }
 
-### 1. `packages/triggers/src/config.ts`
+    // Step 2: download
+    dlURL := fmt.Sprintf("%s/file/bot%s/%s", apiBaseURL, botToken, meta.Result.FilePath)
+    req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
+    resp2, err := httpClient.Do(req2)
+    if err != nil { return "", "", err }
+    defer resp2.Body.Close()
 
-**What to change:** Extend `TriggerPayload` (lines 8-15) with an optional `images` field.
+    body, err := io.ReadAll(resp2.Body)
+    if err != nil { return "", "", err }
 
-**New shape:**
-
-```ts
-export interface ImageAttachment {
-  /** MIME type, e.g. "image/jpeg" */
-  mimeType: string;
-  /** Base64-encoded image bytes (no data-URI prefix). */
-  data: string;
-  /** Original filename or Telegram file_id, for logging/debugging. */
-  sourceRef: string;
+    return base64.StdEncoding.EncodeToString(body), mimeFromPath(meta.Result.FilePath), nil
 }
 
-export interface TriggerPayload {
-  text: string;
-  source: "telegram" | "slack" | "webhook" | "cron";
-  raw: unknown;
-  /** Attached images, pre-downloaded and base64-encoded. Optional. */
-  images?: ImageAttachment[];
-}
-```
-
-Rationale for base64 rather than raw bytes: drivers communicate over JSON WebSocket
-frames (see `driver-socket.ts`). Base64 keeps the payload JSON-serialisable without
-introducing a separate binary transport. Drivers that want raw bytes can decode inline.
-The alternative of passing a URL would require the driver or container to reach out to
-Telegram/Slack APIs and re-authenticate, which leaks credentials into containers.
-
----
-
-### 2. `packages/triggers/src/adapters/telegram-parse.ts`
-
-**What to change:**
-
-a. Extend `ParsedTelegramUpdate` (lines 8-16) with optional image fields:
-
-```ts
-export interface ParsedTelegramUpdate {
-  // ... existing fields unchanged ...
-  /** Largest available PhotoSize file_id, if the message contains a photo. */
-  photoFileId?: string;
-  /** Caption text supplied alongside a photo. */
-  caption?: string;
-  /** Document file_id + mime_type, if the message is an image document. */
-  documentFileId?: string;
-  documentMimeType?: string;
+func mimeFromPath(path string) string {
+    switch strings.ToLower(filepath.Ext(path)) {
+    case ".jpg", ".jpeg": return "image/jpeg"
+    case ".png":          return "image/png"
+    case ".webp":         return "image/webp"
+    case ".gif":          return "image/gif"
+    default:              return "image/jpeg"
+    }
 }
 ```
 
-b. In `parseTelegramUpdate` (starting line 22), after the existing `text` extraction
-(line 46), add photo/document extraction from the typed `message` object. Broaden the
-inline type cast for `message` (line 38) to include:
+#### d. Update `telegramUpdateToPayload`
 
-```ts
-photo?: Array<{ file_id: string; file_size?: number }>;
-caption?: string;
-document?: { file_id: string; mime_type?: string };
+Make it accept the adapter context (httpClient, apiBaseURL, botToken) so it can call `downloadTelegramFile`. Build the `Images` slice when `PhotoFileID` or `DocumentFileID` is set; set `Text = parsed.Caption` when caption present, otherwise `parsed.Text`.
+
+Signature change:
+
+```go
+func (t *TelegramAdapter) telegramUpdateToPayload(
+    ctx context.Context,
+    cfg telegramConfig,
+    parsed *parsedTelegramUpdate,
+    raw map[string]any,
+) TriggerPayload
 ```
 
-Then set:
-- `photoFileId = message.photo?.at(-1)?.file_id`
-- `caption = message.caption`
-- `documentFileId`: set only when `message.document?.mime_type?.startsWith("image/")`
-- `documentMimeType = message.document?.mime_type`
+(Alternatively keep it as a free function that accepts the deps — but moving it onto the adapter is cleaner since it now does I/O.)
 
-c. Add a new exported helper function `downloadTelegramFile`:
+If image download fails: log warning, dispatch the payload **without images** rather than failing the whole update. Symmetric with how the original plan handled it.
 
-```ts
-export async function downloadTelegramFile(
-  botToken: string,
-  fileId: string,
-  apiBaseUrl = "https://api.telegram.org",
-): Promise<{ data: string; mimeType: string }>;
+#### e. Wire into `pollLoop`
+
+In the existing loop (`adapter_telegram.go:198`), replace:
+
+```go
+payload := telegramUpdateToPayload(parsed, update)
 ```
 
-Implementation steps inside the function:
-1. `GET {apiBaseUrl}/bot{token}/getFile?file_id={fileId}` — parse `result.file_path` and
-   `result.file_size`.
-2. `GET {apiBaseUrl}/file/bot{token}/{file_path}` — read body as `ArrayBuffer`.
-3. Convert to base64 using `Buffer.from(buffer).toString("base64")` (available in Bun).
-4. Derive `mimeType` from the file extension in `file_path` (`.jpg`→`image/jpeg`,
-   `.png`→`image/png`, `.webp`→`image/webp`); fall back to `"image/jpeg"`.
-5. Return `{ data, mimeType }`.
+with:
 
-This function belongs in `telegram-parse.ts` alongside `sendTelegramMessage` so both
-the poll adapter and any future webhook adapter can reuse it.
-
-d. Update `telegramUpdateToPayload` (line 77-86) signature to `async` and accept a
-`botToken` and `apiBaseUrl` so it can call `downloadTelegramFile`. The function should:
-- Build `images: ImageAttachment[]` by downloading `photoFileId` or `documentFileId`
-  when present.
-- Set `text` to `parsed.caption ?? parsed.text ?? ""`.
-- Include `images` on the payload only when the array is non-empty.
+```go
+payload := t.telegramUpdateToPayload(ctx, cfg, parsed, update)
+```
 
 ---
 
-### 3. `packages/triggers/src/adapters/telegram-poll.ts`
+### 3. Driver Wire Format
 
-**What to change:**
+The current driver (`go/internal/trigger/driver.go`) sends an HTTP POST to the workload's endpoint. To carry images, formalize the payload schema the driver POSTs:
 
-In `poll()`, the `telegramUpdateToPayload` call is currently synchronous. After the
-change it becomes:
-
-```ts
-const payload = await telegramUpdateToPayload(parsed, update, botToken, apiBaseUrl);
-```
-
-No other structural changes are needed. Error handling: if `downloadTelegramFile` throws
-(e.g. Telegram API down), catch it and log a warning, then dispatch the payload without
-images rather than failing the entire update.
-
----
-
-### 4. `packages/triggers/src/adapters/slack.ts`
-
-**What to change:**
-
-In `createSlackRoutes()` → the `event_callback` handler, after extracting `text`,
-`channel`, and `user`, extract `files`:
-
-```ts
-const files = event.files as Array<{
-  mimetype?: string;
-  url_private_download?: string;
-  url_private?: string;
-  name?: string;
-}> | undefined;
-```
-
-Add a new helper function `downloadSlackFile`:
-
-```ts
-async function downloadSlackFile(
-  url: string,
-  botToken: string,
-  mimeType: string,
-  name: string,
-): Promise<ImageAttachment>
-```
-
-Steps:
-1. `fetch(url, { headers: { Authorization: "Bearer " + botToken } })` — read as `ArrayBuffer`.
-2. Base64-encode via `Buffer.from(buffer).toString("base64")`.
-3. Return `{ data, mimeType, sourceRef: name }`.
-
-Then build `images` from image-typed files, catching individual download errors with a
-warn log, and include on `TriggerPayload` when non-empty.
-
----
-
-### 5. `packages/driver-claude-code/src/claude-code.ts`
-
-**What to change:**
-
-In `send()`, extend the prompt message to include images when present:
-
-```ts
-ws.send({
-  type: "prompt",
-  text: payload.text,
-  ...(payload.images && payload.images.length > 0 && { images: payload.images }),
-});
-```
-
-The `images` field on the wire message is the same `ImageAttachment[]` structure. The
-container bridge passes image data to Claude's vision API as content blocks.
-
-Import `ImageAttachment` from `@boilerhouse/triggers` (must be exported from
-`packages/triggers/src/index.ts`).
-
----
-
-### 6. Image handling for non-vision drivers (Pi)
-
-Pi does not have vision capability, but users will frequently send screenshots, photos,
-and diagrams. Two approaches to handle this, which can coexist:
-
-#### Approach A: Driver-level auto-description via vision model
-
-The Pi driver calls a vision model (Haiku) to describe the image before sending the
-text prompt to Pi. This happens transparently — the agent receives a text description
-without needing to do anything.
-
-**Changes to `packages/driver-pi/src/pi.ts`:**
-
-In `send()`, before the `ws.send` call:
-
-```ts
-let promptText = payload.text;
-
-if (payload.images && payload.images.length > 0) {
-  const descriptions = await describeImagesViaVision(
-    payload.images,
-    config.options?.anthropicApiKey,
-    config.options?.visionModel,
-  );
-  promptText = `${descriptions}\n\n${payload.text}`;
-}
-
-ws.send({ type: "prompt", text: promptText });
-```
-
-**New helper in `packages/driver-pi/src/describe-images.ts`:**
-
-```ts
-import Anthropic from "@anthropic-ai/sdk";
-
-export async function describeImagesViaVision(
-  images: ImageAttachment[],
-  apiKey: string,
-  model = "claude-haiku-4-5-20251001",
-): Promise<string> {
-  const client = new Anthropic({ apiKey });
-  const blocks: string[] = [];
-
-  for (const img of images) {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      messages: [{
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: img.mimeType, data: img.data },
-          },
-          {
-            type: "text",
-            text: "Describe this image in detail. If it contains text, transcribe it exactly. If it's a diagram or chart, describe the structure and relationships.",
-          },
-        ],
-      }],
-    });
-    const text = response.content[0]?.type === "text" ? response.content[0].text : "";
-    blocks.push(`[Image: ${img.sourceRef}]\n${text}`);
-  }
-
-  return blocks.join("\n\n");
+```go
+// What the driver posts to the workload Pod (e.g. POST /agent)
+type DriverRequest struct {
+    Text    string             `json:"text"`
+    Source  string             `json:"source"`
+    Images  []ImageAttachment  `json:"images,omitempty"`
+    // ... future: audio, etc.
 }
 ```
 
-Uses Haiku by default — fast, cheap (~$0.001/image), good enough for description.
-Configurable per-workload via `driverOptions`:
+`driver.Send` already takes `payload TriggerPayload` (gateway.go:198). It just needs to serialize the new `Images` field, which is automatic via the existing JSON marshal — confirm `driver.Send` doesn't strip unknown fields.
 
-```ts
-driverOptions: {
-  gatewayToken: "...",
-  anthropicApiKey: secret("ANTHROPIC_API_KEY"),
-  visionModel: "claude-haiku-4-5-20251001",
-}
-```
-
-**Pros:** Automatic, agent doesn't need to think about it, works for all image types.
-**Cons:** Burns a vision call on every image whether or not the agent needs it; agent
-can't control the prompt or ask follow-up questions about the image.
-
-#### Approach B: Vision skill the agent can invoke on demand
-
-Give the agent a tool/skill it can call to describe images. The images are stored
-(temporarily, in-memory or on the instance overlay) and the agent invokes a
-`describe_image` tool when it wants to understand one.
-
-**How it works:**
-
-1. When `payload.images` is present, the Pi driver writes the image data to a temp
-   directory on the instance's overlay filesystem (`/tmp/images/{sourceRef}.{ext}`).
-2. The prompt text includes a notice: `[User sent {n} image(s): {sourceRef1}, {sourceRef2}. Use the describe_image tool to view them.]`
-3. The agent's tool set includes a `describe_image` tool that takes a `sourceRef` and
-   an optional `prompt`, calls a vision model, and returns the description.
-
-**Where the tool lives:** This is an MCP tool or bridge-level tool exposed by the Pi
-container's bridge server. The bridge already handles the WebSocket protocol — it would
-add a new message type:
-
-```
-→ { type: "describe_image", sourceRef: "photo_123.jpg", prompt?: "What text is visible?" }
-← { type: "image_description", sourceRef: "photo_123.jpg", text: "The image shows..." }
-```
-
-The bridge calls the Anthropic API server-side (or proxies through the Boilerhouse API)
-to perform the vision call.
-
-**Pros:** Agent controls when/whether to describe, can ask targeted questions ("what
-does the error message say?" vs "describe the full layout"), avoids wasted vision calls,
-composes with the skill pack architecture.
-**Cons:** Requires Pi bridge changes (new message type), agent must know to use the tool.
-
-#### Recommendation: Start with A, add B later
-
-> TODO: Lets do A, ignore B. A means the agent always gets description of an image no matter what.
-
-Approach A is simpler and requires no bridge protocol changes — it's entirely within
-`driver-pi`. Ship this first so images work immediately. Approach B is a better long-term
-design and should be added as a follow-up, potentially as part of the skill pack work.
-
-When B is available, A becomes optional — operators can disable auto-description via
-`driverOptions.autoDescribeImages: false` when the agent has the skill.
-
-**Fallback:** If the vision API call fails (no API key, rate limit, network error), catch
-the error, log a warning, and send the original `payload.text` with a note:
-`[User sent an image but it could not be processed]`. Better than a hard failure.
-
-#### Tests for Approach A
-
-**`packages/driver-pi/src/describe-images.test.ts`:**
-- Mock Anthropic SDK client. Assert correct message shape (image + text content blocks).
-- Assert response text is extracted and formatted with `[Image: ref]` headers.
-- Assert API error is caught gracefully — returns fallback text.
-- Assert empty images array returns empty string.
-
-**`packages/driver-pi/src/pi.test.ts` additions:**
-- Payload with images + valid API key → `describeImagesViaVision` called, text prepended.
-- Payload with images + no API key → warning logged, original text sent with notice.
-- Payload without images → prompt sent unchanged.
+Workload images are responsible for handling `images` as Anthropic content blocks (or rejecting/ignoring them). That contract is documented in the workload image's README, not enforced by the gateway.
 
 ---
 
-### 7. `packages/triggers/src/index.ts`
+### 4. Auto-description for non-vision workloads (deferred)
 
-Export the new `ImageAttachment` type alongside `TriggerPayload`.
+The TS plan included "Approach A: driver-level auto-description via vision model" for `driver-pi` (a Pi-specific driver). There is **no driver-pi in the Go port** — the only driver in `go/internal/trigger/driver.go` is the generic HTTP forwarder. Auto-description, if needed, becomes a per-workload concern (workload images call out to a vision API themselves).
+
+If we later add a driver layer that knows about vision-capability:
+
+- Add `driverOptions.autoDescribeImages: bool` to the trigger config.
+- Add a small `vision_describe.go` that POSTs to Anthropic's vision API (or a self-hosted equivalent).
+- Prepend the description to `payload.Text` before forwarding.
+
+This is a follow-up. The base capability — getting image bytes onto the payload — does not depend on it.
+
+---
+
+## File Map
+
+| File | Action | Responsibility |
+|------|--------|---------------|
+| `go/internal/trigger/adapter.go` | Modify | Add `ImageAttachment`, extend `TriggerPayload` |
+| `go/internal/trigger/adapter_telegram.go` | Modify | Extract photo/document file IDs, `downloadTelegramFile`, build images on payload |
+| `go/internal/trigger/adapter_telegram_test.go` | Modify | Tests for parse + download + payload assembly |
+| `go/internal/trigger/driver.go` | Modify | Forward `Images` field on the wire (likely no change if JSON marshaling is generic) |
+| (deferred) Slack adapter | — | Add when Slack adapter is implemented |
+| (deferred) `vision_describe.go` | — | Auto-description for non-vision workloads |
 
 ---
 
 ## Sequencing
 
-1. `config.ts` — add `ImageAttachment` and extend `TriggerPayload`. Type foundation.
-2. `telegram-parse.ts` — extend `ParsedTelegramUpdate`, add `downloadTelegramFile`,
-   make `telegramUpdateToPayload` async.
-3. `telegram-poll.ts` — await the now-async `telegramUpdateToPayload`.
-4. `slack.ts` — add `downloadSlackFile` and populate `images` in the payload.
-5. `index.ts` — export `ImageAttachment`.
-6. `claude-code.ts` — forward images in the prompt message (vision-native path).
-7. `driver-pi/src/describe-images.ts` + `pi.ts` — vision auto-description for Pi (Approach A).
-8. (Follow-up) Pi bridge `describe_image` tool — agent-controlled vision skill (Approach B).
+1. `adapter.go` — add types. No behaviour change.
+2. `adapter_telegram.go` — parse extensions + `downloadTelegramFile`.
+3. Wire into `pollLoop` and `telegramUpdateToPayload`.
+4. Driver wire format check.
 
-Items 2-4 can be done in parallel. Items 6-7 can be done in parallel. All depend on item 1.
+All sequential. Total ~150 lines of Go + tests.
 
 ---
 
-## Test strategy
+## Test Strategy
 
-### Unit tests for `telegram-parse.ts`
+`adapter_telegram_test.go` (extend the existing file):
 
-Create `packages/triggers/src/adapters/telegram-parse.test.ts`:
+- `parseTelegramUpdate` with a photo message → `PhotoFileID` is the last `PhotoSize`'s file_id; `Caption` extracted.
+- `parseTelegramUpdate` with `mime_type=image/png` document → `DocumentFileID`/`DocumentMimeType` set.
+- `parseTelegramUpdate` with text-only message → both file-id fields empty.
+- `downloadTelegramFile` with mocked `httptest.Server` returning `getFile` JSON then raw bytes → returns correct base64 + mime.
+- `telegramUpdateToPayload` with photo + caption → returns `Text=caption`, single-element `Images`.
+- Integration: end-to-end via `httptest` mock server → `pollLoop` dispatches a payload with images.
 
-- `parseTelegramUpdate` with a photo message: assert `photoFileId` equals the
-  `file_id` of the last `PhotoSize` and `caption` is extracted.
-- `parseTelegramUpdate` with a document of `mime_type: "image/png"`: assert
-  `documentFileId` and `documentMimeType` are set.
-- `parseTelegramUpdate` with a text-only message: assert `photoFileId` and
-  `documentFileId` are `undefined`.
-- `downloadTelegramFile`: mock `fetch`. Two calls: one returning
-  `{ ok: true, result: { file_path: "photos/f.jpg" } }`, one returning an `ArrayBuffer`.
-  Assert returned `data` is correct base64 and `mimeType` is `"image/jpeg"`.
-- `telegramUpdateToPayload` with a photo: mock `downloadTelegramFile`, assert returned
-  `TriggerPayload` has a non-empty `images` array.
-
-### Unit tests for `slack.ts`
-
-Extend `packages/triggers/src/adapters/slack.test.ts`:
-
-- Event with a `files` array containing an image: mock `fetch` to return image bytes with
-  the Authorization header. Assert dispatcher receives payload with non-empty `images`.
-- Event with a non-image file (e.g. `mimetype: "application/pdf"`): assert `images` absent.
-- Image download failure: mock fetch to reject; assert dispatch still proceeds without images.
+All tests use `httptest.NewServer` (not real network).
 
 ---
 
-## Open questions / deferred decisions
+## Open Questions / Deferred Decisions
 
-- **Size cap:** Large images (>5 MB) as base64 may cause WebSocket frame or memory issues.
-  Add a configurable `maxImageBytes` per-trigger in a follow-up.
-- **Multiple images:** Already handled by the `images` array.
-- **Webhook adapter:** Not modified here — a follow-up can formalise a multipart/base64 convention.
-- **Container-side claude-code bridge:** Must be updated to accept `images` in `prompt`
-  messages and convert them to Anthropic vision content blocks. Hard dependency for
-  end-to-end vision but outside scope of this plan.
-- **Vision model cost:** Haiku auto-description costs ~$0.001/image. For high-volume
-  deployments, consider per-tenant rate limits. When Approach B (agent-invoked skill)
-  is available, operators can disable auto-description to avoid unnecessary calls.
-- **Vision prompt tuning:** The default prompt is general-purpose. Operators may want
-  domain-specific prompts (e.g. "Extract all UI elements and their states"). Configurable
-  via `driverOptions.visionPrompt` in Approach A; the agent controls the prompt directly
-  in Approach B.
-- **Caching:** Repeated sends of the same image could be cached by
-  `ImageAttachment.sourceRef` (Telegram `file_id` is stable). Deferred — start without
-  caching, add if cost or latency is a concern.
-- **Approach B (vision skill) design:** The Pi bridge protocol change (`describe_image`
-  message type) needs its own plan. Key questions: does the bridge call the Anthropic API
-  directly (needs API key in container) or proxy through Boilerhouse API (adds a new
-  internal endpoint)? Proxying is cleaner — keeps secrets out of containers.
+- **Size cap:** large images (>5MB) as base64 may strain memory and bloat the driver POST. Add `maxImageBytes` (default 5MB) per adapter config in a follow-up; drop oversize images with a log warning.
+- **Multiple images:** handled by the slice — Telegram delivers one photo per message.
+- **Webhook adapter:** would need a multipart/base64 ingestion convention — out of scope.
+- **Slack:** picked up when Slack adapter lands.
+- **Image caching:** Telegram `file_id` is stable per bot; could cache `file_id → base64` to avoid re-downloads on retry. Defer.
+- **Workload-side handling:** workload images opt in to images by including them as Anthropic vision blocks. Document this in the workload spec README rather than enforcing.

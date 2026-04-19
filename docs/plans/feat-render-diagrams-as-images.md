@@ -1,14 +1,26 @@
-# Render Diagrams as Images — Implementation Plan
+# Render Diagrams as Images (Go)
 
-**Goal:** Detect mermaid/graphviz/SVG diagram blocks in agent text responses, render them to PNG bytes via the kroki.io HTTP API, and send the resulting images to Telegram/Slack using new per-adapter image-send functions.
+**Goal:** Detect mermaid/graphviz/SVG diagram blocks in agent text responses, render them to PNG bytes via the kroki.io HTTP API, and send the resulting images to Telegram (and future Slack) using new image-send helpers.
 
-**Architecture:** A new `packages/triggers/src/diagram-renderer.ts` module scans response text for fenced diagram blocks, POSTs each block to kroki.io, and returns `{ cleanedText: string, images: RenderedDiagram[] }`. The existing `sendReply` function in `reply.ts` is extended to call the renderer and dispatch images through new `sendTelegramPhoto` and `sendSlackImage` functions added to the respective adapter files. The feature builds on top of the "send images over chat" capability — the image-send adapter functions should be implemented (or stubbed) before this feature is fully wired.
+**Architecture:** A new `go/internal/trigger/diagram_renderer.go` scans response text for fenced diagram blocks, POSTs each block to kroki.io, and returns `{cleanedText, []RenderedDiagram}`. The current Telegram reply path (inlined at `adapter_telegram.go:222-228`) is extracted into a `reply.go` helper that calls the renderer and dispatches images through a new `sendTelegramPhoto` function. Slack is deferred until the Slack adapter exists.
 
 ---
 
 ## Dependency Note
 
-This plan has one hard external dependency: **"send images over chat"** — the Telegram `sendPhoto` endpoint and the Slack `files.uploadV2` endpoint must exist as callable functions before Task 4 (wiring `sendReply`) can be fully tested end-to-end. Tasks 1–3 (detection + rendering + per-adapter image functions) are independently testable and should be completed first.
+The current Telegram adapter sends replies *inline*:
+
+```go
+// adapter_telegram.go:222
+if parsed.ChatID != nil {
+    text := extractResponseText(result)
+    if text != "" {
+        if err := t.sendMessage(ctx, tgAPI, *parsed.ChatID, text); err != nil { ... }
+    }
+}
+```
+
+There is no `sendReply` abstraction. The first refactor in this plan extracts that into `reply.go` so diagram rendering, future Slack support, and reply-context routing (used by the wake-up plan) all share one place to inject behaviour.
 
 ---
 
@@ -16,213 +28,276 @@ This plan has one hard external dependency: **"send images over chat"** — the 
 
 | File | Action | Responsibility |
 |------|--------|---------------|
-| `packages/triggers/src/diagram-renderer.ts` | Create | Regex detection of diagram blocks; HTTP render via kroki.io; returns cleaned text + image buffers |
-| `packages/triggers/src/diagram-renderer.test.ts` | Create | Unit tests for detection regex, kroki.io fetch stub, output shape |
-| `packages/triggers/src/adapters/telegram-parse.ts` | Modify | Add `sendTelegramPhoto(botToken, chatId, pngBytes, caption?, apiBaseUrl?)` |
-| `packages/triggers/src/adapters/slack.ts` | Modify | Add `postSlackImage(botToken, channel, pngBytes, filename, altText?)` |
-| `packages/triggers/src/adapters/telegram-parse.test.ts` | Create | Unit tests for `sendTelegramPhoto` (fetch mock) |
-| `packages/triggers/src/adapters/slack.test.ts` | Modify | Add unit tests for `postSlackImage` (fetch mock) |
-| `packages/triggers/src/reply.ts` | Modify | Call `extractAndRenderDiagrams`; send images after text; strip diagram blocks from text |
-| `packages/triggers/src/reply.test.ts` | Create | Unit tests for `sendReply` with diagram-containing responses (all fetch mocked) |
+| `go/internal/trigger/diagram_renderer.go` | Create | Regex detect, kroki HTTP, returns cleaned text + image bytes |
+| `go/internal/trigger/diagram_renderer_test.go` | Create | Detection regex, kroki httptest, output shape |
+| `go/internal/trigger/adapter_telegram.go` | Modify | Add `sendTelegramPhoto`; replace inline `sendMessage` with `reply.SendTelegram` |
+| `go/internal/trigger/reply.go` | Create | `SendTelegram(ctx, ...)`: render diagrams, send text, send photos sequentially |
+| `go/internal/trigger/reply_test.go` | Create | End-to-end with mocked kroki + telegram |
 
 ---
 
-## Rendering Options Rationale
+## Why kroki.io
 
 | Option | Pros | Cons |
 |--------|------|------|
-| `@mermaid-js/mermaid-cli` (mmdc) | Local, no network, full mermaid support | Requires Node + Chromium in container, adds ~500 MB image weight |
-| Headless Chrome / Playwright | Full browser rendering, flexible | Very heavy dependency (~1 GB), complex lifecycle, slow cold start |
-| mermaid.ink API | Free, mermaid-only, simple HTTP | Only mermaid; external service; no graphviz/plantuml |
-| **kroki.io** | Supports mermaid, graphviz, plantuml, svgbob, and 30+ others; simple HTTP POST; no install | External service dependency; free tier has no SLA; diagram source leaves the server |
+| `mmdc` (mermaid CLI) | Local | Needs Node + Chromium in container, ~500 MB |
+| Headless Chrome | Full browser rendering | ~1 GB, complex lifecycle |
+| mermaid.ink | Free, simple HTTP | Mermaid only |
+| **kroki.io** | mermaid, graphviz, plantuml, svgbob, 30+ types; one HTTP POST | External dependency; diagram source leaves cluster |
 
-**Recommendation: kroki.io.** The containerized Boilerhouse deployment does not carry a Chromium binary, and adding one would significantly inflate the image. kroki.io covers all relevant diagram types with a single HTTP call and zero added dependencies. If self-hosting becomes necessary, kroki.io is open-source and can be deployed as a sidecar (`yuzutech/kroki` Docker image).
+Kroki is the only option that doesn't bloat the trigger gateway image. If diagram-source confidentiality matters, deploy `yuzutech/kroki` as an in-cluster Deployment and point `KROKI_URL` at it — same code, no external dependency. Plan keeps the default at `https://kroki.io`.
 
 ---
 
-## Task 1: Diagram detection + rendering module
+## Task 1: `diagram_renderer.go`
 
-**File:** `packages/triggers/src/diagram-renderer.ts`
+### Kroki API
 
-### What kroki.io expects
+- `POST https://{base}/{type}/{format}` with the raw diagram source as `text/plain`.
+- Returns binary image bytes (`image/png` or `image/svg+xml`).
+- Types we accept: `mermaid`, `graphviz` (alias `dot`), `plantuml`, `svgbob`, `svg` (passthrough).
 
-- Endpoint: `POST https://kroki.io/{diagramType}/{outputFormat}`
-- Body: the raw diagram source as plain text (`Content-Type: text/plain`)
-- Response: binary image bytes (`image/png` or `image/svg+xml`)
-- Supported types: `mermaid`, `graphviz`, `svgbob`, `plantuml`
-- Example: `POST https://kroki.io/mermaid/png` with body `graph LR\n  A --> B`
+### Detection
 
-SVG fenced blocks that are already valid XML are returned as-is as `image/svg+xml` bytes without a kroki.io round-trip.
+Standard markdown fenced blocks. Pattern (with multiline mode):
 
-### Diagram block detection regex
+```
+^```(mermaid|graphviz|dot|plantuml|svgbob|svg)\n([\s\S]*?)^```
+```
 
-Standard markdown fenced code blocks with language tags: `mermaid`, `graphviz`, `dot` (alias for graphviz), `plantuml`, `svgbob`, `svg`.
+In Go: `regexp.MustCompile("(?m)^\\x60{3}(mermaid|graphviz|dot|plantuml|svgbob|svg)\\n([\\s\\S]*?)^\\x60{3}")`.
 
-Pattern: `` /^```(mermaid|graphviz|dot|plantuml|svgbob|svg)\n([\s\S]*?)^```/gm ``
+### Types
 
-### Data types
+```go
+type DiagramType string
+const (
+    DiagramMermaid  DiagramType = "mermaid"
+    DiagramGraphviz DiagramType = "graphviz"
+    DiagramDot      DiagramType = "dot" // alias
+    DiagramPlantUML DiagramType = "plantuml"
+    DiagramSvgbob   DiagramType = "svgbob"
+    DiagramSVG      DiagramType = "svg"
+)
 
-```typescript
-export type DiagramType = "mermaid" | "graphviz" | "dot" | "plantuml" | "svgbob" | "svg";
-
-export interface RenderedDiagram {
-  source: string;
-  type: DiagramType;
-  bytes: Uint8Array;
-  mimeType: "image/png" | "image/svg+xml";
+type RenderedDiagram struct {
+    Source   string
+    Type     DiagramType
+    Bytes    []byte
+    MimeType string // "image/png" | "image/svg+xml"
 }
 
-export interface DiagramRenderResult {
-  cleanedText: string;  // response text with all diagram fenced blocks removed
-  images: RenderedDiagram[];  // one entry per successfully rendered diagram
+type DiagramRenderResult struct {
+    CleanedText string             // text with all matched blocks removed
+    Images      []RenderedDiagram  // one per successfully rendered block
+}
+
+type DiagramRendererConfig struct {
+    BaseURL    string
+    HTTPClient *http.Client
+    Timeout    time.Duration
+}
+
+func DefaultDiagramRendererConfig() DiagramRendererConfig { ... }
+```
+
+### `ExtractAndRenderDiagrams(ctx, text, cfg) (DiagramRenderResult, error)`
+
+1. Find all matches of the regex.
+2. If none → return `{text, nil}`.
+3. Strip all matched blocks from text. Collapse 3+ consecutive newlines into 2.
+4. For each match in order:
+   - `svg` → no kroki call; `Bytes = []byte(source)`, `MimeType = "image/svg+xml"`.
+   - `dot` → render as `graphviz`.
+   - else → POST to `{cfg.BaseURL}/{type}/png` with the source as `text/plain`. Read body. `MimeType = "image/png"`.
+5. On per-diagram failure: log warn, skip (block already stripped from text).
+6. Return result.
+
+Failures don't propagate — partial output is better than no output.
+
+---
+
+## Task 2: `sendTelegramPhoto`
+
+`go/internal/trigger/adapter_telegram.go` — add after `sendMessage`:
+
+```go
+func (t *TelegramAdapter) sendPhoto(
+    ctx context.Context,
+    tgAPI string,
+    chatID int64,
+    imageBytes []byte,
+    mimeType, caption string,
+) error {
+    var body bytes.Buffer
+    mw := multipart.NewWriter(&body)
+    _ = mw.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+    if caption != "" {
+        _ = mw.WriteField("caption", caption)
+    }
+    fw, _ := mw.CreateFormFile("photo", "diagram."+extForImageMime(mimeType))
+    if _, err := fw.Write(imageBytes); err != nil { return err }
+    _ = mw.Close()
+
+    req, _ := http.NewRequestWithContext(ctx, http.MethodPost, tgAPI+"/sendPhoto", &body)
+    req.Header.Set("Content-Type", mw.FormDataContentType())
+    resp, err := t.httpClient.Do(req)
+    if err != nil { return err }
+    defer resp.Body.Close()
+    _, _ = io.Copy(io.Discard, resp.Body)
+    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+        return fmt.Errorf("telegram sendPhoto: status %d", resp.StatusCode)
+    }
+    return nil
+}
+
+func extForImageMime(m string) string {
+    switch m {
+    case "image/png":     return "png"
+    case "image/svg+xml": return "svg"
+    case "image/jpeg":    return "jpg"
+    default:              return "png"
+    }
 }
 ```
 
-### `extractAndRenderDiagrams(text: string): Promise<DiagramRenderResult>`
+Multipart is required — Telegram's `sendPhoto` doesn't accept binary in JSON.
 
-Logic:
-1. Run the regex against `text`, collect all matches.
-2. If no matches, return `{ cleanedText: text, images: [] }` immediately.
-3. Strip all matched diagram blocks from text (regardless of render outcome). Collapse triple+ newlines to double.
-4. For each match, render via kroki.io (`POST /mermaid/png`, `dot` maps to `graphviz`, `svg` passes through as UTF-8 bytes with `image/svg+xml` MIME). Catch render errors, skip failed diagrams silently.
-5. Return `{ cleanedText, images }`.
-
-### Tests (`diagram-renderer.test.ts`)
-
-- No diagram blocks → cleanedText unchanged, images empty.
-- Single mermaid block → 1 image with `type: "mermaid"`, `mimeType: "image/png"`.
-- Block stripped from cleanedText; surrounding text preserved.
-- Multiple blocks → multiple images in order.
-- `dot` type → krokiType resolves to `graphviz` endpoint.
-- `svg` block → no fetch call, bytes are UTF-8 encoded SVG, `mimeType: "image/svg+xml"`.
-- kroki.io returns 400 → block silently skipped, cleanedText still cleaned.
-
-All tests use mocked `fetch`.
+Note: Telegram's `sendPhoto` may reject SVG. If kroki is configured for `svg` output (which it isn't by default in this plan — we always ask for PNG), SVG would need to be sent via `sendDocument` instead. Keep it simple: always render PNG via kroki, only the explicit `svg` block stays SVG. For SVG blocks, prefer `sendDocument` — covered by a small branch in the reply helper.
 
 ---
 
-## Task 2: Telegram — `sendTelegramPhoto`
+## Task 3: `reply.go`
 
-**File:** `packages/triggers/src/adapters/telegram-parse.ts`
+```go
+package trigger
 
-Add after the existing `sendTelegramMessage` function:
+import (
+    "context"
+    "log/slog"
+)
 
-```typescript
-export async function sendTelegramPhoto(
-  botToken: string,
-  chatId: number,
-  imageBytes: Uint8Array,
-  caption?: string,
-  apiBaseUrl = "https://api.telegram.org",
-): Promise<void>
+type Reply struct {
+    Adapter   string  // "telegram" (others later)
+    ChatID    *int64  // telegram
+    BotToken  string
+    APIBaseURL string
+    HTTPClient *http.Client
+    Renderer  DiagramRendererConfig
+    Log       *slog.Logger
+}
+
+// SendTelegram sends the agent's textual response to a Telegram chat,
+// rendering any embedded diagram blocks into images.
+func SendTelegram(ctx context.Context, t *TelegramAdapter, chatID int64, response any) error {
+    text := extractResponseText(response)
+    if text == "" { return nil }
+
+    res, err := ExtractAndRenderDiagrams(ctx, text, DefaultDiagramRendererConfig())
+    if err != nil {
+        t.log.Warn("diagram render error", "error", err)
+        // Fall through with original text.
+        res = DiagramRenderResult{CleanedText: text}
+    }
+
+    tgAPI := fmt.Sprintf("%s/bot%s", t.cfg.APIBaseURL, t.cfg.BotToken)
+
+    if res.CleanedText != "" {
+        if err := t.sendMessage(ctx, tgAPI, chatID, res.CleanedText); err != nil {
+            t.log.Warn("telegram sendMessage failed", "error", err)
+        }
+    }
+    for _, img := range res.Images {
+        if img.MimeType == "image/svg+xml" {
+            if err := t.sendDocument(ctx, tgAPI, chatID, img.Bytes, img.MimeType, ""); err != nil {
+                t.log.Warn("telegram sendDocument failed", "error", err)
+            }
+        } else {
+            if err := t.sendPhoto(ctx, tgAPI, chatID, img.Bytes, img.MimeType, ""); err != nil {
+                t.log.Warn("telegram sendPhoto failed", "error", err)
+            }
+        }
+    }
+    return nil
+}
 ```
 
-Implementation: build a `FormData` with `chat_id`, `photo` (Blob of `image/png`, filename `diagram.png`), and optional `caption`. POST to `/bot{token}/sendPhoto`.
+In `pollLoop` (`adapter_telegram.go:222`), replace the inline send with:
 
-Note: multipart is required — Telegram's sendPhoto endpoint does not accept binary via JSON.
+```go
+if parsed.ChatID != nil {
+    if err := SendTelegram(ctx, t, *parsed.ChatID, result); err != nil {
+        t.log.Error("telegram reply failed", "error", err, "chat_id", *parsed.ChatID)
+    }
+}
+```
 
-### Tests (`telegram-parse.test.ts`)
-
-- POSTs to the correct `/sendPhoto` URL.
-- Uses custom `apiBaseUrl` when provided.
-- Includes `caption` in form data when provided.
-- Does not include `caption` field when omitted.
+This is the same hook the wake-up plan needs (see `feat-wake-up-tasks.md`'s `SendReply`). The two should agree on a single `Reply`/`SendTelegram` shape — implement once, both plans consume it.
 
 ---
 
-## Task 3: Slack — `postSlackImage`
+## Task 4: Slack (deferred)
 
-**File:** `packages/triggers/src/adapters/slack.ts`
+Slack's modern file upload is a 3-step flow:
 
-Slack's modern file upload requires a three-step flow (legacy `files.upload` was deprecated in 2024):
+1. `POST files.getUploadURLExternal` → `{ upload_url, file_id }`
+2. `POST {upload_url}` with raw bytes
+3. `POST files.completeUploadExternal` with `{ files: [{ id }], channel_id }`
 
-1. `POST files.getUploadURLExternal` with `filename` and `length` → get `upload_url` and `file_id`.
-2. `POST {upload_url}` with raw bytes (`application/octet-stream`).
-3. `POST files.completeUploadExternal` with `files: [{ id: file_id }]` and `channel_id`.
-
-```typescript
-export async function postSlackImage(
-  botToken: string,
-  channel: string,
-  imageBytes: Uint8Array,
-  filename: string,
-  altText?: string,
-): Promise<void>
-```
-
-Throws typed errors if step 1 or step 3 returns `{ ok: false }`.
-
-New scope required on the Slack bot token: `files:write`.
-
-### Tests (add to `slack.test.ts`)
-
-- All three fetch calls happen in order (getUploadURLExternal → upload URL → completeUploadExternal).
-- Throws if `getUploadURLExternal` returns `ok: false`.
+When a Slack adapter lands, add `sendSlackImage` and a `SendSlack` reply variant. New scope on the bot token: `files:write`.
 
 ---
 
-## Task 4: Wire diagram rendering into `sendReply`
+## Task 5: Behavior Summary
 
-**File:** `packages/triggers/src/reply.ts`
+After this plan:
 
-### Behavior
-
-1. Extract text from `agentResponse` (existing logic).
-2. Call `extractAndRenderDiagrams(text)`.
-3. Send `cleanedText` as text message. If empty after stripping, skip the text message.
-4. For each `RenderedDiagram` in `images`, call the adapter-specific image-send function sequentially.
-5. For `webhook` and `cron` adapters, images are silently dropped.
-
-### Imports to add
-
-```typescript
-import { sendTelegramPhoto } from "./adapters/telegram-parse";
-import { postSlackImage } from "./adapters/slack";
-import { extractAndRenderDiagrams } from "./diagram-renderer";
-```
-
-### Post-processing: ordering
-
-Cleaned text is sent first, then images sequentially. Text provides context above the images in the chat. An all-diagram response (empty cleaned text) sends only images.
-
-### Tests (`reply.test.ts`)
-
-- Plain text (no diagrams) → only `sendMessage` called, no `sendPhoto`.
-- Mermaid block in response → kroki.io called, `sendMessage` called with stripped text, `sendPhoto` called.
-- Response is only a diagram block → `sendMessage` NOT called (no blank message), `sendPhoto` called.
-- Slack adapter → getUploadURLExternal and completeUploadExternal called for diagram.
-- `webhook` adapter with diagram → no error thrown, diagram silently dropped.
-
-All tests mock `fetch`.
-
----
-
-## Task 5: Export from `index.ts`
-
-**File:** `packages/triggers/src/index.ts`
-
-Add:
-
-```typescript
-export { extractAndRenderDiagrams } from "./diagram-renderer";
-export type { RenderedDiagram, DiagramRenderResult, DiagramType } from "./diagram-renderer";
-export { sendTelegramPhoto } from "./adapters/telegram-parse";
-export { postSlackImage } from "./adapters/slack";
-```
+- Plain-text response → one telegram message, no diagrams.
+- Mermaid block in response → text (with block stripped) message, then PNG photo.
+- Response is *only* a diagram → no text message (skip empty), photo only.
+- SVG block → `sendDocument` (Telegram doesn't render SVG inline).
+- kroki failure on a single block → block stripped, image silently dropped, other blocks unaffected.
+- kroki down entirely → text sent unchanged with diagram blocks intact (visible markdown). Acceptable degradation.
 
 ---
 
 ## Sequencing
 
-1. `diagram-renderer.ts` — standalone, no dependencies on other new code.
-2. `sendTelegramPhoto` + `postSlackImage` — can be done in parallel with Task 1.
-3. Wire `sendReply` — depends on Tasks 1-2 being complete.
-4. Export from `index.ts` — final cleanup step.
+1. `diagram_renderer.go` — standalone, mock kroki via `httptest`.
+2. `sendTelegramPhoto` + `sendDocument` helpers — testable independently.
+3. `reply.go` `SendTelegram` — wires 1+2.
+4. Replace inline `sendMessage` call site in `pollLoop`.
+5. (Follow-up) Slack adapter + `SendSlack`.
+
+Items 1-2 in parallel. 3 depends on both. 4 depends on 3.
+
+---
+
+## Test Strategy
+
+`diagram_renderer_test.go`:
+
+- No diagram blocks → cleanedText unchanged, no images.
+- Single mermaid block → 1 image, `image/png`, source kept on `RenderedDiagram.Source`.
+- Block stripped from `cleanedText`; surrounding text preserved; trailing newlines collapsed.
+- Multiple blocks → multiple images in document order.
+- `dot` → kroki POST goes to `/graphviz/png`.
+- Inline `svg` → no kroki call, bytes are UTF-8 of source, `image/svg+xml`.
+- kroki returns 400 → block silently skipped, cleanedText still cleaned.
+
+`reply_test.go`:
+
+- Plain text → one `sendMessage` call.
+- Text + mermaid → kroki call + sendMessage + sendPhoto, in that order.
+- Mermaid only → no sendMessage, one sendPhoto.
+- SVG → sendDocument not sendPhoto.
+- All HTTP via `httptest.NewServer` mocks.
 
 ---
 
 ## Open Questions
 
-- **kroki.io self-hosting:** If diagram source confidentiality is a concern, deploy the `yuzutech/kroki` Docker image as a sidecar. Add `krokiBaseUrl` to trigger config and pass it through to `extractAndRenderDiagrams`. This is a follow-up config addition — the default stays `https://kroki.io`.
-- **Image size limits:** Telegram `sendPhoto` accepts up to 10 MB. Large SVG files decoded and re-encoded are unlikely to exceed this, but should be documented.
-- **Error logging:** The renderer silently drops failed diagrams. Consider emitting a structured log entry so operators can detect systematic kroki.io failures without user reports.
+- **Self-host kroki:** add `KROKI_URL` env var; default stays public. Document the `yuzutech/kroki` image for in-cluster deploy.
+- **Image size limits:** Telegram `sendPhoto` accepts ≤10MB. Kroki rendered PNGs are normally <1MB; add a guard if it ever bites.
+- **Caption handling:** the renderer currently emits photos with empty captions. Could pass the diagram label (e.g. `mermaid`) — defer.
+- **Error logging visibility:** silent drop is operator-unfriendly. Add an o11y counter `boilerhouse_diagram_render_errors_total{type}`.

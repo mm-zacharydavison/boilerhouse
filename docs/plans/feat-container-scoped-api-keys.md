@@ -1,324 +1,286 @@
-# Container-Scoped API Keys
+# Container-Scoped API Keys (Go/K8s)
 
-**Goal:** Provision short-lived, scoped API keys for agent containers so they can call
-the Boilerhouse API with limited permissions. Keys are created when a container is
-claimed and automatically revoked when the container is destroyed. This is the
-infrastructure layer that wake-up tasks, GitHub Issues skills, and any future agent-facing
-API access depends on.
+**Goal:** Provision short-lived, scoped API keys for agent containers so they can call the Boilerhouse API with limited permissions. Keys are created when a Claim becomes Active and automatically revoked when the Claim is Released or destroyed. This is the infrastructure layer that wake-up tasks, GitHub Issues skill, and any future agent-facing API access depend on.
 
-**Key design principles:**
+The current API (`go/internal/api/server.go:46,161`) accepts a single global `BOILERHOUSE_API_KEY` from env — admin-grade access only. This plan adds a second auth path scoped to a single Claim.
 
-1. **Ephemeral.** Keys live only as long as the container. No long-lived agent credentials.
-2. **Scoped.** Each key is bound to a specific tenant, workload, and instance. The key
-   can only access API endpoints and actions permitted by its scope.
-3. **Injected automatically.** The container receives `BOILERHOUSE_API_KEY` and
-   `BOILERHOUSE_API_URL` as environment variables at creation time. The agent doesn't
-   request a key — it just uses the env vars.
-4. **No new auth protocol.** Keys are opaque bearer tokens validated by the existing
-   `authMiddleware` pattern — just with per-key scope checking added.
+**Design principles:**
+
+1. **K8s-native storage.** No DB. Each token lives in a labelled K8s Secret in the operator namespace. The Secret is the source of truth — provisioning, revocation, and TTL are all standard K8s operations.
+2. **Ephemeral.** Tokens live only as long as the Claim. The ClaimReconciler deletes the Secret on `phase=Released` or finalizer cleanup.
+3. **Scoped.** Each token is bound to `(tenantId, workloadRef)` and a set of scopes. Routes check both.
+4. **Injected automatically.** The Pod gets `BOILERHOUSE_API_KEY` and `BOILERHOUSE_API_URL` via `secretKeyRef` — the agent never requests a key, it just reads env.
+5. **No new auth protocol.** Bearer tokens, validated by an extended `authMiddleware`. Admin and scoped keys share the same code path.
 
 ---
 
 ## Architecture
 
 ```
-Container claimed (TenantManager.claim)
-  → generateContainerApiKey()
-  → store in container_api_keys table (instanceId, tenantId, workload, scopes, expiresAt)
-  → inject BOILERHOUSE_API_KEY and BOILERHOUSE_API_URL into container env
-  → container starts
+ClaimReconciler observes Claim transitioning to Active
+  → if Secret claim-key-{claimName} doesn't exist:
+      generate 32-byte random token
+      create Secret with labels:
+        boilerhouse.io/api-token: "true"
+        boilerhouse.io/tenant: <tenantId>
+        boilerhouse.io/workload: <workloadRef>
+        boilerhouse.io/claim: <claimName>
+      annotations: scopes=<csv>, expiresAt=<rfc3339>
+      data: token=<32-byte-hex>
+  → Patch Pod spec to mount the Secret as env:
+      BOILERHOUSE_API_KEY  (from secretKeyRef)
+      BOILERHOUSE_API_URL  (literal http://boilerhouse-api.<ns>.svc:3000)
 
-Agent makes API call
-  → Authorization: Bearer <container-api-key>
-  → authMiddleware resolves key → looks up scope
-  → checks requested endpoint against allowed scopes
-  → 200 (allowed) or 403 (scope denied)
+Agent calls API
+  → Authorization: Bearer <token>
+  → authMiddleware:
+      1. if token == s.adminApiKey → AuthContext{Admin}
+      2. else look up Secret by token (cached, see below) → AuthContext{Scoped, tenantId, workload, claim, scopes}
+  → route handlers call requireScope(ctx, "agent-triggers:write")
 
-Container destroyed
-  → delete from container_api_keys where instanceId = <id>
-  → key is immediately invalid
+ClaimReconciler observes Claim transitioning to Released or being deleted
+  → delete Secret claim-key-{claimName}
+  → token is invalid on next request (cache TTL bounds staleness)
 ```
+
+---
+
+## Token Lookup Strategy
+
+Per-request `client.List` on a 5MB Secret-store hot path is unworkable. Use an indexed in-memory cache:
+
+- **Cache type:** `sync.Map` keyed by `tokenHash` (SHA-256 of the bearer token, so plaintext never sits in memory). Value: `AuthContext` + `expiresAt`.
+- **Fill strategy:** controller-runtime `cache.Cache` watching Secrets with label selector `boilerhouse.io/api-token=true`. The API server's authenticator subscribes to add/update/delete events and keeps the in-memory map current.
+- **Cold lookup miss:** if the token isn't in the cache (cache not warm yet, or out-of-band Secret), fall back to a single labelled-list with the token's hash as a label match. Slow path but correct.
+- **Revocation latency:** bounded by informer lag — typically <1s, well under the security tolerance for a delete-and-revoke pattern.
+
+This avoids both the DB and the per-request K8s API call.
 
 ---
 
 ## Scope Model
 
-Scopes are coarse-grained permissions. An API key has a set of scopes; each API endpoint
-requires a specific scope.
+```go
+// go/internal/api/scopes.go
+package api
 
-```typescript
-export type ApiKeyScope =
-  | "agent-triggers:read"     // GET /api/v1/agent-triggers
-  | "agent-triggers:write"    // POST/DELETE /api/v1/agent-triggers
-  | "secrets:read"            // GET /api/v1/tenants/:id/secrets (own tenant only)
-  | "secrets:write"           // PUT /api/v1/tenants/:id/secrets (own tenant only)
-  | "issues:write"            // POST to external issue tracker (if proxied)
-  | "workloads:read"          // GET /api/v1/workloads (read-only)
-  | "health:read";            // GET /api/v1/health
-```
+type Scope string
 
-**Default scopes for agent containers:**
+const (
+    ScopeAgentTriggersRead  Scope = "agent-triggers:read"
+    ScopeAgentTriggersWrite Scope = "agent-triggers:write"
+    ScopeSecretsRead        Scope = "secrets:read"
+    ScopeSecretsWrite       Scope = "secrets:write"
+    ScopeWorkloadsRead      Scope = "workloads:read"
+    ScopeIssuesWrite        Scope = "issues:write"
+    ScopeHealthRead         Scope = "health:read"
+)
 
-```typescript
-const DEFAULT_AGENT_SCOPES: ApiKeyScope[] = [
-  "agent-triggers:read",
-  "agent-triggers:write",
-  "secrets:read",
-  "workloads:read",
-  "health:read",
-];
-```
-
-Workload definitions can override scopes via a new `apiScopes` field:
-
-```typescript
-// In a workload definition:
-export default defineWorkload({
-  name: "assistant",
-  // ...
-  apiAccess: {
-    scopes: ["agent-triggers:read", "agent-triggers:write", "health:read"],
-    // Or: scopes: "none" to disable API access entirely
-  },
-});
-```
-
-If `apiAccess` is absent, the container gets the default scopes. If `apiAccess.scopes`
-is `"none"`, no key is provisioned and no env vars are injected.
-
----
-
-## Schema: `container_api_keys` Table
-
-### `packages/db/src/schema.ts`
-
-```typescript
-export const containerApiKeys = sqliteTable("container_api_keys", {
-  /** The bearer token itself. Opaque, 32-byte hex string. */
-  key: text("key").primaryKey(),
-  /** Instance this key belongs to. Deleted when the instance is destroyed. */
-  instanceId: text("instance_id").notNull().$type<InstanceId>(),
-  /** Tenant this key is scoped to. Agent can only access own tenant's resources. */
-  tenantId: text("tenant_id").notNull().$type<TenantId>(),
-  /** Workload name. Used for scope resolution and audit. */
-  workload: text("workload").notNull(),
-  /** JSON array of ApiKeyScope strings. */
-  scopes: jsonObject<string[]>("scopes").notNull(),
-  /** Hard expiry. Keys are rejected after this time even if not revoked. */
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").notNull(),
-}, (table) => [
-  index("container_api_keys_instance_id_idx").on(table.instanceId),
-  index("container_api_keys_tenant_id_idx").on(table.tenantId),
-]);
-
-export type ContainerApiKeyRow = typeof containerApiKeys.$inferSelect;
-```
-
-### Migration: `packages/db/drizzle/0017_container_api_keys.sql`
-
-```sql
-CREATE TABLE `container_api_keys` (
-  `key` text PRIMARY KEY NOT NULL,
-  `instance_id` text NOT NULL,
-  `tenant_id` text NOT NULL,
-  `workload` text NOT NULL,
-  `scopes` text NOT NULL,
-  `expires_at` integer NOT NULL,
-  `created_at` integer NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `container_api_keys_instance_id_idx` ON `container_api_keys` (`instance_id`);
---> statement-breakpoint
-CREATE INDEX `container_api_keys_tenant_id_idx` ON `container_api_keys` (`tenant_id`);
-```
-
----
-
-## Key Lifecycle
-
-### Provisioning (on claim)
-
-**Modified: `apps/api/src/bootstrap.ts`** (or wherever `TenantManager.claim` result is
-handled)
-
-After a successful claim, before the container starts accepting requests:
-
-```typescript
-import { randomBytes } from "node:crypto";
-
-function provisionContainerApiKey(
-  db: DrizzleDb,
-  instanceId: InstanceId,
-  tenantId: TenantId,
-  workload: string,
-  scopes: ApiKeyScope[],
-  ttlMs: number = 24 * 60 * 60 * 1000,  // 24h default
-): string {
-  const key = randomBytes(32).toString("hex");
-  const now = new Date();
-
-  db.insert(containerApiKeys).values({
-    key,
-    instanceId,
-    tenantId,
-    workload,
-    scopes,
-    expiresAt: new Date(now.getTime() + ttlMs),
-    createdAt: now,
-  }).run();
-
-  return key;
+var DefaultAgentScopes = []Scope{
+    ScopeAgentTriggersRead,
+    ScopeAgentTriggersWrite,
+    ScopeSecretsRead,
+    ScopeWorkloadsRead,
+    ScopeHealthRead,
 }
 ```
 
-The key is injected into the container as an environment variable:
+Workload definitions can override scopes via a new `apiAccess` field on `BoilerhouseWorkloadSpec`:
 
-```typescript
-// In the container creation flow:
-const apiKey = provisionContainerApiKey(db, instanceId, tenantId, workload.name, scopes);
+```go
+// go/api/v1alpha1/workload_types.go (new field)
+type WorkloadAPIAccess struct {
+    // Scopes overrides the default agent scope set. Set to ["none"] to disable.
+    Scopes []string `json:"scopes,omitempty"`
+}
 
-// Added to the container's env:
-env: {
-  ...workload.entrypoint.env,
-  BOILERHOUSE_API_KEY: apiKey,
-  BOILERHOUSE_API_URL: `http://${apiHost}:${apiPort}`,
+type BoilerhouseWorkloadSpec struct {
+    // ... existing fields ...
+    APIAccess *WorkloadAPIAccess `json:"apiAccess,omitempty"`
 }
 ```
 
-### Revocation (on destroy)
-
-**Modified: instance destroy flow**
-
-When an instance is destroyed (any path — manual, idle timeout, pool drain):
-
-```typescript
-db.delete(containerApiKeys)
-  .where(eq(containerApiKeys.instanceId, instanceId))
-  .run();
-```
-
-This is a single DELETE — immediate, no grace period. Any in-flight API call using the
-key will get 401 on the next request.
-
-### Expiry (background cleanup)
-
-Keys have a hard `expiresAt` TTL (default 24h). Even if the instance destroy event is
-missed (crash, orphan), the key becomes invalid after expiry.
-
-A periodic cleanup job (every hour) deletes expired keys:
-
-```typescript
-db.delete(containerApiKeys)
-  .where(lte(containerApiKeys.expiresAt, new Date()))
-  .run();
-```
+When `APIAccess.Scopes == ["none"]`, no Secret is provisioned and no env vars are mounted.
 
 ---
 
-## Auth Middleware Changes
+## ClaimReconciler Changes
 
-### Modified: `apps/api/src/routes/auth-middleware.ts`
+**File:** `go/internal/operator/claim_controller.go`
 
-The current middleware checks a single global `apiKey`. Extend it to also check
-container-scoped keys:
+### Provisioning
 
-```typescript
-export function authMiddleware(globalApiKey: string | undefined, db: DrizzleDb) {
-  return new Elysia({ name: "auth-middleware" })
-    .onRequest(({ request, set, store }) => {
-      const url = new URL(request.url);
-      if (!url.pathname.startsWith("/api/v1/")) return;
-      if (url.pathname === "/api/v1/health") return;
+After successful Pod creation in the Active transition (around line 297 where `claim.Status.Phase = "Active"`), call:
 
-      const authHeader = request.headers.get("Authorization");
-      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+```go
+if err := r.ensureClaimToken(ctx, &claim, wl); err != nil {
+    return reconcile.Result{}, fmt.Errorf("ensure claim token: %w", err)
+}
+```
 
-      if (!token) {
-        set.status = 401;
-        return unauthorizedResponse();
-      }
+Where `ensureClaimToken`:
 
-      // Check global admin key first
-      if (globalApiKey && token === globalApiKey) {
-        // Admin key — full access, no scope restrictions
-        store.authContext = { type: "admin" } as AuthContext;
-        return;
-      }
+1. Resolves scopes from `wl.Spec.APIAccess.Scopes` or falls back to `DefaultAgentScopes`. If `["none"]`, return nil.
+2. Checks if Secret `claim-key-<claim.Name>` already exists; if so, return.
+3. Generates 32 random bytes via `crypto/rand`, hex-encodes.
+4. Creates the Secret with the labels/annotations described above and `data["token"] = <hex>`.
+5. Sets `OwnerReferences` to the Claim so K8s GC handles cleanup if the Claim disappears unexpectedly.
 
-      // Check container-scoped key
-      const keyRow = db
-        .select()
-        .from(containerApiKeys)
-        .where(eq(containerApiKeys.key, token))
-        .get();
+### Pod Mount
 
-      if (!keyRow) {
-        set.status = 401;
-        return unauthorizedResponse();
-      }
+The translator (`translator.go`) already builds the Pod spec from the Workload. To inject the Secret, the ClaimReconciler must patch the Pod after creation OR the translator must accept an extra `claimTokenSecretName` parameter.
 
-      // Check expiry
-      if (keyRow.expiresAt <= new Date()) {
-        set.status = 401;
-        return unauthorizedResponse();
-      }
+**Preferred:** Pass the Secret name into `Translate` via `TranslateOpts` and have it append two env entries to the main container. The Secret is created *before* the Pod (reorder the existing `claim_controller.go` flow so token provisioning precedes Pod creation).
 
-      // Store auth context for downstream scope checks
-      store.authContext = {
-        type: "container",
-        tenantId: keyRow.tenantId,
-        workload: keyRow.workload,
-        instanceId: keyRow.instanceId,
-        scopes: keyRow.scopes as ApiKeyScope[],
-      } as AuthContext;
+```go
+// translator.go — append to container env when ClaimTokenSecret is set
+if opts.ClaimTokenSecret != "" {
+    env = append(env, corev1.EnvVar{
+        Name: "BOILERHOUSE_API_KEY",
+        ValueFrom: &corev1.EnvVarSource{
+            SecretKeyRef: &corev1.SecretKeySelector{
+                LocalObjectReference: corev1.LocalObjectReference{Name: opts.ClaimTokenSecret},
+                Key: "token",
+            },
+        },
     })
-    .as("scoped");
+    env = append(env, corev1.EnvVar{
+        Name: "BOILERHOUSE_API_URL",
+        Value: opts.APIServiceURL, // e.g. http://boilerhouse-api.boilerhouse.svc:3000
+    })
 }
 ```
 
-### Auth context type
+### Revocation
 
-```typescript
-export type AuthContext =
-  | { type: "admin" }
-  | {
-      type: "container";
-      tenantId: TenantId;
-      workload: string;
-      instanceId: InstanceId;
-      scopes: ApiKeyScope[];
-    };
-```
+In `releaseClaim` (after the Pod is deleted) and in `handleDeletion` (after finalizer cleanup):
 
-### Scope checking helper
-
-Routes that require specific scopes use a helper:
-
-```typescript
-export function requireScope(authContext: AuthContext, scope: ApiKeyScope): boolean {
-  if (authContext.type === "admin") return true;
-  return authContext.scopes.includes(scope);
-}
-
-// Usage in a route handler:
-if (!requireScope(store.authContext, "agent-triggers:write")) {
-  set.status = 403;
-  return { error: "Insufficient scope: agent-triggers:write required" };
+```go
+secretName := claimTokenSecretName(claim.Name)
+err := r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: claim.Namespace}})
+if err != nil && !apierrors.IsNotFound(err) {
+    return reconcile.Result{}, fmt.Errorf("deleting claim token secret: %w", err)
 }
 ```
 
-### Tenant isolation enforcement
+OwnerReferences would handle this automatically on Claim deletion, but explicit deletion makes Released+Resume cycles work cleanly (the next claim gets a fresh token).
 
-Container-scoped keys can only access their own tenant's resources. Routes enforce this:
+### TTL fallback
 
-```typescript
-// In agent-triggers route:
-if (store.authContext.type === "container") {
-  if (params.tenantId !== store.authContext.tenantId) {
-    set.status = 403;
-    return { error: "Cannot access another tenant's resources" };
-  }
+Even with reliable revocation, set a hard expiry:
+
+- Annotation `boilerhouse.io/expires-at: <rfc3339>` on the Secret (default: 24h after creation).
+- The authenticator's cache loader skips entries past expiry.
+- A periodic cleanup reconciler (or just a `Watch` with a requeue) deletes expired Secrets.
+
+---
+
+## API Server Changes
+
+**File:** `go/internal/api/server.go`
+
+### `AuthContext`
+
+```go
+// go/internal/api/auth.go (new)
+package api
+
+import "context"
+
+type AuthKind int
+const (
+    AuthAdmin AuthKind = iota
+    AuthScoped
+)
+
+type AuthContext struct {
+    Kind     AuthKind
+    TenantID string
+    Workload string
+    ClaimID  string
+    Scopes   []Scope
+}
+
+type ctxKey int
+const authCtxKey ctxKey = 0
+
+func ContextWithAuth(ctx context.Context, ac AuthContext) context.Context {
+    return context.WithValue(ctx, authCtxKey, ac)
+}
+func AuthFromContext(ctx context.Context) (AuthContext, bool) {
+    ac, ok := ctx.Value(authCtxKey).(AuthContext)
+    return ac, ok
+}
+```
+
+### `authMiddleware` (modified, was `server.go:161`)
+
+```go
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        token := bearerToken(r)
+        if token == "" {
+            writeError(w, http.StatusUnauthorized, "missing Authorization header")
+            return
+        }
+
+        // Admin path.
+        if s.apiKey != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) == 1 {
+            ctx := ContextWithAuth(r.Context(), AuthContext{Kind: AuthAdmin})
+            next.ServeHTTP(w, r.WithContext(ctx))
+            return
+        }
+
+        // Scoped path.
+        ac, ok := s.tokens.Lookup(token)
+        if !ok {
+            writeError(w, http.StatusUnauthorized, "invalid API key")
+            return
+        }
+        ctx := ContextWithAuth(r.Context(), ac)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+```
+
+### Token authenticator
+
+`go/internal/api/token_store.go` — backs `s.tokens`. Owns the informer subscription on Secrets with label `boilerhouse.io/api-token=true`. Exposes `Lookup(token string) (AuthContext, bool)`.
+
+### Scope check helper + tenant isolation
+
+```go
+func RequireScope(ctx context.Context, scope Scope) error {
+    ac, _ := AuthFromContext(ctx)
+    if ac.Kind == AuthAdmin {
+        return nil
+    }
+    for _, s := range ac.Scopes {
+        if s == scope {
+            return nil
+        }
+    }
+    return fmt.Errorf("missing scope: %s", scope)
+}
+
+func RequireOwnTenant(ctx context.Context, tenantId string) error {
+    ac, _ := AuthFromContext(ctx)
+    if ac.Kind == AuthAdmin {
+        return nil
+    }
+    if ac.TenantID != tenantId {
+        return fmt.Errorf("cannot access another tenant's resources")
+    }
+    return nil
+}
+```
+
+Routes call these as middleware-style guards. Example for the future agent-triggers route:
+
+```go
+if err := RequireScope(r.Context(), ScopeAgentTriggersWrite); err != nil {
+    writeError(w, http.StatusForbidden, err.Error())
+    return
 }
 ```
 
@@ -328,135 +290,51 @@ if (store.authContext.type === "container") {
 
 | File | Action | Responsibility |
 |------|--------|---------------|
-| `packages/db/src/schema.ts` | Modify | Add `containerApiKeys` table |
-| `packages/db/drizzle/0017_container_api_keys.sql` | Create | Migration |
-| `packages/db/src/index.ts` | Modify | Export table + types |
-| `packages/core/src/types.ts` | Modify | Add `ApiKeyScope` type |
-| `apps/api/src/routes/auth-middleware.ts` | Modify | Dual-path auth (global + container-scoped) |
-| `apps/api/src/routes/auth-middleware.test.ts` | Modify | Tests for scoped auth |
-| `apps/api/src/container-api-keys.ts` | Create | `provisionContainerApiKey`, `revokeContainerApiKey`, cleanup |
-| `apps/api/src/container-api-keys.test.ts` | Create | Provisioning/revocation/expiry tests |
-| `apps/api/src/bootstrap.ts` | Modify | Wire provisioning into claim flow, inject env vars |
-| `packages/core/src/workload.ts` (or types) | Modify | Add `apiAccess` field to workload schema |
+| `go/api/v1alpha1/workload_types.go` | Modify | Add `APIAccess *WorkloadAPIAccess` |
+| `go/api/v1alpha1/zz_generated.deepcopy.go` | Regenerate | Via `make generate` / kubebuilder |
+| `config/crd/bases-go/*workload*.yaml` | Regenerate | Via `make manifests` |
+| `go/internal/operator/claim_controller.go` | Modify | `ensureClaimToken`, deletion in release/finalizer paths |
+| `go/internal/operator/claim_token.go` | Create | Token generation, Secret naming, scope resolution |
+| `go/internal/operator/claim_token_test.go` | Create | Unit + envtest |
+| `go/internal/operator/translator.go` | Modify | Mount `BOILERHOUSE_API_KEY` / `BOILERHOUSE_API_URL` env when `TranslateOpts.ClaimTokenSecret` set |
+| `go/internal/api/auth.go` | Create | `AuthContext`, scope helpers |
+| `go/internal/api/scopes.go` | Create | `Scope` type + constants |
+| `go/internal/api/token_store.go` | Create | Informer-backed token authenticator |
+| `go/internal/api/token_store_test.go` | Create | Cache hit/miss, label selector, revocation lag |
+| `go/internal/api/server.go` | Modify | Wire token store into middleware |
+| `go/cmd/api/main.go` | Modify | Construct token store with informer cache |
 
 ---
 
 ## Sequencing
 
-1. `containerApiKeys` table + migration. No behaviour change.
-2. `ApiKeyScope` type in core. Pure types.
-3. `container-api-keys.ts` — provision/revoke/cleanup functions + tests.
-4. Auth middleware update — dual-path auth + scope checking.
-5. Wire provisioning into the claim flow + env var injection.
-6. Add `apiAccess` field to workload schema.
-7. Periodic expired key cleanup job.
+1. Workload CRD field + regenerate. Pure types.
+2. Token generation + Secret naming (`claim_token.go`).
+3. `claim_controller.go` provisioning + revocation.
+4. Translator env injection.
+5. `Scope` constants + `AuthContext` + scope helpers.
+6. Token store with informer.
+7. Wire into `authMiddleware`.
+8. Per-route scope checks (future PRs as routes need them).
 
-Items 1-2 can be done in parallel. Items 3-4 can be done in parallel. 5 depends on 3+4.
+Items 1-2 in parallel. Items 3-4 sequential (3 calls into 4). Items 5-6 in parallel with 3-4. Item 7 last.
 
 ---
 
 ## Security Considerations
 
-**Key entropy:** 32 random bytes (256 bits) — same as the global API key. Generated
-via `crypto.randomBytes`, not `Math.random`.
-
-**Storage:** Keys are stored as plaintext hex in SQLite. This is acceptable because:
-- The DB file is on the same machine as the containers that hold the keys.
-- If an attacker has DB read access, they already have more powerful access vectors.
-- Hashing keys would require a lookup-by-hash pattern that SQLite doesn't index well
-  for constant-time comparison. If this becomes a concern, hash + salt and use a
-  timing-safe comparison.
-
-**TTL:** Default 24h. Containers that run longer than 24h will lose API access. The
-TTL should be refreshed periodically — either:
-- (Simple) Set TTL to match the workload's max session duration.
-- (Better) A heartbeat from the container that extends the TTL. But this adds
-  complexity — start with a generous fixed TTL and revisit.
-
-**Scope escalation:** Container keys cannot:
-- Access admin-only endpoints (workload CRUD, trigger CRUD, system config).
-- Access other tenants' data.
-- Modify their own scopes.
-- Create new API keys.
-
-**Audit:** Every API call with a container key should log `{ instanceId, tenantId, scope }`
-via the existing `activityLog`. This gives operators visibility into what agents are doing.
-
----
-
-## How Other Features Use This
-
-### Wake-up tasks (agent-triggers)
-
-The agent-triggers route checks:
-```typescript
-requireScope(store.authContext, "agent-triggers:write")
-// + tenant isolation: authContext.tenantId === params.tenantId
-```
-
-### GitHub Issues skill
-
-If proxied through Boilerhouse (rather than direct `gh` CLI), the skill route checks:
-```typescript
-requireScope(store.authContext, "issues:write")
-```
-
-### Future: agent reading its own secrets
-
-```typescript
-requireScope(store.authContext, "secrets:read")
-// + tenant isolation
-```
-
-### Future: agent querying workload status
-
-```typescript
-requireScope(store.authContext, "workloads:read")
-```
-
----
-
-## Example: Full Lifecycle
-
-```
-1. User sends message in Telegram
-2. Trigger adapter dispatches to workload "assistant"
-3. TenantManager.claim("tg-12345", "assistant") → instance i-abc
-4. provisionContainerApiKey(db, "i-abc", "tg-12345", "assistant", defaultScopes)
-   → key = "a1b2c3..."
-5. Container i-abc starts with:
-   BOILERHOUSE_API_KEY=a1b2c3...
-   BOILERHOUSE_API_URL=http://10.0.0.1:3000
-
-6. Agent processes user message
-7. Agent wants to set a reminder:
-   POST http://10.0.0.1:3000/api/v1/agent-triggers
-   Authorization: Bearer a1b2c3...
-   { "type": "one-shot", "runAt": "...", ... }
-
-8. authMiddleware resolves key → container scope
-   → checks "agent-triggers:write" ∈ scopes ✓
-   → checks tenantId matches ✓
-   → 201 Created
-
-9. User goes idle, container destroyed
-10. DELETE FROM container_api_keys WHERE instance_id = 'i-abc'
-    → key is immediately invalid
-```
+- **Entropy:** 32 random bytes via `crypto/rand`. Hex-encoded in the Secret.
+- **In-memory hashing:** the in-process cache keys on SHA-256 of the token, not the token itself. Reduces blast radius of a heap dump.
+- **Constant-time comparison:** admin path uses `crypto/subtle`. Scoped path goes through map lookup on a hash, which is constant-time enough for this purpose.
+- **Revocation latency:** bounded by informer resync (~1s typical). Document this — operators expecting instant revocation should not rely on this for emergency takedown.
+- **TTL:** 24h hard cap regardless of Claim lifetime. Long-running Claims need a separate refresh mechanism (out of scope for v1; document as known limitation).
+- **Tenant isolation:** enforced at the route layer via `RequireOwnTenant`. Each scoped route MUST call it explicitly — there is no automatic enforcement.
+- **Audit:** every authenticated request logs `{tenantId, claim, scope}` via the existing `middleware.Logger`. Scoped requests are easy to filter by presence of `tenantId`.
 
 ---
 
 ## Open Questions
 
-- **Key rotation for long-lived containers:** Containers running for days (e.g. always-on
-  agents) will hit the 24h TTL. Options: (a) set TTL to match workload idle timeout,
-  (b) the container calls a refresh endpoint before expiry, (c) the API auto-extends on
-  each authenticated request. Leaning toward (c) — add a `lastUsedAt` column and extend
-  `expiresAt` on each successful auth check. Simple, no container changes needed.
-- **Scope per-trigger vs per-workload:** Current design scopes per-workload. If different
-  tenants on the same workload need different scopes, we'd need per-tenant scope overrides.
-  Start without this — all containers of a workload get the same scopes.
-- **Key injection timing:** The key must be available before the container's entrypoint
-  runs. Since it's an env var set at container creation time, this is guaranteed. But if
-  containers are reused from a pool (pre-warmed), the key must be injected at claim time,
-  not at container creation. Verify the pool manager supports env var injection at claim.
+- **Token rotation:** for Claims that exceed 24h, do we auto-extend on each authenticated request (`lastUsedAt` annotation), or require an explicit refresh endpoint? Lean toward auto-extend; simpler for agents.
+- **Scopes per-tenant override:** different tenants of the same workload might need different scopes. Defer — start with workload-wide.
+- **K8s ServiceAccount tokens as an alternative:** Projected SA tokens with TokenRequest API would give us K8s-native rotation and audience scoping. Rejected for now because (a) the security plan disabled `automountServiceAccountToken` deliberately, and (b) ServiceAccounts don't carry tenant identity, requiring a parallel mapping anyway. Revisit if/when K8s API access becomes a workload feature.

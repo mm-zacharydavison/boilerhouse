@@ -1,543 +1,375 @@
-# Processing Progress Feedback Implementation Plan
+# Processing Progress Feedback (Go)
 
-**Goal:** Show real-time progress to users while a message is being processed. The core
-system emits platform-agnostic status transitions; each trigger adapter translates those
-into platform-native actions (Telegram typing + emoji, Slack reactions, future: WhatsApp
-read receipts, Discord typing, web UI progress bar, etc.).
+**Goal:** Show real-time progress to users while a message is being processed. The trigger gateway emits platform-agnostic stage transitions; each adapter translates them into platform-native actions (Telegram typing + emoji; future: Slack reactions, Discord typing, web UI progress).
 
-**Key design principle:** The pipeline only knows about `ProcessingStage` — a plain
-status enum. It never calls platform-specific APIs. Each adapter registers a
-`ProgressReporter` factory that knows how to render stages for its platform. New
-platforms only need to implement one interface.
+**Key design principle:** the gateway only knows about `ProcessingStage`. It never calls platform-specific APIs. Each adapter implements one `ProgressReporter` interface to opt in.
+
+---
+
+## What changed from the TS plan
+
+The TS plan had a five-stage lifecycle (`received → queued → running → done|error`) because BullMQ added a queue between the adapter and the worker. **The Go gateway is synchronous** (`gateway.go:198` `driver.Send` blocks until the workload responds). There's no queue, so:
+
+- `queued` stage **collapses** — there is nothing to enqueue.
+- The in-memory `progressCallbacks` UUID map disappears — the adapter holds the reporter directly on the goroutine stack.
+- Stages reduce to: **`received`, `running`, `done`, `error`**.
+
+The interface itself is identical to the TS plan; only the lifecycle is shorter.
+
+Slack reporter is **deferred** — no Slack adapter in Go yet.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Pipeline (platform-agnostic)                               │
-│                                                             │
-│  adapter receives message                                   │
-│    → reporter = adapter.createProgressReporter(eventCtx)    │
-│    → reporter.update("received")                            │
-│    → enqueue job (reporter stored in-memory by UUID)        │
-│    → reporter.update("queued")                              │
-│    → worker picks up job                                    │
-│    → reporter.update("running")                             │
-│    → dispatch completes                                     │
-│    → reporter.update("done") or reporter.update("error")   │
-│    → reporter.dispose()                                     │
-└─────────────────────────────────────────────────────────────┘
-          │
-          │  ProgressReporter.update(stage)
-          │  (each adapter implements differently)
-          ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  Telegram    │  │  Slack       │  │  Discord     │  │  Web UI      │
-│              │  │              │  │  (future)    │  │  (future)    │
-│ sendChatActn │  │ reactions.add│  │ typing start │  │ SSE progress │
-│ setReaction  │  │ ephemeral   │  │ embed edit   │  │ bar update   │
-│ typing loop  │  │ react swap  │  │              │  │              │
-└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+TelegramAdapter.pollLoop receives an update
+  ↓
+parsed.ChatID != nil → reporter := NewTelegramProgressReporter(...)
+  ↓
+reporter.Update("received")               // 👀 reaction + typing
+  ↓
+result, err := t.handler(ctx, payload)    // synchronous: ensureClaim + driver.Send
+  ↓ (just before t.handler runs in real time, the handler will internally:)
+                                          // ensureClaim may take >1s if pool is empty
+                                          // first time the loop sees an active claim, reporter.Update("running")
+  ↓
+err == nil ? reporter.Update("done") : reporter.Update("error")
+reporter.Dispose()
 ```
+
+The `running` stage is interesting. It should fire **after the claim is Active and dispatch is about to send**, not "as soon as the handler is called" — otherwise the user sees the 🧠 emoji while we're still waiting on a cold pool. Two options:
+
+- **(A) Fire `running` from inside `gateway.buildHandler`** after `ensureClaim` returns, before `driver.Send`. Requires plumbing a reporter through `EventHandler`.
+- **(B) Fire `running` from the adapter, but with a bounded delay** — e.g. 500ms after `received`. Simpler but less precise.
+
+Recommend **(A)**: extend `EventHandler` to optionally receive a `ProgressReporter`. Adapters that don't supply one get `NoopProgressReporter`. The handler calls `reporter.Update("running")` between `ensureClaim` and `driver.Send`.
 
 ---
 
 ## Stage Definitions
 
-```typescript
-export type ProcessingStage = "received" | "queued" | "running" | "done" | "error";
+```go
+package trigger
+
+type ProcessingStage string
+
+const (
+    StageReceived ProcessingStage = "received"  // adapter got the event
+    StageRunning  ProcessingStage = "running"   // claim active, about to dispatch
+    StageDone     ProcessingStage = "done"      // dispatch succeeded
+    StageError    ProcessingStage = "error"     // dispatch failed
+)
 ```
 
-| Stage | Meaning | When emitted |
-|-------|---------|-------------|
-| `received` | Adapter got the message | Immediately in adapter, before queuing |
-| `queued` | Job entered BullMQ | In `enqueue()` after push |
-| `running` | Worker picked up the job | In worker, before `dispatcher.dispatch()` |
-| `done` | Dispatch succeeded, reply sent | In worker `finally` block |
-| `error` | Dispatch failed permanently | In worker `finally` block |
-
-Stages are always emitted in order. Skipping is allowed (e.g. direct dispatch skips
-`queued`). Going backward is not. Adapters may ignore stages they don't care about.
+Stages are always emitted in order. Adapters may ignore stages they don't care about. `Update` must never return an error — implementations swallow errors internally.
 
 ---
 
 ## Core Interface
 
-**File:** `packages/triggers/src/progress.ts`
+`go/internal/trigger/progress.go`:
 
-```typescript
-export type ProcessingStage = "received" | "queued" | "running" | "done" | "error";
+```go
+package trigger
 
-/**
- * Platform-agnostic progress reporter. Each adapter creates one per inbound
- * event. The pipeline calls update() at stage transitions — the reporter
- * translates that into platform-native actions.
- *
- * Contract:
- * - update() must never throw — swallow all errors internally.
- * - update() may be called multiple times with the same stage (idempotent).
- * - dispose() is always called exactly once, after the final update().
- * - Implementations must be safe to call from any async context.
- */
-export interface ProgressReporter {
-  /** Signal a stage transition. */
-  update(stage: ProcessingStage): Promise<void>;
-  /** Clean up any persistent resources (timers, connections). */
-  dispose(): Promise<void>;
+import "context"
+
+// ProgressReporter is the platform-agnostic progress callback. Adapters
+// implement it to translate stage transitions into native UI actions.
+//
+// Contract:
+//   - Update never returns an error. Implementations swallow errors.
+//   - Update may be called multiple times with the same stage (idempotent).
+//   - Dispose is called exactly once after the final Update.
+//   - Implementations must be goroutine-safe.
+type ProgressReporter interface {
+    Update(ctx context.Context, stage ProcessingStage)
+    Dispose()
 }
 
-/** No-op reporter for adapters that don't support progress (webhook, cron). */
-export class NullProgressReporter implements ProgressReporter {
-  async update(_stage: ProcessingStage): Promise<void> {}
-  async dispose(): Promise<void> {}
+// NoopProgressReporter is the default when an adapter doesn't supply one.
+type NoopProgressReporter struct{}
+
+func (NoopProgressReporter) Update(context.Context, ProcessingStage) {}
+func (NoopProgressReporter) Dispose()                                 {}
+```
+
+---
+
+## Wiring Through `EventHandler`
+
+Current signature (`adapter.go`):
+
+```go
+type EventHandler func(ctx context.Context, payload TriggerPayload) (any, error)
+```
+
+Two ways to thread the reporter:
+
+1. **Add to `TriggerPayload`** (cheap, compatible).
+2. **Add a separate parameter** (cleaner, breaks signature).
+
+Recommend **option 1**:
+
+```go
+type TriggerPayload struct {
+    // ... existing fields ...
+    Progress ProgressReporter `json:"-"`  // not serialized; in-process only
 }
 ```
 
-Note the interface is intentionally minimal — `update(stage)` and `dispose()`. No
-`advance`/`finish` split, no `stage: "done" | "error"` overload. Each adapter's
-`update()` implementation checks the stage value and acts accordingly. This keeps
-the interface trivial to implement for new platforms.
+This requires no signature change. The handler in `gateway.buildHandler` (line 177) reads `payload.Progress` (defaulting to noop):
+
+```go
+return func(ctx context.Context, payload TriggerPayload) (any, error) {
+    rep := payload.Progress
+    if rep == nil { rep = NoopProgressReporter{} }
+
+    tenantId, err := ResolveTenantId(trigger.Spec.Tenant, payload)
+    if err != nil { return nil, err }
+
+    for _, guard := range guards {
+        if err := guard.Check(ctx, tenantId, payload); err != nil {
+            return nil, fmt.Errorf("guard check failed: %w", err)
+        }
+    }
+
+    endpoint, err := g.ensureClaim(ctx, tenantId, trigger.Spec.WorkloadRef)
+    if err != nil { return nil, err }
+
+    rep.Update(ctx, StageRunning)   // <-- new
+
+    return driver.Send(ctx, endpoint, payload)
+}
+```
+
+Adapters set `payload.Progress` before calling the handler. The handler is responsible only for `running`. Adapters own `received`, `done`, `error`, and `Dispose`.
+
+---
+
+## Telegram Reporter
+
+`go/internal/trigger/telegram_progress.go`:
+
+```go
+package trigger
+
+import (
+    "context"
+    "net/http"
+    "sync"
+    "time"
+)
+
+const (
+    telegramKeepaliveInterval = 4500 * time.Millisecond
+)
+
+var stageEmoji = map[ProcessingStage]string{
+    StageReceived: "👀",
+    StageRunning:  "🧠",
+    StageError:    "❌",
+    // StageDone: empty — clear reaction
+}
+
+type TelegramProgressReporter struct {
+    httpClient *http.Client
+    apiBaseURL string
+    botToken   string
+    chatID     int64
+    messageID  int64
+
+    mu              sync.Mutex
+    finished        bool
+    keepaliveCancel context.CancelFunc
+}
+
+func NewTelegramProgressReporter(httpClient *http.Client, apiBaseURL, botToken string, chatID, messageID int64) *TelegramProgressReporter {
+    return &TelegramProgressReporter{
+        httpClient: httpClient, apiBaseURL: apiBaseURL, botToken: botToken,
+        chatID: chatID, messageID: messageID,
+    }
+}
+
+func (r *TelegramProgressReporter) Update(ctx context.Context, stage ProcessingStage) {
+    r.mu.Lock()
+    if r.finished { r.mu.Unlock(); return }
+    r.mu.Unlock()
+
+    // Typing for ongoing stages.
+    if stage != StageDone && stage != StageError {
+        _ = r.sendChatAction(ctx, "typing")
+    }
+
+    // Reaction.
+    if emoji, ok := stageEmoji[stage]; ok {
+        _ = r.setReaction(ctx, emoji)
+    } else if stage == StageDone {
+        _ = r.setReaction(ctx, "")  // clear
+    }
+
+    // Start keepalive when work begins.
+    if stage == StageRunning {
+        r.startKeepalive(ctx)
+    }
+
+    if stage == StageDone || stage == StageError {
+        r.mu.Lock()
+        r.finished = true
+        r.mu.Unlock()
+        r.stopKeepalive()
+    }
+}
+
+func (r *TelegramProgressReporter) Dispose() {
+    r.mu.Lock()
+    r.finished = true
+    r.mu.Unlock()
+    r.stopKeepalive()
+}
+
+// startKeepalive launches a goroutine that re-sends typing every 4.5s
+// (Telegram's typing indicator expires after ~5s).
+func (r *TelegramProgressReporter) startKeepalive(parent context.Context) {
+    ctx, cancel := context.WithCancel(parent)
+    r.mu.Lock()
+    r.keepaliveCancel = cancel
+    r.mu.Unlock()
+
+    go func() {
+        ticker := time.NewTicker(telegramKeepaliveInterval)
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case <-ticker.C:
+                r.mu.Lock()
+                done := r.finished
+                r.mu.Unlock()
+                if done { return }
+                _ = r.sendChatAction(ctx, "typing")
+            }
+        }
+    }()
+}
+
+func (r *TelegramProgressReporter) stopKeepalive() {
+    r.mu.Lock()
+    cancel := r.keepaliveCancel
+    r.keepaliveCancel = nil
+    r.mu.Unlock()
+    if cancel != nil { cancel() }
+}
+
+// sendChatAction POSTs /sendChatAction. Errors swallowed.
+func (r *TelegramProgressReporter) sendChatAction(ctx context.Context, action string) error { ... }
+
+// setReaction POSTs /setMessageReaction. emoji=="" clears the reaction.
+func (r *TelegramProgressReporter) setReaction(ctx context.Context, emoji string) error { ... }
+```
+
+---
+
+## Telegram Adapter Wiring
+
+`adapter_telegram.go` `pollLoop` (line 198 area):
+
+```go
+// Add MessageID to parsedTelegramUpdate (extract from msg["message_id"]).
+// Then in the loop:
+var rep ProgressReporter = NoopProgressReporter{}
+if parsed.ChatID != nil && parsed.MessageID != 0 {
+    tgr := NewTelegramProgressReporter(t.httpClient, cfg.APIBaseURL, cfg.BotToken, *parsed.ChatID, parsed.MessageID)
+    rep = tgr
+    defer tgr.Dispose()
+    rep.Update(ctx, StageReceived)
+}
+
+payload := t.telegramUpdateToPayload(ctx, cfg, parsed, update)
+payload.Progress = rep
+
+result, err := t.handler(ctx, payload)
+if err != nil {
+    rep.Update(ctx, StageError)
+    t.log.Error("telegram handler error", "error", err)
+    continue
+}
+rep.Update(ctx, StageDone)
+
+// existing reply path follows...
+```
+
+`Dispose` runs at the end of the loop body (the existing `for _, update := range updates` iteration). Add a small helper to scope the deferred dispose per-iteration cleanly.
+
+`MessageID` parsing: extract from `msg["message_id"]` in `parseTelegramUpdate` using the existing `getNumber` helper.
 
 ---
 
 ## File Map
 
-| Action | Path | Responsibility |
-|--------|------|---------------|
-| Create | `packages/triggers/src/progress.ts` | `ProgressReporter` interface, `ProcessingStage` type, `NullProgressReporter` |
-| Create | `packages/triggers/src/adapters/telegram-progress.ts` | `TelegramProgressReporter` |
-| Create | `packages/triggers/src/adapters/telegram-progress.test.ts` | Unit tests |
-| Create | `packages/triggers/src/adapters/slack-progress.ts` | `SlackProgressReporter` |
-| Create | `packages/triggers/src/adapters/slack-progress.test.ts` | Unit tests |
-| Modify | `packages/triggers/src/dispatcher.ts` | Add `progressReporter?: ProgressReporter` to `TriggerEvent` |
-| Modify | `packages/triggers/src/trigger-queue-manager.ts` | Store reporter in-memory by UUID; emit stages in worker |
-| Modify | `packages/triggers/src/adapters/telegram-poll.ts` | Create reporter, attach to event |
-| Modify | `packages/triggers/src/adapters/slack.ts` | Create reporter, attach to event |
-| Modify | `packages/triggers/src/index.ts` | Export types |
-
-**Queue serialization note:** `ProgressReporter` instances are not serializable into
-Redis. Stored in an in-memory map in `TriggerQueueManager` keyed by UUID (same pattern
-as `respondCallbacks`). Worker looks up by UUID. If worker restarts and map is gone,
-`NullProgressReporter` is used — progress degrades gracefully.
+| File | Action | Responsibility |
+|------|--------|---------------|
+| `go/internal/trigger/progress.go` | Create | `ProcessingStage`, `ProgressReporter`, `NoopProgressReporter` |
+| `go/internal/trigger/adapter.go` | Modify | Add `Progress ProgressReporter` to `TriggerPayload` |
+| `go/internal/trigger/telegram_progress.go` | Create | `TelegramProgressReporter` |
+| `go/internal/trigger/telegram_progress_test.go` | Create | Unit tests with mocked telegram |
+| `go/internal/trigger/adapter_telegram.go` | Modify | Extract `MessageID`, create+dispose reporter, set on payload |
+| `go/internal/trigger/gateway.go` | Modify | Call `payload.Progress.Update(ctx, StageRunning)` between ensureClaim and driver.Send |
 
 ---
 
-## Task 1: Core interface + pipeline integration
-
-### `packages/triggers/src/progress.ts`
-
-As shown above — `ProcessingStage`, `ProgressReporter`, `NullProgressReporter`.
-
-### `packages/triggers/src/dispatcher.ts`
-
-Add to `TriggerEvent`:
-```typescript
-progressReporter?: ProgressReporter;
-```
-
-### `packages/triggers/src/trigger-queue-manager.ts`
-
-Add `progressCallbackId: string | null` to `QueueJobData`.
-
-Add `private progressCallbacks = new Map<string, ProgressReporter>()`.
-
-In `enqueue()`:
-```typescript
-let progressCallbackId: string | null = null;
-if (event.progressReporter) {
-  progressCallbackId = randomUUID();
-  this.progressCallbacks.set(progressCallbackId, event.progressReporter);
-}
-// After BullMQ push:
-event.progressReporter?.update("queued").catch(() => {});
-```
-
-In worker processor:
-```typescript
-const reporter: ProgressReporter = (data.progressCallbackId
-  ? this.progressCallbacks.get(data.progressCallbackId)
-  : undefined) ?? new NullProgressReporter();
-
-await reporter.update("running");
-
-let succeeded = false;
-try {
-  // ... existing dispatch + sendReply logic ...
-  succeeded = true;
-} finally {
-  await reporter.update(succeeded ? "done" : "error");
-  await reporter.dispose();
-  if (data.progressCallbackId) this.progressCallbacks.delete(data.progressCallbackId);
-}
-```
-
-In `close()`: `this.progressCallbacks.clear()`.
-
-### Tests (add to `trigger-queue-manager.test.ts`)
-
-- `enqueue` stores UUID when reporter provided; null when absent.
-- Worker calls `update("running")` before dispatch.
-- Worker calls `update("done")` + `dispose()` after success.
-- Worker calls `update("error")` + `dispose()` on failure.
-- Worker uses `NullProgressReporter` when callback absent.
-- `dispose()` is always called exactly once.
-
----
-
-## Task 2: Telegram adapter helpers
-
-**File:** `packages/triggers/src/adapters/telegram-parse.ts`
-
-Add `messageId: number | undefined` to `ParsedTelegramUpdate`. Extract from
-`message.message_id` in `parseTelegramUpdate`.
-
-Add two exported helpers after `sendTelegramMessage`:
-
-### `sendChatAction(botToken, chatId, action, apiBaseUrl?)`
-
-POSTs to `/sendChatAction` with `{ chat_id, action }`. Swallows all errors.
-
-### `setMessageReaction(botToken, chatId, messageId, emoji: string | null, apiBaseUrl?)`
-
-POSTs to `/setMessageReaction`. Pass `null` to clear. Swallows all errors.
-
-### Tests
-
-- Correct URL and payload for each helper.
-- `null` emoji sends empty `reaction: []`.
-
----
-
-## Task 3: Slack adapter helpers
-
-**File:** `packages/triggers/src/adapters/slack.ts`
-
-Add three exported helpers:
-
-### `addSlackReaction(botToken, channel, timestamp, name, apiBaseUrl?)`
-### `removeSlackReaction(botToken, channel, timestamp, name, apiBaseUrl?)`
-### `postSlackEphemeral(botToken, channel, userId, text, apiBaseUrl?)`
-
-All swallow errors. Standard Slack Web API calls.
-
-### Tests
-
-- Each helper POSTs to correct endpoint with correct payload.
-
----
-
-## Task 4: `TelegramProgressReporter`
-
-**File:** `packages/triggers/src/adapters/telegram-progress.ts`
-
-The Telegram adapter translates stages into typing indicators + emoji reactions.
-
-```typescript
-/** How Telegram renders each stage. */
-const STAGE_EMOJI: Partial<Record<ProcessingStage, string>> = {
-  received: "👀",
-  queued:   "⏳",
-  running:  "🧠",
-  error:    "❌",
-  // done: no emoji — reaction is cleared
-};
-
-const DEFAULT_KEEPALIVE_MS = 4_500;
-
-export class TelegramProgressReporter implements ProgressReporter {
-  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  private finished = false;
-
-  constructor(
-    private botToken: string,
-    private chatId: number,
-    private messageId: number,
-    private apiBaseUrl = "https://api.telegram.org",
-    private options: { keepaliveIntervalMs?: number } = {},
-  ) {}
-
-  async update(stage: ProcessingStage): Promise<void> {
-    if (this.finished) return;
-
-    // Typing indicator for immediate feedback
-    if (stage !== "done" && stage !== "error") {
-      await sendChatAction(this.botToken, this.chatId, "typing", this.apiBaseUrl);
-    }
-
-    // Emoji reaction on the user's message
-    const emoji = STAGE_EMOJI[stage];
-    if (emoji) {
-      await setMessageReaction(this.botToken, this.chatId, this.messageId, emoji, this.apiBaseUrl);
-    } else if (stage === "done") {
-      // Clear reaction on success
-      await setMessageReaction(this.botToken, this.chatId, this.messageId, null, this.apiBaseUrl);
-    }
-
-    // Start keepalive loop when work begins (Telegram typing expires after ~5s)
-    if (stage === "running" && !this.keepaliveTimer) {
-      const intervalMs = this.options.keepaliveIntervalMs ?? DEFAULT_KEEPALIVE_MS;
-      this.keepaliveTimer = setInterval(() => {
-        if (this.finished) return;
-        sendChatAction(this.botToken, this.chatId, "typing", this.apiBaseUrl);
-      }, intervalMs);
-    }
-
-    if (stage === "done" || stage === "error") {
-      this.finished = true;
-    }
-  }
-
-  async dispose(): Promise<void> {
-    this.finished = true;
-    if (this.keepaliveTimer) {
-      clearInterval(this.keepaliveTimer);
-      this.keepaliveTimer = null;
-    }
-  }
-}
-```
-
-### Tests (`telegram-progress.test.ts`)
-
-- `update("received")` → sends typing action + 👀 reaction.
-- `update("running")` → sends typing + 🧠 reaction + starts keepalive timer.
-- `update("done")` → clears reaction, sets `finished = true`.
-- `update("error")` → sets ❌ reaction, sets `finished = true`.
-- Keepalive fires repeatedly (test at 50ms interval, wait 180ms → ≥2 calls).
-- `dispose()` stops keepalive timer.
-- Calls after `finished = true` are no-ops.
-
----
-
-## Task 5: `SlackProgressReporter`
-
-**File:** `packages/triggers/src/adapters/slack-progress.ts`
-
-Slack translates stages into emoji reactions (swapping previous for current) and an
-ephemeral "working on it" message.
-
-```typescript
-const STAGE_REACTION: Partial<Record<ProcessingStage, string>> = {
-  received: "eyes",
-  queued:   "hourglass_flowing_sand",
-  running:  "brain",
-  error:    "x",
-  // done: no reaction — previous is removed
-};
-
-export class SlackProgressReporter implements ProgressReporter {
-  private currentReaction: string | null = null;
-
-  constructor(
-    private botToken: string,
-    private channel: string,
-    private messageTimestamp: string,
-    private userId: string,
-    private apiBaseUrl = "https://slack.com/api",
-  ) {}
-
-  async update(stage: ProcessingStage): Promise<void> {
-    const nextReaction = STAGE_REACTION[stage];
-
-    // Remove previous reaction
-    if (this.currentReaction) {
-      await removeSlackReaction(this.botToken, this.channel, this.messageTimestamp, this.currentReaction, this.apiBaseUrl);
-      this.currentReaction = null;
-    }
-
-    // Add new reaction (if any — done has none)
-    if (nextReaction) {
-      await addSlackReaction(this.botToken, this.channel, this.messageTimestamp, nextReaction, this.apiBaseUrl);
-      this.currentReaction = nextReaction;
-    }
-
-    // Ephemeral status message when work starts
-    if (stage === "running") {
-      await postSlackEphemeral(this.botToken, this.channel, this.userId, "Working on it...", this.apiBaseUrl);
-    }
-  }
-
-  async dispose(): Promise<void> {
-    // Clean up any lingering reaction
-    if (this.currentReaction) {
-      await removeSlackReaction(this.botToken, this.channel, this.messageTimestamp, this.currentReaction, this.apiBaseUrl);
-      this.currentReaction = null;
-    }
-  }
-}
-```
-
-### Tests (`slack-progress.test.ts`)
-
-- `update("received")` → adds `eyes` reaction.
-- `update("running")` → removes `eyes`, adds `brain`, posts ephemeral.
-- `update("done")` → removes `brain`, no new reaction.
-- `update("error")` → removes previous, adds `x`.
-- `dispose()` → removes any lingering reaction.
-
----
-
-## Task 6: Wire reporters into adapters
-
-### `packages/triggers/src/adapters/telegram-poll.ts`
-
-After `parseTelegramUpdate`, before dispatch:
-
-```typescript
-const progressReporter = (parsed.chatId != null && parsed.messageId != null)
-  ? new TelegramProgressReporter(botToken, parsed.chatId, parsed.messageId, apiBaseUrl)
-  : undefined;
-
-await progressReporter?.update("received");
-```
-
-Pass `progressReporter` on the `TriggerEvent`.
-
-### `packages/triggers/src/adapters/slack.ts`
-
-Extract `event.ts` as `messageTs`. After tenant resolution:
-
-```typescript
-const progressReporter = (channel && messageTs && user)
-  ? new SlackProgressReporter(trigger.config.botToken, channel, messageTs, user)
-  : undefined;
-
-await progressReporter?.update("received");
-```
-
-Pass `progressReporter` on the `TriggerEvent`.
-
----
-
-## Task 7: Exports
-
-**File:** `packages/triggers/src/index.ts`
-
-```typescript
-export type { ProgressReporter, ProcessingStage } from "./progress";
-export { NullProgressReporter } from "./progress";
-export { TelegramProgressReporter } from "./adapters/telegram-progress";
-export { SlackProgressReporter } from "./adapters/slack-progress";
-export { sendChatAction, setMessageReaction } from "./adapters/telegram-parse";
-export { addSlackReaction, removeSlackReaction, postSlackEphemeral } from "./adapters/slack";
-```
+## Sequencing
+
+1. `progress.go` types.
+2. `TriggerPayload.Progress` field.
+3. Gateway handler emits `StageRunning`.
+4. `TelegramProgressReporter` + tests.
+5. Telegram adapter wiring + `MessageID` extraction.
+
+Items 1-2 in parallel. Items 3-4 in parallel. Item 5 depends on 4.
 
 ---
 
 ## Adding a New Platform
 
-When a new trigger adapter is added (e.g. Discord, WhatsApp, web UI), implementing
-progress feedback requires exactly one thing: a class that implements `ProgressReporter`.
+Implement one interface. Example shape for a future Slack reporter:
 
-### Example: Discord (hypothetical)
-
-```typescript
-export class DiscordProgressReporter implements ProgressReporter {
-  constructor(
-    private botToken: string,
-    private channelId: string,
-    private statusMessageId: string, // bot's own "processing..." message
-  ) {}
-
-  async update(stage: ProcessingStage): Promise<void> {
-    switch (stage) {
-      case "received":
-        await discordTriggerTyping(this.botToken, this.channelId);
-        break;
-      case "running":
-        await discordEditMessage(this.botToken, this.channelId, this.statusMessageId,
-          "Processing your request...");
-        break;
-      case "done":
-        await discordDeleteMessage(this.botToken, this.channelId, this.statusMessageId);
-        break;
-      case "error":
-        await discordEditMessage(this.botToken, this.channelId, this.statusMessageId,
-          "Something went wrong.");
-        break;
-    }
-  }
-
-  async dispose(): Promise<void> {
-    // Clean up status message if still present
-  }
+```go
+type SlackProgressReporter struct {
+    /* botToken, channel, messageTs, userId, currentReaction */
 }
+func (r *SlackProgressReporter) Update(ctx context.Context, stage ProcessingStage) {
+    // remove previous reaction, add new one, post ephemeral on running
+}
+func (r *SlackProgressReporter) Dispose() { /* clear lingering reaction */ }
 ```
 
-### Example: Web UI (hypothetical)
-
-```typescript
-export class WebUIProgressReporter implements ProgressReporter {
-  constructor(private ws: WebSocket) {}
-
-  async update(stage: ProcessingStage): Promise<void> {
-    // Send stage over the WebSocket — the client renders a progress bar
-    this.ws.send(JSON.stringify({ type: "progress", stage }));
-  }
-
-  async dispose(): Promise<void> {}
-}
-```
-
-### What the new adapter does NOT need to know
-
-- How `TriggerQueueManager` stores the callback
-- When stages are emitted
-- What other adapters do for the same stage
-- The existence of BullMQ, Redis, or the dispatcher
-
-The pipeline emits `update(stage)` — the adapter decides what that means for its
-platform. That's the entire contract.
-
----
-
-## Streaming progress for long-running drivers
-
-Claude Code can take minutes to respond. Platform-specific handling:
-
-- **Telegram:** 4500ms keepalive loop re-sends `sendChatAction(typing)` to prevent
-  the indicator from expiring.
-- **Slack:** The `brain` emoji reaction persists for the duration — no keepalive needed.
-- **Discord (future):** Discord typing indicator lasts 10s — would need a similar
-  keepalive at ~9s intervals.
-- **Web UI (future):** The WebSocket connection stays open; client shows a spinner.
-  Optionally, the driver can emit sub-stages (e.g. "searching", "writing") if the
-  protocol supports it — but that's a driver-level concern, not a pipeline concern.
-
-Each adapter handles its platform's quirks in its own `update()` / `dispose()` methods.
-The pipeline doesn't know or care about typing indicator TTLs.
+The new adapter never needs to know about the gateway, telegram, or any other platform.
 
 ---
 
 ## Test Strategy
 
-Each task follows TDD: write failing test → implement → confirm passing. All tests mock
-`fetch` (via `global.fetch = mock(...)` or `Bun.serve` local server). No real network
-calls in `bun test`.
+All HTTP via `httptest.NewServer`. Tests assert:
 
-Key invariants to test across all reporters:
-- `update()` never throws (swallows all errors).
-- `dispose()` is safe to call multiple times.
-- `dispose()` cleans up all timers / persistent indicators.
-- Stages after `done`/`error` are no-ops.
+- `Update(StageReceived)` → POSTs `sendChatAction` + `setMessageReaction` with 👀.
+- `Update(StageRunning)` → typing + 🧠 + keepalive goroutine starts (use a 50ms test interval, sleep 180ms, assert ≥2 typing calls).
+- `Update(StageDone)` → clears reaction, sets `finished=true`, keepalive stops.
+- `Update(StageError)` → ❌ reaction, finished.
+- `Dispose` is safe to call twice.
+- After `finished=true`, further `Update` calls are no-ops.
 
-Run all: `bun test packages/triggers/`
+Gateway-level test:
+
+- Custom in-test handler that records progress callbacks. Trigger payload runs through `buildHandler` → handler sees `StageRunning` between guards and dispatch.
 
 ---
 
 ## Open Questions
 
-- **Sub-stages within `running`:** Some drivers could provide more granular progress
-  (e.g. Claude Code streaming tool use names). This could be modeled as
-  `update("running", { detail: "searching codebase" })` — but keep it out of scope
-  for v1. The interface accepts only `ProcessingStage` for now. If sub-stages are
-  needed later, extend `update()` with an optional second argument rather than
-  changing the type.
-- **Per-adapter stage mapping config:** Should the emoji/reaction mapping be
-  configurable (e.g. per-trigger config)? Probably not for v1 — hardcode sensible
-  defaults per platform. Reconsider if operators request it.
-- **WhatsApp specifics:** WhatsApp Business API supports read receipts and typing
-  indicators but has strict rate limits. The reporter should throttle calls. This
-  is a WhatsApp adapter concern, not a pipeline concern.
+- **Sub-stages within `running`:** Claude Code can stream tool-use names. If/when the driver supports stream events, extend `Update(stage, detail string)`. Out of scope for v1.
+- **Per-adapter mapping config:** hardcoded emojis for now. Reconsider if operators ask.
+- **`Update` blocking:** in the keepalive goroutine, `sendChatAction` blocks on HTTP. Use a short timeout via `ctx` or a bounded HTTP client timeout to avoid pinning the goroutine on slow Telegram responses.
+- **Graceful cancel:** if the handler context is cancelled mid-`running`, the reporter still gets a `done`/`error` from the adapter — no orphan keepalives.

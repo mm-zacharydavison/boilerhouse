@@ -9,13 +9,14 @@ no new API routes in Boilerhouse — just a skill definition the agent can invok
 
 ---
 
-## Why GitHub Issues, not a custom DB
+## Why GitHub Issues, not a custom CRD/store
 
 - Already has labels, milestones, assignees, search, cross-references, notifications.
 - Issues are visible in the GitHub UI — the team can triage without going through the bot.
 - Survives sessions trivially (it's a remote service).
 - The `gh` CLI is already available in Claude Code containers.
-- Avoids maintaining a parallel issue store that drifts from reality.
+- Avoids inventing a `BoilerhouseIssue` CRD that would drift from reality.
+- Plays well with the K8s-only state model (`go/`'s no-database approach).
 
 ---
 
@@ -89,24 +90,25 @@ The skill needs to know which repo to target. Two options:
 GITHUB_ISSUES_REPO=zdavison/boilerhouse
 ```
 
-Set in the workload's `driverOptions` or `entrypoint.env`. The skill reads it at
-invocation time. One repo per workload — fine for most setups.
+Set on the `BoilerhouseWorkload`'s `entrypoint.env` (literal value), or sourced from a
+K8s Secret via `secretKeyRef`. The skill reads it at invocation time. One repo per
+workload — fine for most setups.
 
 ### Option B: Per-tenant repo mapping
 
 For multi-tenant deployments where each tenant has their own repo:
-- Store `github_repo` in `tenant_secrets` via `SecretStore`
-- The skill resolves `${tenant-secret:github_repo}` at call time
+- Store `github_repo` per-tenant in a K8s Secret (e.g. `tenant-<id>-config`).
+- The Pod-injection layer resolves the per-tenant secret at claim time.
 
-Start with Option A. Add B when needed.
+Start with Option A. Add B when the per-tenant secret/config story is in place.
 
 ### Authentication
 
 - **Claude Code containers:** `gh` CLI is pre-authed via the MITM auth proxy that
   injects GitHub credentials. No additional config needed.
-- **Other containers:** Set `GITHUB_TOKEN` (PAT with `repo` scope) in the workload env.
-  The skill falls back to `curl` / `fetch` with `Authorization: Bearer` header if `gh`
-  is not available.
+- **Other containers:** Set `GITHUB_TOKEN` (PAT with `repo` scope) in the workload env
+  via `secretKeyRef` to a K8s Secret. The skill falls back to `curl` with
+  `Authorization: Bearer` if `gh` is not available.
 
 ---
 
@@ -124,18 +126,22 @@ just needs to frame them correctly.
 
 ### Option 2: MCP tool server (more robust)
 
-A small MCP tool server (`packages/skill-github-issues/`) that exposes the
-`github_issues` tool over the MCP protocol. The agent connects to it like any other
-MCP server.
+A small MCP tool server image, deployed as a sidecar (or as a separate workload that
+the agent's container connects to). Exposes the `github_issues` tool over MCP.
+
+Image build is independent of Boilerhouse — could be Go or TypeScript. Suggested
+layout if Go:
 
 ```
-packages/skill-github-issues/
-  src/
-    index.ts        — MCP server entry point
-    github.ts       — gh CLI wrapper or REST API client
-    tools.ts        — tool definitions (create, list, view, close, comment, edit)
-  package.json
+images/skill-github-issues/
+  cmd/skill-github-issues/main.go     MCP server entry
+  internal/github/client.go            gh CLI wrapper / REST client
+  internal/tools/tools.go              tool definitions
 ```
+
+Published as `ghcr.io/boilerhouse/skill-github-issues:latest` and referenced from a
+`BoilerhouseWorkload` (or sidecar manifest in the workload's translator hook, when
+that exists).
 
 **Pros:** Structured tool schema, input validation, works across all drivers (not just
 Claude Code), composable with the skill pack.
@@ -157,15 +163,15 @@ cross-driver support.
 |------|--------|
 | `docs/superpowers/skills/github-issues.md` | Create — skill definition with `gh` commands |
 
-### Option 2 (MCP tool server, follow-up)
+### Option 2 (MCP tool server image, follow-up)
 
 | File | Action |
 |------|--------|
-| `packages/skill-github-issues/package.json` | Create — package definition |
-| `packages/skill-github-issues/src/index.ts` | Create — MCP server entry |
-| `packages/skill-github-issues/src/github.ts` | Create — `gh` CLI wrapper |
-| `packages/skill-github-issues/src/tools.ts` | Create — tool definitions |
-| `packages/skill-github-issues/src/github.test.ts` | Create — unit tests |
+| `images/skill-github-issues/Dockerfile` | Create |
+| `images/skill-github-issues/cmd/skill-github-issues/main.go` | Create — MCP server entry |
+| `images/skill-github-issues/internal/github/client.go` | Create — `gh` CLI wrapper |
+| `images/skill-github-issues/internal/tools/tools.go` | Create — tool definitions |
+| `images/skill-github-issues/internal/github/client_test.go` | Create — unit tests |
 
 ---
 
@@ -232,10 +238,10 @@ No automated tests — the skill is a documentation file. Manual verification:
 4. Ask the agent to "list open bugs" — verify it returns real issues.
 5. Ask the agent to close the test issue.
 
-### Option 2 (MCP server, follow-up)
+### Option 2 (MCP server image, follow-up)
 
-Unit tests for `github.ts`:
-- Mock `Bun.spawn` / `child_process.exec` for `gh` CLI calls.
+Unit tests for `internal/github/client.go`:
+- Mock `exec.Command` / `os/exec` for `gh` CLI calls.
 - Assert correct `gh` command construction for each action.
 - Assert JSON output parsing.
 - Assert error handling (gh not installed, auth failure, rate limit).

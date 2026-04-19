@@ -1,48 +1,26 @@
-# Feature Plan: Voice Memo Ingestion
+# Feature Plan: Voice Memo Ingestion (Go)
 
-Speech-to-text pipeline for voice messages from any chat platform (Telegram, Slack,
-WhatsApp, Discord, etc.). Each adapter downloads the audio and passes it to a shared,
-platform-agnostic transcription service backed by self-hosted Whisper.
+Speech-to-text pipeline for voice messages from Telegram (and future Slack). Each adapter downloads the audio and passes it to a shared, platform-agnostic transcription service backed by self-hosted Whisper.
 
-**Key design principle:** The STT service is a standalone internal HTTP endpoint. Adapters
-download platform-specific audio files and POST raw bytes to the STT service. The STT
-service knows nothing about Telegram, Slack, or any messenger — it receives audio, returns
-text. New platforms only need to extract audio bytes from their event format.
+The TS-era design carries over: shared transcription helper, base64-on-payload, transcript replaces `Text` before dispatch. Only paths and language change. Slack is deferred — no Slack adapter in the Go port yet.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐  ┌──────────────┐  ┌────���─────────┐  ┌──────────────┐
-│  Telegram    │  │  Slack       │  │  WhatsApp    │  │  Discord     │
-│  adapter     │  │  adapter     │  │  (future)    │  │  (future)    │
-│              │  │              │  │              │  │              │
-│ voice.file_id│  │ files[]      │  │ media URL    │  │ attachment   │
-│ → getFile    │  │ → url_private│  │ → download   │  │ → CDN URL    │
-│ → download   │  │ → download   │  │              │  │ → download   │
-└──────┬───────┘  └──────┬───────┘  └──────���───────┘  └──────┬───────┘
-       │                 │                 │                 │
-       └────────────┬────┴────────────┬────┘                 │
-                    ▼                 ▼                       ▼
-            ┌──────────────────────────────────────────────────┐
-            │  AudioAttachment { data: base64, mimeType }      │
-            │  (on TriggerPayload, same pattern as images)     │
-            └──────────────────────┬───────────────────────────┘
-                                   │
-                                   ▼
-            ┌───��──────────────────────────────────────────────┐
-            │  STT Service (self-hosted Whisper)                │
-            │  POST /transcribe  { audio blob }  → { text }    │
-            │  Runs as sidecar container or internal service    │
-            └──���────────────────────────────────��──────────────┘
-                                   │
-                                   ▼
-            ┌────────��─────────────────────────────���───────────┐
-            │  TriggerPayload.text = transcript                │
-            │  (downstream pipeline unchanged)                 │
-            └───────────────────────────────────────��──────────┘
+Telegram adapter
+  → parsed.VoiceFileID detected
+  → downloadTelegramVoice(ctx, httpClient, apiBase, botToken, fileID)
+     → returns { data: base64, mimeType: "audio/ogg" }
+  → transcribeAudio(ctx, data, mimeType, sttCfg)
+     → POST → http://whisper.boilerhouse.svc:8000/v1/audio/transcriptions
+     → returns transcript string
+  → payload.Text = transcript (or transcript + "\n\n" + caption)
+  → handler dispatches normally — workload sees text, doesn't know it came from audio
 ```
+
+Whisper runs as a separate Deployment + Service in `boilerhouse` namespace. Internal-only ClusterIP — no public exposure, no API keys.
 
 ---
 
@@ -50,283 +28,253 @@ text. New platforms only need to extract audio bytes from their event format.
 
 ### Deployment
 
-Run Whisper as a sidecar container alongside the Boilerhouse API. Use an existing
-OpenAI-compatible Whisper server image:
-
-- **[`fedirz/faster-whisper-server`](https://github.com/fedirz/faster-whisper-server)** —
-  GPU-accelerated, exposes `/v1/audio/transcriptions` (OpenAI-compatible API), supports
-  `faster-whisper` backend. Recommended for production.
-- **[`onerahmet/openai-whisper-asr-webservice`](https://github.com/ahmetoner/whisper-asr-webservice)** —
-  CPU-friendly, same OpenAI-compatible endpoint. Good for dev/testing.
-
-Both expose the same API shape as OpenAI's hosted Whisper:
-
-```
-POST /v1/audio/transcriptions
-Content-Type: multipart/form-data
-  file: <audio bytes>
-  model: "whisper-1"    (or specific model name)
-  language: "en"        (optional)
-
-Response: { "text": "transcribed content" }
-```
-
-### Docker Compose addition
+`config/deploy/whisper.yaml` (new):
 
 ```yaml
-services:
-  whisper:
-    image: fedirz/faster-whisper-server:latest
-    environment:
-      - WHISPER__MODEL=Systran/faster-whisper-base.en
-    ports:
-      - "8787:8000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # CPU fallback: remove the deploy.resources block and use
-    # WHISPER__MODEL=Systran/faster-whisper-tiny.en for lighter weight
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper
+  namespace: boilerhouse
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: whisper } }
+  template:
+    metadata: { labels: { app: whisper } }
+    spec:
+      containers:
+        - name: whisper
+          image: fedirz/faster-whisper-server:latest
+          ports: [{ containerPort: 8000 }]
+          env:
+            - { name: WHISPER__MODEL, value: Systran/faster-whisper-base.en }
+          resources:
+            limits: { memory: 4Gi, cpu: 2 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: whisper, namespace: boilerhouse }
+spec:
+  selector: { app: whisper }
+  ports: [{ port: 8000, targetPort: 8000 }]
 ```
 
-### Configuration
+The `fedirz/faster-whisper-server` image speaks the OpenAI-compatible `/v1/audio/transcriptions` endpoint. GPU support requires nvidia device plugin + GPU node — document but don't require.
+
+CPU fallback: `Systran/faster-whisper-tiny.en` model gives acceptable quality for short voice memos and runs on the CPU footprint above.
+
+### Configuration (env on the trigger gateway pod)
 
 | Env var | Purpose | Default |
 |---------|---------|---------|
-| `WHISPER_URL` | Base URL of the Whisper service | `http://whisper:8000` |
-| `WHISPER_MODEL` | Model name to send in requests | `whisper-1` |
+| `WHISPER_URL` | Base URL | `http://whisper.boilerhouse.svc:8000` |
+| `WHISPER_MODEL` | Model name in requests | `whisper-1` |
 | `WHISPER_LANGUAGE` | Language hint (ISO 639-1) | (auto-detect) |
 
-The Boilerhouse API connects to Whisper over the Docker network — no public exposure
-needed, no API keys, data stays local.
+`cmd/trigger/main.go` reads these and passes them into adapters via the gateway.
 
 ---
 
 ## Payload Extension
 
-### `packages/triggers/src/config.ts`
+### `go/internal/trigger/adapter.go`
 
-Extend `TriggerPayload` with an optional `audio` field (same pattern as `images`):
+Extend `TriggerPayload` symmetrically with `ImageAttachment`. (If the images plan lands first, this just adds the audio field.)
 
-```typescript
-export interface AudioAttachment {
-  /** MIME type, e.g. "audio/ogg", "audio/webm", "audio/mp4". */
-  mimeType: string;
-  /** Base64-encoded audio bytes. */
-  data: string;
-  /** Duration in seconds (if known from the platform). */
-  duration?: number;
-  /** Source reference for logging/debugging. */
-  sourceRef: string;
+```go
+type AudioAttachment struct {
+    MimeType  string `json:"mimeType"`
+    Data      string `json:"data"`      // base64
+    Duration  int    `json:"duration,omitempty"` // seconds
+    SourceRef string `json:"sourceRef"`
 }
 
-export interface TriggerPayload {
-  text: string;
-  source: "telegram" | "slack" | "webhook" | "cron";
-  raw: unknown;
-  images?: ImageAttachment[];
-  /** Attached audio (voice memos). Transcribed before dispatch. */
-  audio?: AudioAttachment[];
+type TriggerPayload struct {
+    Text   string             `json:"text"`
+    Source string             `json:"source"`
+    Raw    any                `json:"raw"`
+    Images []ImageAttachment  `json:"images,omitempty"`
+    Audio  []AudioAttachment  `json:"audio,omitempty"`
 }
 ```
 
-Base64 for the same reason as images: JSON-serialisable across the BullMQ queue and
-WebSocket driver protocol.
+`Audio` on the payload is mostly for diagnostics/audit — by the time downstream code sees the payload, `Text` is already the transcript. We could omit `Audio` entirely; including it is cheap and lets future workloads opt to re-process the raw audio.
 
 ---
 
 ## Shared STT Client
 
-### New file: `packages/triggers/src/stt.ts`
+### `go/internal/trigger/stt.go` (new)
 
-A platform-agnostic STT client that talks to the self-hosted Whisper service.
+```go
+package trigger
 
-```typescript
-export interface SttConfig {
-  /** Whisper service URL. @default process.env.WHISPER_URL ?? "http://whisper:8000" */
-  url?: string;
-  /** Model to request. @default "whisper-1" */
-  model?: string;
-  /** Language hint (ISO 639-1). @default auto-detect */
-  language?: string;
-  /** Request timeout in ms. @default 60_000 */
-  timeoutMs?: number;
+import (
+    "bytes"
+    "context"
+    "encoding/base64"
+    "encoding/json"
+    "fmt"
+    "io"
+    "mime/multipart"
+    "net/http"
+    "os"
+    "time"
+)
+
+type STTConfig struct {
+    URL       string
+    Model     string
+    Language  string
+    Timeout   time.Duration
+    HTTPClient *http.Client
 }
 
-/**
- * Transcribe audio via the self-hosted Whisper service.
- * Uses the OpenAI-compatible /v1/audio/transcriptions endpoint.
- */
-export async function transcribeAudio(
-  audioData: string,   // base64
-  mimeType: string,
-  config?: SttConfig,
-): Promise<string> {
-  const url = config?.url ?? process.env.WHISPER_URL ?? "http://whisper:8000";
-  const model = config?.model ?? process.env.WHISPER_MODEL ?? "whisper-1";
-
-  const audioBytes = Buffer.from(audioData, "base64");
-
-  // Derive filename extension from MIME type for Whisper's format detection
-  const ext = mimeExtension(mimeType);
-
-  const form = new FormData();
-  form.set("file", new Blob([audioBytes], { type: mimeType }), `audio.${ext}`);
-  form.set("model", model);
-  if (config?.language ?? process.env.WHISPER_LANGUAGE) {
-    form.set("language", (config?.language ?? process.env.WHISPER_LANGUAGE)!);
-  }
-
-  const response = await fetch(`${url}/v1/audio/transcriptions`, {
-    method: "POST",
-    body: form,
-    signal: AbortSignal.timeout(config?.timeoutMs ?? 60_000),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Whisper transcription failed (${response.status}): ${body}`);
-  }
-
-  const result = await response.json() as { text: string };
-  return result.text;
+func DefaultSTTConfig() STTConfig {
+    cfg := STTConfig{
+        URL:      envOr("WHISPER_URL", "http://whisper.boilerhouse.svc:8000"),
+        Model:    envOr("WHISPER_MODEL", "whisper-1"),
+        Language: os.Getenv("WHISPER_LANGUAGE"),
+        Timeout:  60 * time.Second,
+    }
+    cfg.HTTPClient = &http.Client{Timeout: cfg.Timeout}
+    return cfg
 }
 
-function mimeExtension(mimeType: string): string {
-  const map: Record<string, string> = {
-    "audio/ogg": "ogg",
-    "audio/oga": "ogg",
-    "audio/opus": "opus",
-    "audio/webm": "webm",
-    "audio/mp4": "m4a",
-    "audio/mpeg": "mp3",
-    "audio/wav": "wav",
-    "audio/x-wav": "wav",
-    "audio/flac": "flac",
-  };
-  return map[mimeType] ?? "ogg";
+func envOr(k, def string) string { v := os.Getenv(k); if v == "" { return def }; return v }
+
+// TranscribeAudio sends base64-encoded audio to a self-hosted Whisper service
+// using the OpenAI-compatible /v1/audio/transcriptions endpoint.
+func TranscribeAudio(ctx context.Context, audioB64, mimeType string, cfg STTConfig) (string, error) {
+    raw, err := base64.StdEncoding.DecodeString(audioB64)
+    if err != nil { return "", fmt.Errorf("decode audio: %w", err) }
+
+    var body bytes.Buffer
+    mw := multipart.NewWriter(&body)
+    fw, _ := mw.CreateFormFile("file", "audio."+extForMime(mimeType))
+    if _, err := fw.Write(raw); err != nil { return "", err }
+    _ = mw.WriteField("model", cfg.Model)
+    if cfg.Language != "" { _ = mw.WriteField("language", cfg.Language) }
+    _ = mw.Close()
+
+    req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+        cfg.URL+"/v1/audio/transcriptions", &body)
+    if err != nil { return "", err }
+    req.Header.Set("Content-Type", mw.FormDataContentType())
+
+    resp, err := cfg.HTTPClient.Do(req)
+    if err != nil { return "", err }
+    defer resp.Body.Close()
+
+    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+        b, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("whisper status %d: %s", resp.StatusCode, string(b))
+    }
+    var out struct{ Text string `json:"text"` }
+    if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return "", err }
+    return out.Text, nil
+}
+
+func extForMime(m string) string {
+    switch m {
+    case "audio/ogg", "audio/oga", "audio/opus": return "ogg"
+    case "audio/webm":                            return "webm"
+    case "audio/mp4":                             return "m4a"
+    case "audio/mpeg":                            return "mp3"
+    case "audio/wav", "audio/x-wav":              return "wav"
+    case "audio/flac":                            return "flac"
+    default:                                      return "ogg"
+    }
 }
 ```
 
-This function is entirely platform-agnostic. It doesn't know where the audio came from —
-just base64 bytes and a MIME type.
+This is platform-agnostic — adapters call it with raw base64 + MIME and a config.
 
 ---
 
-## Transcription Step: Where It Happens
+## Telegram Adapter Changes
 
-Transcription happens in each adapter, after downloading the audio and before constructing
-the `TriggerPayload`. The adapter:
+### `go/internal/trigger/adapter_telegram.go`
 
-1. Detects voice/audio in the platform event.
-2. Downloads the audio bytes (platform-specific).
-3. Calls `transcribeAudio(base64, mimeType, sttConfig)` (shared).
-4. Sets `payload.text` to the transcript (or prepends it to any caption).
+#### Parse
 
-This keeps `TriggerPayload` clean — downstream code (dispatcher, drivers, guards) sees
-`text` and doesn't know or care that it came from audio.
+Add to `parsedTelegramUpdate`:
 
----
-
-## Per-Adapter Changes
-
-### Telegram (`telegram-parse.ts` + `telegram-poll.ts`)
-
-**`ParsedTelegramUpdate`** — add:
-```typescript
-voiceFileId: string | undefined;
-voiceDuration: number | undefined;
+```go
+VoiceFileID   string
+VoiceDuration int
 ```
 
-**`parseTelegramUpdate`** — expand message type to include `voice?: { file_id: string; duration?: number }`.
-Extract `voiceFileId = message?.voice?.file_id`, `voiceDuration = message?.voice?.duration`.
+In `parseTelegramUpdate`:
 
-**New helper in `telegram-parse.ts`:**
-```typescript
-export async function downloadTelegramVoice(
-  botToken: string,
-  fileId: string,
-  apiBaseUrl?: string,
-): Promise<{ data: string; mimeType: string }>
-```
-Calls `getFile` → download → base64 encode. Returns `{ data, mimeType: "audio/ogg" }`.
-
-**`telegram-poll.ts`** — in the poll loop, after parse and before payload construction:
-```typescript
-if (parsed.voiceFileId) {
-  const { data, mimeType } = await downloadTelegramVoice(botToken, parsed.voiceFileId, apiBaseUrl);
-  const transcript = await transcribeAudio(data, mimeType, sttConfig);
-  parsed.text = transcript;
+```go
+if voice, ok := msg["voice"].(map[string]any); ok {
+    if id, ok := voice["file_id"].(string); ok {
+        voiceFileID = id
+    }
+    if d, ok := getNumber(voice["duration"]); ok {
+        voiceDuration = int(d)
+    }
 }
 ```
 
-### Slack (`slack.ts`)
+#### Download helper
 
-Slack voice clips arrive as `files[]` entries with `subtype: "slack_audio"` or
-`mimetype: "audio/webm"`. The download flow is identical to image downloads:
+```go
+// downloadTelegramVoice fetches a Telegram voice file as base64.
+func downloadTelegramVoice(
+    ctx context.Context,
+    httpClient *http.Client,
+    apiBaseURL, botToken, fileID string,
+) (data string, mimeType string, err error)
+```
 
-```typescript
-const audioFiles = (files ?? []).filter(f =>
-  f.mimetype?.startsWith("audio/")
-);
+Identical structure to `downloadTelegramFile` from the images plan; voice files always come back as `audio/ogg`.
 
-for (const f of audioFiles) {
-  const url = f.url_private_download ?? f.url_private;
-  const buffer = await fetch(url, {
-    headers: { Authorization: `Bearer ${botToken}` },
-  }).then(r => r.arrayBuffer());
-  const data = Buffer.from(buffer).toString("base64");
-  const transcript = await transcribeAudio(data, f.mimetype!, sttConfig);
-  // Prepend transcript to text
-  text = transcript + (text ? `\n\n${text}` : "");
+#### Wire into payload
+
+In `telegramUpdateToPayload` (now adapter-method, see images plan), if `VoiceFileID != ""`:
+
+```go
+data, mime, err := downloadTelegramVoice(ctx, t.httpClient, cfg.APIBaseURL, cfg.BotToken, parsed.VoiceFileID)
+if err != nil {
+    t.log.Warn("voice download failed", "error", err, "file_id", parsed.VoiceFileID)
+} else {
+    transcript, err := TranscribeAudio(ctx, data, mime, t.sttCfg)
+    if err != nil {
+        t.log.Warn("transcription failed", "error", err)
+    } else {
+        if parsed.Text != "" {
+            payload.Text = transcript + "\n\n" + parsed.Text
+        } else {
+            payload.Text = transcript
+        }
+        payload.Audio = append(payload.Audio, AudioAttachment{
+            MimeType: mime, Data: data,
+            Duration: parsed.VoiceDuration,
+            SourceRef: parsed.VoiceFileID,
+        })
+    }
 }
 ```
 
-### Future adapters (WhatsApp, Discord, etc.)
-
-Each adapter just needs to:
-1. Extract the audio URL/bytes from their platform's event format.
-2. Download and base64-encode.
-3. Call `transcribeAudio(data, mimeType, config)`.
-4. Set `payload.text`.
-
-No new interfaces to implement, no adapters to register. The shared `transcribeAudio`
-function is the entire contract.
+`t.sttCfg` is set in `NewTelegramAdapter` from `DefaultSTTConfig()` (with optional override from trigger config).
 
 ---
 
-## STT Configuration
+## Slack (deferred)
 
-STT config lives at the global level (env vars), not per-trigger. All triggers share the
-same Whisper service.
+When the Slack adapter lands, voice clips arrive as `files[]` entries with `subtype: "slack_audio"` or `mimetype: "audio/webm"`. Pattern:
 
-| Env var | Purpose | Default |
-|---------|---------|---------|
-| `WHISPER_URL` | Whisper service base URL | `http://whisper:8000` |
-| `WHISPER_MODEL` | Model name for requests | `whisper-1` |
-| `WHISPER_LANGUAGE` | Language hint (ISO 639-1) | auto-detect |
-
-Adapters that want to override can pass an `SttConfig` object — but the default reads
-from env vars, which is sufficient for most deployments.
-
----
-
-## Data Flow (platform-agnostic)
-
-```
-Any adapter receives a voice message
-  → adapter-specific download (Telegram getFile, Slack url_private, etc.)
-  → AudioAttachment { data: base64, mimeType }
-  → transcribeAudio(data, mimeType) → POST to self-hosted Whisper
-  → transcript string
-  → TriggerPayload { text: transcript, source, raw }
-  → dispatcher.dispatch(...)
+```go
+for _, f := range filesWithMimePrefix("audio/") {
+    raw, _ := downloadSlackFile(...)
+    transcript, _ := TranscribeAudio(ctx, raw.Data, raw.MimeType, sttCfg)
+    text = transcript + (text == "" ? "" : "\n\n" + text)
+}
 ```
 
-Downstream is unchanged. Guards, drivers, workloads see `TriggerPayload.text`.
+No new interfaces needed.
 
 ---
 
@@ -334,28 +282,26 @@ Downstream is unchanged. Guards, drivers, workloads see `TriggerPayload.text`.
 
 | File | Action | Responsibility |
 |------|--------|---------------|
-| `packages/triggers/src/config.ts` | Modify | Add `AudioAttachment` type, add `audio?` to `TriggerPayload` |
-| `packages/triggers/src/stt.ts` | Create | Shared `transcribeAudio()` client for self-hosted Whisper |
-| `packages/triggers/src/stt.test.ts` | Create | Unit tests for STT client |
-| `packages/triggers/src/adapters/telegram-parse.ts` | Modify | Add `voiceFileId` to parsed update, add `downloadTelegramVoice` |
-| `packages/triggers/src/adapters/telegram-poll.ts` | Modify | Wire transcription into poll loop |
-| `packages/triggers/src/adapters/slack.ts` | Modify | Detect audio files, download + transcribe |
-| `packages/triggers/src/index.ts` | Modify | Export `AudioAttachment`, `transcribeAudio`, `SttConfig` |
-| `docker-compose.yml` | Modify | Add `whisper` service |
+| `go/internal/trigger/adapter.go` | Modify | `AudioAttachment` + payload extension |
+| `go/internal/trigger/stt.go` | Create | `TranscribeAudio` shared client |
+| `go/internal/trigger/stt_test.go` | Create | mocked Whisper httptest |
+| `go/internal/trigger/adapter_telegram.go` | Modify | Voice parse + download + transcribe |
+| `go/internal/trigger/adapter_telegram_test.go` | Modify | Voice end-to-end with httptest |
+| `config/deploy/whisper.yaml` | Create | Whisper Deployment + Service |
+| `config/deploy/kustomization.yaml` | Modify | Add `whisper.yaml` (or keep optional) |
+| `cmd/trigger/main.go` | Modify | Read `WHISPER_*` env, pass into adapters |
 
 ---
 
 ## Sequencing
 
-1. `config.ts` — add `AudioAttachment` type. No behaviour change.
-2. `stt.ts` + `stt.test.ts` — shared transcription client. Testable in isolation.
-3. `docker-compose.yml` — add Whisper sidecar service.
-4. `telegram-parse.ts` — add `voiceFileId` parsing + `downloadTelegramVoice`.
-5. `telegram-poll.ts` — wire transcription into the poll loop.
-6. `slack.ts` — detect and transcribe audio files.
-7. `index.ts` — export new types.
+1. `adapter.go` audio types.
+2. `stt.go` + `stt_test.go` (mocked whisper).
+3. `whisper.yaml` Deployment.
+4. Telegram parse + download + wire transcription.
+5. cmd/trigger env wiring.
 
-Items 2-3 can be done in parallel. Items 4-6 can be done in parallel (all depend on 2).
+Items 2-3 in parallel. Item 4 depends on 1+2.
 
 ---
 
@@ -363,55 +309,35 @@ Items 2-3 can be done in parallel. Items 4-6 can be done in parallel (all depend
 
 | Failure | Policy |
 |---------|--------|
-| Audio download fails (platform API error) | Log warning, skip update, advance offset |
-| Whisper service unreachable | Log warning, skip update. Don't dispatch with empty text |
-| Whisper returns error (bad audio, unsupported format) | Log warning, skip update |
-| Whisper times out (>60s) | Log warning, skip update |
+| Voice download fails | Log warn, dispatch with empty text (or original caption). Don't block adapter. |
+| Whisper unreachable | Log warn, skip update. Better to miss than dispatch with empty text. |
+| Whisper returns error | Log warn, skip update. |
+| Whisper times out (>60s) | Log warn, skip update. |
 
-All failures are non-fatal to the adapter — one bad voice memo doesn't break the poll
-loop. Add metric counter `stt.transcription.error` for observability.
-
-Future option: `stt.onError: "skip" | "dispatch-empty"` config to let operators choose
-whether to skip or dispatch with a `[Voice message could not be transcribed]` placeholder.
+All non-fatal to the poll loop. Add o11y counter `boilerhouse_stt_transcribe_errors_total{reason}` via the existing `go/internal/o11y/` package.
 
 ---
 
 ## Test Strategy
 
-### `packages/triggers/src/stt.test.ts`
+`stt_test.go`:
 
-- Mock `fetch` to return `{ text: "hello world" }`. Assert correct URL, multipart form
-  fields (`file`, `model`), and response parsing.
-- Mock fetch to return 500. Assert error is thrown with status in message.
-- Mock fetch to timeout. Assert error is thrown.
-- Assert `mimeExtension` maps common audio MIME types correctly.
+- Mock Whisper via `httptest.NewServer` returning `{"text": "hello world"}`. Assert the multipart body contains `file` and `model`. Assert returned string matches.
+- Mock returning 500 → error contains status.
+- Cancel context mid-call → returns context error.
+- `extForMime` table test for common MIMEs.
 
-### `packages/triggers/src/adapters/telegram-parse.ts` tests
+`adapter_telegram_test.go`:
 
-- `parseTelegramUpdate` with a `voice` message: assert `voiceFileId` extracted, `text`
-  is `undefined`.
-- `downloadTelegramVoice`: mock two fetch calls (`getFile` + file download). Assert
-  base64 output and correct URLs.
-
-### Integration test
-
-- Mock Whisper server via `Bun.serve`. Send a Telegram voice update through the poll
-  adapter. Assert `dispatcher.dispatch` is called with `payload.text` equal to the mock
-  transcript.
+- Parse a voice update → `VoiceFileID` extracted.
+- Mock Telegram `getFile` + audio bytes + Whisper → end-to-end yields a payload with `Text=transcript` and `Audio` populated.
 
 ---
 
 ## Open Questions
 
-- **Transcript caching:** Cache `sourceRef → transcript` to avoid re-transcribing the
-  same audio on retry? Deferred — start without caching.
-- **Language hint per-tenant:** Some tenants may speak different languages. Could expose
-  a per-tenant `whisper_language` secret. Low priority.
-- **Max duration guard:** Enforce `stt.maxDurationSeconds` by checking the platform's
-  reported duration before downloading/transcribing. Avoid spending compute on a 30-min
-  voice memo.
-- **GPU vs CPU:** The `faster-whisper-server` image supports both. GPU gives ~10x speedup.
-  For CPU-only deployments, use the `tiny.en` model (lower quality but fast enough for
-  short voice memos). Document both paths.
-- **Whisper model selection:** `base.en` is the sweet spot for English (fast, accurate).
-  For multilingual, use `base` or `small`. Configurable via `WHISPER_MODEL`.
+- **Transcript caching:** keyed by `sourceRef → transcript` to avoid re-transcribing on retry. Defer.
+- **Per-tenant language hint:** Could be a per-trigger config field. Low priority.
+- **Max duration guard:** check `parsed.VoiceDuration` before downloading to avoid wasting compute on a 30-min memo. Add an env `MAX_VOICE_SECONDS` (default 300).
+- **GPU vs CPU:** image supports both. Document `nvidia.com/gpu: 1` resource request for GPU clusters.
+- **Audio in payload:** kept for now. If memory pressure becomes a problem, drop it after transcription and keep only `sourceRef` for audit.

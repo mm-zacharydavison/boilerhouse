@@ -1,169 +1,94 @@
-# Deployment Lessons from oddjob.ooo
+# Deployment Lessons
 
-Findings from deploying boilerhouse to production (Hetzner VPS, Docker Compose, Caddy) as part of the oddjob.ooo project. These are gaps, bugs, and missing documentation discovered during the process.
+Findings worth carrying forward into the Go/K8s deployment story. Most TS-era / Docker-Compose lessons no longer apply — the K8s topology (PVCs, Service DNS, Ingress, kustomize) makes those classes of bug impossible to hit. What remains is captured below in two sections: lessons that apply *today*, and warnings for subsystems that haven't been ported yet but whose original implementations had known gotchas.
 
----
-
-## Bugs Fixed
-
-### 1. Sidecar cert directory permissions (v0.1.6)
-
-`mkdtempSync` creates directories with `0700` permissions. The envoy sidecar runs as user `envoy` (uid 101) and can't read cert files inside a root-owned `0700` directory. Works on macOS because Docker Desktop's VirtioFS remaps permissions.
-
-**Fix:** `chmodSync(certsDir, 0o755)` after `mkdtempSync` in `packages/runtime-docker/src/sidecar.ts`.
-
-### 2. Docker CI builds wrong API image
-
-The `docker.yml` GitHub Actions workflow built the API image from the main `Dockerfile` without `--target api`. Since the last stage in the Dockerfile is `trigger-gateway`, the API image shipped with the wrong binary.
-
-**Fix:** Added `target: api` to the build matrix in `.github/workflows/docker.yml`.
-
-### 3. `*` wildcard breaks envoy YAML (v0.1.10)
-
-A bare `*` in the network allowlist rendered as a YAML alias in the generated envoy config, crashing the proxy. The `*` domain also produced invalid cluster configs (e.g. `address: *`, `sni: *`).
-
-**Fix:** Filter `*` from domain processing in `packages/envoy-config/src/config.ts`. Auto-add credential domains so they still get MITM + header injection. Use `ORIGINAL_DST` passthrough cluster for the catch-all.
-
-### 4. ORIGINAL_DST needs listener filter (v0.1.11)
-
-The `ORIGINAL_DST` cluster for `*` allowlist passthrough failed with `No downstream connection or no original_dst`. iptables `REDIRECT` changes the destination, and envoy needs the `original_dst` listener filter to recover the real address via `SO_ORIGINAL_DST`.
-
-**Fix:** Added `envoy.filters.listener.original_dst` to both HTTP and TLS listeners in `packages/envoy-config/src/envoy-bootstrap.yaml.hbs`.
-
-### 5. Hibernate failure leaves tenant stuck (v0.1.7)
-
-When S3 overlay extraction fails during idle timeout (e.g. `NoSuchBucket`), the claim transitions to `releasing` but the error prevents completion. The tenant is stuck — new claims fail with `cannot apply 'created' in status 'releasing'`.
-
-**Fix:** Catch overlay extraction errors in `TenantManager.release()`. Still destroy the instance, delete the claim, and set `statusDetail` on the instance with the error message. Previous snapshot is preserved.
+For the obsolete TS/Compose-era lessons that this doc replaces, see `git log -- docs/deployment-lessons.md`.
 
 ---
 
-## Missing Production Configuration
+## Applies Today
 
-### 6. DOCKER_HOST_ADDRESS
+### Credential injection requires `restricted` network mode
 
-When the boilerhouse API runs inside a Docker container and spawns sibling containers (workloads), health checks need to reach those containers. The API defaults to `127.0.0.1` for the endpoint host, which is the API container's own loopback — not the host.
+`network.credentials` only works when the workload's egress goes through the envoy MITM sidecar. With `access: "unrestricted"` the traffic bypasses envoy entirely and credentials are never injected.
 
-**Required in docker-compose:**
+For unrestricted egress *with* credential injection, set `access: "restricted"` and use a permissive allowlist:
+
 ```yaml
-environment:
-  DOCKER_HOST_ADDRESS: host.docker.internal
-extra_hosts:
-  - "host.docker.internal:host-gateway"
+network:
+  access: restricted
+  allowlist: ["api.anthropic.com", "*"]
+  credentials:
+    - domain: api.anthropic.com
+      secretRef: { name: anthropic-creds, key: token }
 ```
 
-### 7. STORAGE_PATH must be a host path
+(The `*` wildcard handling itself is currently a known gap in the Go envoy config — see "Future warnings" below.)
 
-Named Docker volumes don't work for `STORAGE_PATH` because the sidecar creates bind mounts using the path as-is. When `STORAGE_PATH=/data` maps to a named volume at `/var/lib/docker/volumes/foo/_data`, the sidecar tries to mount `/data/sidecar/envoy.yaml` — which doesn't exist on the host.
+### Workload health check endpoints
 
-**Required:** Use a host path mount where the path is the same inside and outside the container:
+Workload images must expose a real health endpoint. The default OpenClaw path `/__openclaw/control-ui-config.json` returns 404 when the control UI is disabled — use `/health` instead:
+
 ```yaml
-environment:
-  STORAGE_PATH: /opt/boilerhouse-data
-volumes:
-  - /opt/boilerhouse-data:/opt/boilerhouse-data
+health:
+  httpGet: { path: /health, port: 8080 }
 ```
 
-### 8. METRICS_URL for dashboard
+This is enforced at the workload spec level (`BoilerhouseWorkloadSpec.Health.HTTPGet`), but operators authoring custom workloads still hit the wrong path because copy-paste from older examples persists.
 
-The dashboard proxies `/metrics` to `METRICS_URL` (default `http://localhost:9464`). When running in Docker Compose, `localhost` inside the dashboard container doesn't reach the API container.
+### Documentation gaps
 
-**Required:**
-```yaml
-environment:
-  METRICS_URL: http://boilerhouse-api:9464
-```
+Examples that are still missing in the Go docs:
 
-### 9. LISTEN_HOST must be 0.0.0.0
+- Multi-tenant access control via `Trigger.Guards`
+- Allowlist guard with custom deny messages
+- Telegram polling vs webhook trade-offs (the Go adapter only does long-polling; webhook mode isn't ported)
+- Trigger → workload driver configuration (the `driver` field on `BoilerhouseTriggerSpec`)
 
-Services binding to `127.0.0.1` inside containers aren't reachable through Docker port mapping. Both the boilerhouse API and any app servers need to bind to `0.0.0.0`.
-
-### 10. Data directory ownership
-
-The data directory (e.g. `/opt/boilerhouse-data`) must exist and be writable before the API container starts. If the container creates it, it's owned by root, and subsequent operations (like SQLite WAL files) may fail with permission errors.
-
-**Required in deploy script:**
-```bash
-sudo mkdir -p /opt/boilerhouse-data
-sudo chown deploy:deploy /opt/boilerhouse-data
-```
+These belong in `docs/` as small focused recipes rather than reference dumps. Treat as a docs-improvement TODO.
 
 ---
 
-## Missing Deployment Tooling
+## Future Warnings (subsystems not yet ported)
 
-### 11. No production docker-compose template
+These are gotchas the TS implementation already learned about. When the corresponding Go subsystem is built, save the rediscovery cost.
 
-Boilerhouse ships a dev docker-compose with observability (Prometheus, Grafana, Tempo) but no production compose template. Operators need to build their own, handling:
-- Port binding (127.0.0.1 only for security)
-- Volume mounts (host paths, not named volumes)
-- Environment variables
-- Docker socket access
-- extra_hosts for Docker-in-Docker networking
+### When envoy `*` wildcard support is added
 
-### 12. No deploy script
+The TS envoy config originally crashed when an allowlist contained a bare `*` because:
 
-Oddjob built a full interactive deploy script that:
-- Prompts for missing env vars (saved to file for next run)
-- Installs system dependencies (Docker, Caddy) via SSH
-- Syncs code via rsync (excluding secrets, databases, node_modules)
-- Uploads env files separately
-- Configures Caddy with systemd environment injection
-- Creates data directories with correct ownership
-- Pulls images and starts services
+1. Bare `*` rendered as a YAML alias in the generated config (envoy parser failure).
+2. `*` produced invalid cluster configs (`address: *`, `sni: *`).
+3. `*` requires the `ORIGINAL_DST` cluster + `envoy.filters.listener.original_dst` listener filter — without the listener filter, iptables-redirected traffic fails with `No downstream connection or no original_dst`.
 
-### 13. No cleanup/nuke scripts
+The Go envoy config (`go/internal/envoy/config.go`) currently only generates explicit per-domain clusters from `network.allowlist` and supports the `none/restricted/unrestricted` modes. When/if `*`-style passthrough is added, port the three fixes together:
 
-Needed for debugging and resetting state:
-- Remove all boilerhouse-managed containers
-- Prune Docker volumes
-- Wipe SQLite databases and sidecar temp files
+- Filter `*` from per-domain processing; auto-add credential domains so they still get MITM + header injection.
+- Use `ORIGINAL_DST` cluster for the catch-all.
+- Add `envoy.filters.listener.original_dst` to both HTTP and TLS listeners in the bootstrap template.
 
-### 14. Caddy environment injection
+### When tenant-data encryption (`BOILERHOUSE_SECRET_KEY`) is ported
 
-The Caddyfile uses `{$VAR}` placeholders but Caddy running as a systemd service doesn't have those environment variables. Requires:
-- An environment file (e.g. `/etc/caddy/environment`)
-- A systemd override at `/etc/systemd/system/caddy.service.d/env.conf` with `EnvironmentFile=/etc/caddy/environment`
-- `systemctl daemon-reload` before restarting Caddy
+The TS implementation used a 32-byte hex key for AES-256-GCM encryption of tenant secrets. No equivalent in Go yet (`grep` returns no references). When porting:
 
-### 15. BOILERHOUSE_SECRET_KEY generation
+- Generate via `openssl rand -hex 32`. Document this prominently in the install guide — operators who skip it get cryptic errors at first secret write.
+- Store as a K8s Secret named `boilerhouse-secret-key` mounted into the API and operator pods, not as a literal env var in deployment YAML.
+- Treat the key as immutable: rotation needs a re-encryption pass over every existing tenant secret.
 
-Required for tenant secret encryption but not prominently documented. Generate with:
-```bash
-openssl rand -hex 32
-```
+### When S3 snapshot storage is ported
+
+`SnapshotManager` in the Go operator currently stores snapshots locally. When S3 backend support lands:
+
+- The bucket must exist before the API/operator starts. `NoSuchBucket` during hibernate previously left tenants stuck — `refactor-go-resilience.md` R1 already covers the "don't delete the Pod on extraction failure" behavior, which makes this less catastrophic, but the bucket-not-found failure mode itself is still worth surfacing as a startup health check.
+- Hetzner Object Storage uses region-specific endpoints (`nbg1.your-objectstorage.com`, `fsn1.your-objectstorage.com`, etc.) — the endpoint must match the bucket's region. AWS/MinIO/etc. have analogous regional concerns.
+- Validate S3 connectivity at operator startup and surface failures via Operator Pod readiness, not at first hibernate.
 
 ---
 
-## Missing Documentation
+## Production deployment
 
-### 16. S3 bucket setup
+The TS-era `oddjob.ooo` deployment used SSH + Docker Compose + Caddy + a hand-rolled deploy script. None of that applies on K8s.
 
-- When S3 is enabled (`S3_ENABLED=true`), the bucket must exist before the API starts
-- `NoSuchBucket` errors during hibernate leave tenants stuck (fixed in v0.1.7 but confusing)
-- Hetzner Object Storage uses region-specific endpoints (e.g. `nbg1.your-objectstorage.com` vs `fsn1.your-objectstorage.com`) — the endpoint must match the bucket's region
+The current production model is `config/deploy/` kustomize manifests applied via `kubectl apply -k`. A future GitOps story (Argo CD or Flux watching `config/deploy/`) is the natural next step but isn't implemented yet — track separately if it becomes a blocker.
 
-### 17. Credential injection requires restricted mode
-
-`network.credentials` only works with `access: "restricted"` because the envoy MITM proxy is what injects the headers. With `"unrestricted"` (formerly `"outbound"`), traffic bypasses envoy entirely and credentials are never injected.
-
-For unrestricted egress with credential injection, use `restricted` + `allowlist: ["*", "api.anthropic.com"]`.
-
-### 18. Workload health check endpoints
-
-The default OpenClaw health check path `/__openclaw/control-ui-config.json` returns 404 when the control UI is disabled. Use `/health` instead, which returns `{"ok":true,"status":"live"}`.
-
-### 19. Dev vs prod path differences
-
-- Dev: `STORAGE_PATH` defaults to `./data` (relative, resolved by `path.resolve`)
-- Prod: Must be an absolute host path that matches inside and outside the container
-- Dev: `BH_DATA_DIR` defaults to `/tmp/boilerhouse-data` (ephemeral)
-- Prod: Persistent path like `/opt/boilerhouse-data`
-
-### 20. Guard and trigger configuration
-
-No examples of:
-- Multi-tenant access control via guards
-- Allowlist guard with deny messages
-- Telegram polling vs webhook trade-offs
-- Trigger-to-workload driver configuration
+For local cleanup/reset, `bunx kadai run nuke` removes all Boilerhouse resources from the cluster (per CLAUDE.md). No script changes needed.
