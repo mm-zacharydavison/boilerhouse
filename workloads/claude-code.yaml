@@ -1,3 +1,8 @@
+# Prereq: create this Secret in the boilerhouse namespace before applying:
+#
+#   kubectl -n boilerhouse create secret generic anthropic-api \
+#     --from-literal=key="<your Anthropic API key>"
+#
 apiVersion: boilerhouse.dev/v1alpha1
 kind: BoilerhouseWorkload
 metadata:
@@ -26,7 +31,11 @@ spec:
     credentials:
       - domain: api.anthropic.com
         headers:
-          x-api-key: "${tenant-secret:ANTHROPIC_API_KEY}"
+          - name: x-api-key
+            valueFrom:
+              secretKeyRef:
+                name: anthropic-api
+                key: key
   filesystem:
     overlayDirs:
       - /workspace
