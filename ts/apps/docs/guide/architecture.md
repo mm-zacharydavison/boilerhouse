@@ -1,202 +1,176 @@
 # Architecture
 
-Boilerhouse is organized as a monorepo with shared domain logic that powers both the standalone API server and the Kubernetes operator.
+Boilerhouse is three Go binaries that share internal packages. All state lives in the Kubernetes API server — there is no database.
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Entry Points                       │
-│  ┌─────────┐  ┌────────────┐  ┌──────────────────┐  │
-│  │ API     │  │ CLI        │  │ K8s Operator     │  │
-│  │ Server  │  │            │  │                  │  │
-│  └────┬────┘  └─────┬──────┘  └────────┬─────────┘  │
-│       │             │                  │             │
-│  ┌────▼─────────────▼──────────────────▼──────────┐  │
-│  │              Domain Layer                       │  │
-│  │  TenantManager · InstanceManager · PoolManager  │  │
-│  │  IdleMonitor · TenantDataStore · EventBus       │  │
-│  └────────────────────┬───────────────────────────┘  │
-│                       │                              │
-│  ┌────────────────────▼───────────────────────────┐  │
-│  │            Runtime Abstraction                  │  │
-│  │  ┌──────────────┐  ┌────────────────────────┐  │  │
-│  │  │ DockerRuntime │  │ KubernetesRuntime      │  │  │
-│  │  └──────────────┘  └────────────────────────┘  │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                      │
-│  ┌────────────────────────────────────────────────┐  │
-│  │           Supporting Packages                   │  │
-│  │  Storage · Triggers · EnvoyConfig · O11y · DB   │  │
-│  └────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                     Entry Points                          │
+│  ┌─────────┐   ┌─────────────┐   ┌────────────────────┐   │
+│  │ REST    │   │ Trigger     │   │ kubectl / CRDs     │   │
+│  │ API     │   │ Gateway     │   │                    │   │
+│  └────┬────┘   └──────┬──────┘   └──────────┬─────────┘   │
+│       │               │                     │             │
+│       ▼               ▼                     ▼             │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │           Kubernetes API (CRDs = state)            │   │
+│  │  Workload · Pool · Claim · Trigger                 │   │
+│  └────────────────────────┬───────────────────────────┘   │
+│                           │                               │
+│                           ▼                               │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │                Operator (controllers)              │   │
+│  │  reconcile → Pods · Services · PVCs ·              │   │
+│  │              NetworkPolicies · ConfigMaps          │   │
+│  └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## Monorepo Structure
+## Repository Structure
 
 ```
 boilerhouse/
-├── apps/
-│   ├── api/              # HTTP API server (Elysia.js)
-│   ├── cli/              # CLI binary (Commander.js)
-│   ├── dashboard/        # Web UI
-│   ├── operator/         # Kubernetes operator
-│   ├── trigger-gateway/  # Webhook ingress gateway
-│   └── docs/             # This documentation site
-├── packages/
-│   ├── core/             # Types, workload schema, state machines
-│   ├── domain/           # Business logic (managers, monitors)
-│   ├── db/               # Database schema (Drizzle ORM + SQLite)
-│   ├── runtime-docker/   # Docker runtime implementation
-│   ├── k8s/              # Kubernetes client library
-│   ├── triggers/         # Trigger adapters and dispatcher
-│   ├── storage/          # Blob storage (disk, S3, encrypted)
-│   ├── envoy-config/     # Envoy sidecar proxy configuration
-│   ├── o11y/             # Observability (metrics, tracing, logging)
-│   ├── guard-allowlist/  # Static tenant allowlist guard
-│   ├── guard-api/        # HTTP-based access control guard
-│   ├── driver-claude-code/ # Claude Code protocol driver
-│   ├── driver-openclaw/  # OpenClaw protocol driver
-│   └── driver-pi/        # Pi protocol driver
-├── workloads/            # Example workload definitions
-└── tests/
-    ├── integration/      # Docker & Kubernetes integration tests
-    ├── e2e/              # End-to-end tests (all runtimes)
-    ├── e2e-operator/     # Operator-specific E2E tests
-    └── security/         # Security scans (Nuclei, CDK)
+├── go/                             # Go source (module github.com/zdavison/boilerhouse/go)
+│   ├── cmd/
+│   │   ├── api/                    # REST API entry point
+│   │   ├── operator/               # Operator entry point
+│   │   └── trigger/                # Trigger gateway entry point
+│   ├── api/v1alpha1/               # CRD Go types (kubebuilder-annotated)
+│   └── internal/
+│       ├── api/                    # HTTP routes + WebSocket streaming
+│       ├── operator/               # Controllers, translator, sidecar, snapshots
+│       ├── trigger/                # Gateway, adapters, drivers, guards
+│       ├── envoy/                  # Envoy config generation
+│       └── o11y/                   # OpenTelemetry + structured logging
+├── config/
+│   ├── crd/bases-go/               # CRDs generated from Go types (authoritative)
+│   ├── crd/bases/                  # Original CRDs from the TS implementation
+│   └── deploy/                     # Kustomize deployment manifests
+├── ts/
+│   ├── apps/dashboard/             # Web dashboard (React) — still used
+│   └── apps/docs/                  # This documentation site
+├── workloads/                      # Example BoilerhouseWorkload YAML
+└── scripts/                        # Dev helpers
 ```
 
-## Core Components
+## The Three Binaries
 
-### Domain Layer
+### Operator (`go/cmd/operator`)
 
-The domain layer (`packages/domain`) contains all business logic. It is runtime-agnostic — the same code runs whether you're using Docker or Kubernetes.
+A controller-runtime manager that owns four controllers:
 
-| Manager | Responsibility |
-|---------|----------------|
-| **TenantManager** | Orchestrates claim and release. Decides between fast path, pool path, and cold boot. Extracts and restores overlays. |
-| **InstanceManager** | Creates, starts, destroys, and hibernates container instances. Wraps the runtime abstraction. |
-| **PoolManager** | Manages pre-warmed instance pools. Handles health checks, acquisition, replenishment, and draining. |
-| **IdleMonitor** | Tracks per-instance idle timeouts. Fires callbacks when instances go idle. |
-| **TenantDataStore** | Persists and restores tenant filesystem overlays to blob storage (disk or S3). |
-| **AuditLogger** | Records lifecycle events to the activity log table. |
-| **EventBus** | Publishes domain events for real-time WebSocket streaming and metrics instrumentation. |
+| Controller | Reconciles | Produces |
+|------------|-----------|----------|
+| `WorkloadReconciler` | `BoilerhouseWorkload` | Image build/pull status, ConfigMaps for Envoy configuration |
+| `PoolReconciler` | `BoilerhousePool` | Warm Pods labeled `boilerhouse.dev/pool-status` |
+| `ClaimReconciler` | `BoilerhouseClaim` | Assigns a Pod to a tenant, creates Services/PVCs/NetworkPolicies, extracts overlays on release |
+| `TriggerReconciler` | `BoilerhouseTrigger` | Status updates (the trigger gateway does the runtime work) |
 
-### Runtime Abstraction
+Controllers are split by CRD, one file per controller in `go/internal/operator/`. The `translator.go` package converts a `BoilerhouseWorkload` spec into a `Pod` spec. `sidecar.go` injects the Envoy sidecar when `restricted` network access plus `credentials` is configured. `snapshots.go` manages the PVC-backed overlay archive flow.
 
-The `Runtime` interface (`packages/core`) defines how Boilerhouse interacts with container runtimes:
+The operator supports leader election (Kubernetes `Lease`) so multiple replicas can run for HA.
 
-```typescript
-interface Runtime {
-  create(workload, instanceId, options?): Promise<InstanceHandle>
-  start(handle): Promise<void>
-  destroy(handle): Promise<void>
-  exec(handle, command): Promise<ExecResult>
-  getEndpoint(handle): Promise<Endpoint>
-  list(): Promise<InstanceId[]>
+### API Server (`go/cmd/api`)
 
-  // Optional capabilities
-  logs?(handle, tail?): Promise<string | null>
-  injectArchive?(instanceId, destPath, tar): Promise<void>
-  extractOverlayArchive?(instanceId, dirs): Promise<Buffer>
-  pause?(handle): Promise<void>
-  unpause?(handle): Promise<void>
-}
-```
+A `go-chi` HTTP server backed by the controller-runtime client. Every route is a thin translation of HTTP to a Kubernetes API call — create a workload, claim an instance, list pods as "instances". There is no business logic in the API layer; the controllers do the actual reconciliation.
 
-Two implementations exist:
-- **DockerRuntime** (`packages/runtime-docker`) — manages containers via the Docker daemon socket
-- **KubernetesRuntime** (`apps/operator`) — manages Pods, Services, and NetworkPolicies via the K8s API
+The `/ws` endpoint streams Pod and Claim changes over WebSocket for the dashboard to consume.
 
-### Database
+### Trigger Gateway (`go/cmd/trigger`)
 
-Boilerhouse uses SQLite via Drizzle ORM (`packages/db`). Key tables:
+Watches `BoilerhouseTrigger` resources and starts one adapter per trigger:
 
-| Table | Purpose |
-|-------|---------|
-| `workloads` | Registered workload definitions and their status |
-| `instances` | Running container instances with status and runtime metadata |
-| `tenants` | Tenant identity rows with last snapshot references |
-| `claims` | Active tenant-instance bindings |
-| `snapshots` | Persisted overlay snapshots (golden and tenant types) |
-| `triggers` | Trigger definitions (webhook, Slack, Telegram, cron) |
-| `activity_log` | Persistent audit trail of lifecycle events |
-| `nodes` | Registered runtime nodes with capacity info |
-| `tenant_secrets` | Encrypted per-tenant secrets |
+| Adapter | Source |
+|---------|--------|
+| `webhook` | HTTP endpoints with optional HMAC signature verification |
+| `telegram` | Long-polls the Telegram Bot API |
+| `cron` | Runs on a cron schedule |
+
+When an adapter fires, the gateway resolves the tenant, runs the guard chain (allowlist, API-based), creates a `BoilerhouseClaim`, waits for the claim to go `Active`, and forwards the event to the container via the appropriate driver (`claude-code`, `openclaw`, or generic HTTP).
+
+## State Storage
+
+All state lives in the Kubernetes API server. There is no SQLite, Postgres, or Drizzle.
+
+| What | Where |
+|------|-------|
+| Workload definitions | `BoilerhouseWorkload` CRs |
+| Pool configuration | `BoilerhousePool` CRs |
+| Tenant claims | `BoilerhouseClaim` CRs |
+| Trigger configuration | `BoilerhouseTrigger` CRs |
+| Running instances | Pods with label `boilerhouse.dev/managed=true` |
+| Per-workload config | ConfigMaps |
+| Per-tenant secrets | Kubernetes `Secret` resources |
+| Overlay archives | PVC-backed `tar.gz` files, accessed through a helper pod |
+| Leader election | `coordination.k8s.io/Lease` |
+
+This means the operator is stateless — it can be restarted at any time and reconstruct everything from the cluster.
 
 ## Instance State Machine
 
-Every instance moves through a defined state machine:
+A `BoilerhouseClaim` moves through these phases:
 
 ```
-starting ──► active ──► hibernating ──► hibernated
-                │                          │
-                │                          ▼
-                │                      (next claim) ──► starting
+Pending ──► Active ──► Releasing ──► Released
                 │
-                └──► destroying ──► destroyed
+                └──► Error
 ```
 
-| Status | Description |
-|--------|-------------|
-| `starting` | Container is being created and started |
-| `active` | Container is running and assigned to a tenant |
-| `hibernating` | Overlay is being extracted, container shutting down |
-| `hibernated` | Container destroyed, overlay saved to storage |
-| `destroying` | Container is being torn down |
-| `destroyed` | Container fully removed |
+| Phase | Meaning |
+|-------|---------|
+| `Pending` | The claim has been created; the controller is selecting a Pod |
+| `Active` | A Pod is assigned, healthy, and bound to this tenant |
+| `Releasing` | The tenant released the claim; overlay is being extracted |
+| `Released` | Overlay saved, Pod destroyed |
+| `ReleaseFailed` | Release failed; manual cleanup may be required |
+| `Error` | Claim could not be fulfilled |
 
-## Request Lifecycle
+The Pod itself uses the standard Kubernetes `Pod.status.phase` (`Pending`, `Running`, `Succeeded`, `Failed`, `Unknown`).
 
-A tenant claim request follows this path:
+See [State Machines](../reference/state-machines) for the full per-CRD reference.
 
-```
-POST /tenants/:id/claim
-        │
-        ▼
-  Has existing active claim? ──► Yes ──► Return existing (fast path)
-        │
-       No
-        │
-        ▼
-  Has previous overlay data?
-        │
-       Yes ──► Cold boot + inject overlay (cold+data)
-        │
-       No
-        │
-        ▼
-  Pool available? ──► Yes ──► Acquire from pool
-        │                        │
-        │                  Has overlay? ──► Inject overlay (pool+data)
-        │                        │
-        │                       No ──► Return (pool)
-       No
-        │
-        ▼
-  Cold boot new instance (cold)
-        │
-        ▼
-  Start idle monitor
-  Return endpoint
-```
+## Request Lifecycle: Claim
 
-## Data Flow
+When a tenant claim request arrives at the API:
 
 ```
-Tenant Claims ──► TenantManager ──► InstanceManager ──► Runtime (Docker/K8s)
-                       │                    │
-                       │                    ├──► Container created
-                       │                    ├──► Health checks pass
-                       │                    └──► Endpoint returned
-                       │
-                       ├──► TenantDataStore ──► BlobStore (disk/S3)
-                       │         │
-                       │         ├──► Extract overlay on release
-                       │         └──► Inject overlay on claim
-                       │
-                       ├──► IdleMonitor ──► Fires on timeout
-                       │
-                       └──► EventBus ──► WebSocket clients
-                                    └──► Prometheus metrics
+POST /api/v1/tenants/:id/claim
+       │
+       ▼
+  Claim CR already Active for (tenant, workload)?
+       │
+      Yes ──► Return existing (fast path)
+       │
+      No
+       │
+       ▼
+  Claim CR exists but Released? ──► Yes ──► Delete old claim, create new
+       │
+       ▼
+  Create BoilerhouseClaim CR
+       │
+       ▼
+  Poll claim.status.phase until Active or Error (30s timeout)
+       │
+       ▼
+  Return claim (with instanceId, endpoint, source)
 ```
+
+Inside the operator, the `ClaimReconciler` does the real work:
+
+1. Look up the referenced `BoilerhouseWorkload`
+2. Prefer a ready Pod from a matching pool (`source=pool`)
+3. If the tenant has a saved overlay, restore it (`source=pool+data` or `cold+data`)
+4. Otherwise cold-boot a new Pod (`source=cold`)
+5. Label the Pod with `boilerhouse.dev/tenant=<id>`
+6. Create Service / NetworkPolicy / Envoy ConfigMap as needed
+7. Write endpoint back to `claim.status.endpoint`
+
+## Observability
+
+Each binary emits OpenTelemetry metrics and traces through the shared `go/internal/o11y` package. See [Observability](./observability) for the metric catalog.
+
+## Deployment
+
+All three binaries are packaged as container images (`go/Dockerfile.*`) and deployed via Kustomize manifests under `config/deploy/`. See [Deployment](./deployment).

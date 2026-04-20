@@ -1,185 +1,162 @@
 # Deployment
 
-Boilerhouse can be deployed as a standalone binary, a Docker container, a systemd service, or a Kubernetes operator.
+Boilerhouse deploys as three Go binaries running against a Kubernetes cluster: the operator, the API server, and the trigger gateway. Kustomize manifests under `config/deploy/` contain a reference production layout.
 
-## API Server (Single Binary)
-
-Build a standalone binary using Bun:
-
-```bash
-bun build apps/api/src/main.ts --compile --outfile boilerhouse-api
-```
-
-Run it:
-
-```bash
-export BOILERHOUSE_SECRET_KEY=your-secret
-export RUNTIME_TYPE=docker
-./boilerhouse-api
-```
-
-The binary is self-contained — no Node.js or Bun runtime needed on the target machine.
-
-## API Server (Docker)
-
-Build the Docker image:
-
-```bash
-docker build -t boilerhouse-api .
-```
-
-Run with Docker socket mounted:
-
-```bash
-docker run -d \
-  -p 3000:3000 \
-  -p 9464:9464 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v ./data:/app/data \
-  -e BOILERHOUSE_SECRET_KEY=your-secret \
-  -e STORAGE_PATH=/app/data \
-  boilerhouse-api
-```
-
-The Docker socket mount is required for the Docker runtime to manage containers.
-
-## API Server (systemd)
-
-Install as a systemd service using the CLI:
-
-```bash
-boilerhouse api install \
-  --binary-path /usr/local/bin/boilerhouse \
-  --data-dir /var/lib/boilerhouse
-```
-
-This creates a systemd unit at `/etc/systemd/system/boilerhouse.service`.
-
-Manage the service:
-
-```bash
-sudo systemctl start boilerhouse
-sudo systemctl stop boilerhouse
-sudo systemctl status boilerhouse
-sudo journalctl -u boilerhouse -f
-```
-
-## Kubernetes Operator
-
-### Prerequisites
+## Prerequisites
 
 - Kubernetes 1.26+ cluster
 - `kubectl` with cluster-admin access
-- Container registry for operator and workload images
+- A container registry for the three Boilerhouse images
+- (Optional) `kustomize` or recent `kubectl` with built-in kustomize support
 
-### Install CRDs
+## Building Images
+
+Three Dockerfiles live in `go/`:
 
 ```bash
-kubectl apply -f apps/operator/crds/
+cd go
+docker build -f Dockerfile.operator -t <registry>/boilerhouse-operator:<tag> .
+docker build -f Dockerfile.api      -t <registry>/boilerhouse-api:<tag>      .
+docker build -f Dockerfile.trigger  -t <registry>/boilerhouse-trigger:<tag>  .
+docker push <registry>/boilerhouse-operator:<tag>
+docker push <registry>/boilerhouse-api:<tag>
+docker push <registry>/boilerhouse-trigger:<tag>
 ```
 
-### Deploy the Operator
-
-Create the namespace and deployment:
+For minikube development, build directly inside the cluster's Docker daemon:
 
 ```bash
-kubectl create namespace boilerhouse
+eval "$(minikube docker-env -p boilerhouse)"
+cd go
+docker build -f Dockerfile.operator -t boilerhouse-operator:latest .
+docker build -f Dockerfile.api      -t boilerhouse-api:latest      .
+docker build -f Dockerfile.trigger  -t boilerhouse-trigger:latest  .
+```
 
-kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
+## Install CRDs
+
+Apply the four Custom Resource Definitions generated from the Go types:
+
+```bash
+kubectl apply -f config/crd/bases-go/
+```
+
+This installs:
+- `boilerhouseworkloads.boilerhouse.dev`
+- `boilerhousepools.boilerhouse.dev`
+- `boilerhouseclaims.boilerhouse.dev`
+- `boilerhousetriggers.boilerhouse.dev`
+
+## Deploy
+
+The reference manifests under `config/deploy/` install the namespace, RBAC, operator, API, and trigger gateway:
+
+```bash
+kubectl apply -k config/deploy/
+```
+
+This applies:
+- `namespace.yaml` — the `boilerhouse` namespace
+- CRDs from `config/crd/bases/`
+- `operator.yaml` — ServiceAccount, ClusterRole, ClusterRoleBinding, and the operator Deployment
+- `api.yaml` — the API Deployment and its Service
+- `trigger.yaml` — the trigger gateway Deployment
+
+Edit image references in `config/deploy/*.yaml` to point at your registry before applying.
+
+## RBAC
+
+The operator needs cluster-scoped permissions to manage Pods, Services, ConfigMaps, Secrets, PersistentVolumeClaims, Events, NetworkPolicies, Leases, and the four Boilerhouse CRDs. The reference `ClusterRole` in `config/deploy/operator.yaml`:
+
+```yaml
+rules:
+  - apiGroups: ["boilerhouse.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["boilerhouse.dev"]
+    resources: ["*/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "events"]
+    verbs: ["*"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["*"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["*"]
+```
+
+The API and trigger gateway share the `boilerhouse-operator` ServiceAccount in the reference manifests. Tighten this in production if you want per-component RBAC.
+
+## High Availability
+
+The operator supports Kubernetes `Lease`-based leader election. Deploy with multiple replicas:
+
+```yaml
+spec:
+  replicas: 2
+```
+
+Only the leader reconciles; other replicas are on standby and take over automatically on leader failure. Disable with `LEADER_ELECT=false` for single-instance deployments.
+
+The API server is stateless — scale it horizontally with no coordination. The trigger gateway currently does not coordinate between replicas, so run a single replica to avoid duplicate event handling.
+
+## Snapshots PVC
+
+The operator expects a PVC named `boilerhouse-snapshots` for tenant overlay storage, mounted by the `boilerhouse-snapshot-helper` Pod. Add a PVC manifest to your deploy:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
 metadata:
-  name: boilerhouse-operator
+  name: boilerhouse-snapshots
   namespace: boilerhouse
 spec:
-  replicas: 2  # HA with leader election
-  selector:
-    matchLabels:
-      app: boilerhouse-operator
-  template:
-    metadata:
-      labels:
-        app: boilerhouse-operator
-    spec:
-      serviceAccountName: boilerhouse-operator
-      containers:
-        - name: operator
-          image: boilerhouse-operator:latest
-          env:
-            - name: BOILERHOUSE_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: boilerhouse-secrets
-                  key: secret-key
-            - name: S3_ENABLED
-              value: "true"
-            - name: S3_BUCKET
-              value: boilerhouse-overlays
-          ports:
-            - containerPort: 9090
-              name: health
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 9090
-EOF
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: <your-storage-class>
 ```
 
-### Create RBAC
-
-The operator needs permissions to manage Pods, Services, ConfigMaps, NetworkPolicies, Leases, and Boilerhouse CRDs. Create a ClusterRole and bind it to the operator's service account.
-
-### High Availability
-
-Deploy with 2+ replicas. The operator uses Kubernetes Lease-based leader election — only one replica reconciles at a time, others are on standby.
+Use a storage class backed by a durable provider (EBS, GCP PD, Longhorn, etc.). `ReadWriteOnce` is sufficient because only the single helper Pod mounts the volume.
 
 ## Production Checklist
 
 ### Security
 
-- [ ] Set `BOILERHOUSE_SECRET_KEY` to a strong random value (used for overlay encryption and secret storage)
 - [ ] Set `BOILERHOUSE_API_KEY` for API authentication
-- [ ] Configure seccomp profiles (`SECCOMP_PROFILE_PATH`) for container hardening
 - [ ] Use `restricted` network access for untrusted workloads
-- [ ] Store secrets in a proper secret manager (K8s Secrets, AWS Secrets Manager)
+- [ ] Put the API server behind an Ingress with TLS termination
+- [ ] Create tenant credential Secrets in the `boilerhouse` namespace, not client-side
+- [ ] Tighten RBAC if the API / trigger gateway don't need the full operator ClusterRole
 
 ### Storage
 
-- [ ] Enable S3 storage for overlay durability (`S3_ENABLED=true`)
-- [ ] Configure local cache size (`OVERLAY_CACHE_MAX_BYTES`)
-- [ ] Back up the SQLite database (or mount a persistent volume for the operator)
+- [ ] Provision the `boilerhouse-snapshots` PVC with a durable storage class
+- [ ] Choose a storage class that provides encryption at rest if required
 
 ### Observability
 
-- [ ] Set up Prometheus to scrape `METRICS_PORT`
-- [ ] Configure OTLP export for distributed tracing
+- [ ] Scrape `:9464/metrics` on the operator Pod
+- [ ] Configure `OTEL_EXPORTER_OTLP_ENDPOINT` on all three binaries
 - [ ] Set `LOG_LEVEL=info` for production
 - [ ] Monitor key metrics:
   - `boilerhouse.pool.depth` — pool health
   - `boilerhouse.tenant.claim.duration` — claim latency
-  - `boilerhouse.instances` — instance count by status
-  - `boilerhouse.node.capacity.used` — capacity utilization
+  - `boilerhouse.instances` (phase=Running) — live instance count
+  - `kube_pod_status_phase` — standard Pod-level health from kube-state-metrics
 
 ### Resources
 
-- [ ] Set `MAX_INSTANCES` appropriate for your host/node capacity
+- [ ] Apply a `ResourceQuota` to the `boilerhouse` namespace to cap total CPU/memory
 - [ ] Size workload resources (CPU, memory, disk) appropriately
 - [ ] Configure pool sizes based on expected concurrency
-- [ ] Set `max_fill_concurrency` to avoid overwhelming the host during pool refill
+- [ ] Set `maxFillConcurrency` to avoid swamping the scheduler during pool refill
 
 ### Networking
 
 - [ ] Configure domain allowlists for restricted workloads
-- [ ] Set up credential injection for API keys
-- [ ] Block metadata endpoints (automatic for Docker/K8s)
-- [ ] Configure CORS origins if running the dashboard
-
-### Updates
-
-The CLI supports self-update:
-
-```bash
-boilerhouse update
-```
-
-For Docker deployments, pull the latest image. For Kubernetes, update the operator Deployment image tag.
+- [ ] Create Kubernetes Secrets for credential injection
+- [ ] If workloads need external access, expose their Services via Ingress / LoadBalancer

@@ -1,49 +1,47 @@
 # Snapshots & Hibernation
 
-Boilerhouse can hibernate instances — saving their filesystem state to storage and restoring it on the next claim. This enables cost-effective idle management without losing tenant work.
+Boilerhouse can hibernate instances — saving their filesystem state and restoring it on the next claim. This enables cost-effective idle management without losing tenant work.
 
 ## Hibernation
 
-When a tenant's instance goes idle or is released, Boilerhouse can hibernate it:
+When a tenant's Pod goes idle or is released, the operator hibernates it:
 
-1. **Pause** the container (if the runtime supports `pause`)
-2. **Extract** the overlay directories as a compressed tar archive
-3. **Save** the archive to blob storage (disk or S3)
-4. **Destroy** the container
+1. **Extract** the overlay directories as a compressed tar archive via a helper Pod with the snapshots PVC mounted
+2. **Save** the archive at `/snapshots/<tenantId>/<workload>.tar.gz`
+3. **Destroy** the tenant Pod
 
-The tenant's state is now persisted. The container is gone, consuming zero resources.
+The tenant's state is now persisted on the snapshots PVC. The Pod is gone, consuming zero resources beyond the saved archive.
 
 ### When Hibernation Triggers
 
-Hibernation triggers in two ways:
+Hibernation triggers in three ways:
 
-- **Manual release** — `POST /tenants/:id/release` extracts overlays and hibernates
-- **Idle timeout** — when the idle monitor fires (after `idle.timeout_seconds` of inactivity), the instance is automatically released and hibernated
+- **Manual release** — `POST /api/v1/tenants/:id/release` (or `kubectl delete boilerhouseclaim ...`) extracts overlays and hibernates
+- **Idle timeout** — when the operator's idle monitor fires (after `idle.timeoutSeconds` of inactivity), the claim is automatically released and hibernated
+- **Destroy API** — `POST /api/v1/instances/:id/destroy` skips overlay extraction and just deletes the Pod
 
 The idle action is configured per-workload:
 
-```typescript
-idle: {
-  timeout_seconds: 300,   // 5 minutes of inactivity
-  action: "hibernate",    // save state (vs "destroy" which discards it)
-}
+```yaml
+idle:
+  timeoutSeconds: 300   # 5 minutes of inactivity
+  action: hibernate     # or "destroy" to discard state
 ```
 
 ## Restoration
 
 When a hibernated tenant claims the same workload again, their state is restored:
 
-1. A new container is created (from pool or cold boot)
-2. The overlay archive is retrieved from blob storage
-3. The archive is injected into the container via `tar -xz`
+1. A new Pod is created (from pool or cold boot)
+2. The overlay archive is retrieved from the snapshots PVC
+3. A short init step extracts the archive into the Pod's overlay volumes
 4. The container is ready with the tenant's previous state
 
 This happens transparently — the claim response indicates the source:
 
 ```json
 {
-  "source": "pool+data",
-  "latencyMs": 1200
+  "source": "pool+data"
 }
 ```
 
@@ -51,13 +49,14 @@ This happens transparently — the claim response indicates the source:
 
 The directories that get persisted are declared in the workload config:
 
-```typescript
-filesystem: {
-  overlay_dirs: ["/workspace", "/home/user"],
-}
+```yaml
+filesystem:
+  overlayDirs:
+    - /workspace
+    - /home/user
 ```
 
-Only these directories are extracted and saved. System directories, installed packages, and other container state are not preserved — they come from the base image on each boot.
+The operator creates an `emptyDir` volume for each overlay directory and mounts it into the Pod. Only these directories are extracted and saved. System directories, installed packages, and other container state are not preserved — they come from the base image on each boot.
 
 Choose overlay directories that contain tenant-specific data:
 - `/workspace` — project files
@@ -66,77 +65,66 @@ Choose overlay directories that contain tenant-specific data:
 
 ### What Gets Saved
 
-The overlay extraction runs `tar czf` over the declared directories inside the container. Everything in those directories is included — files, symlinks, permissions, timestamps.
+Extraction runs `tar czf` over the declared directories. Everything in those directories is included — files, symlinks, permissions, timestamps.
 
 ### What Doesn't Get Saved
 
 - Running processes (they're killed on hibernation)
 - In-memory state
 - Network connections
-- Files outside `overlay_dirs`
+- Files outside `overlayDirs`
 - Installed packages (use the base image for these)
 
-## Encryption
+## Snapshot Helper Pod
 
-Overlays are encrypted at rest by default:
+All overlay access goes through a single long-lived Pod named `boilerhouse-snapshot-helper` in the operator's namespace. This helper mounts the snapshots PVC and executes `tar`, `find`, and `cat` commands on behalf of the operator and API.
 
-```typescript
-filesystem: {
-  overlay_dirs: ["/workspace"],
-  encrypt_overlays: true,  // default
-}
-```
-
-Encryption uses AES-256-GCM with per-archive keys derived from the master `BOILERHOUSE_SECRET_KEY` via HKDF-SHA256. Each archive gets a unique IV and authentication tag.
-
-To disable encryption (e.g., for debugging):
-
-```typescript
-filesystem: {
-  overlay_dirs: ["/workspace"],
-  encrypt_overlays: false,
-}
-```
+This design avoids mounting the snapshots PVC in every tenant Pod and lets the operator share one volume across the whole namespace.
 
 ## Storage Backend
 
-Overlays are stored using Boilerhouse's blob storage layer. See [Storage](./storage) for backend configuration.
+Overlay archives are stored on a regular `PersistentVolumeClaim`. Configure the PVC size and storage class in the kustomize manifests under `config/deploy/`.
 
-- **Disk** — default. Stored locally with LRU eviction.
-- **S3** — stored in S3-compatible storage (AWS S3, MinIO, Cloudflare R2, Tigris). Recommended for production.
-- **Tiered** — disk cache in front of S3. Reads hit disk first, falls back to S3.
+Listing snapshots is exposed via the API:
 
-## Snapshot Types
+```bash
+# All snapshots
+curl http://localhost:3000/api/v1/snapshots
 
-Boilerhouse tracks two types of snapshots:
+# Snapshots for a specific workload
+curl http://localhost:3000/api/v1/workloads/my-agent/snapshots
+```
 
-| Type | Purpose |
-|------|---------|
-| `golden` | Immutable reference snapshot for a workload. Created once, shared across tenants. |
-| `tenant` | Per-tenant state snapshot. Created on each hibernation, overwritten on next hibernation. |
+Each entry:
 
-Each tenant has at most one active overlay per workload. When a tenant hibernates, the previous overlay is replaced.
+```json
+{
+  "tenantId": "alice",
+  "workloadRef": "my-agent",
+  "path": "/snapshots/alice/my-agent.tar.gz"
+}
+```
 
 ## Idle Detection
 
-The idle monitor uses two signals to detect inactivity:
+The operator's idle monitor uses two signals to detect inactivity:
 
 ### Timeout
 
-A simple timer. If no activity is recorded for `idle.timeout_seconds`, the instance is released.
+A simple timer. If no activity has been recorded on the claim for `idle.timeoutSeconds`, the operator triggers hibernation.
+
+Activity is bumped by the API server on every claim, exec, and proxied request, via the `boilerhouse.dev/last-activity` annotation on the `BoilerhouseClaim`.
 
 ### Watch Directories
 
 For workloads where filesystem activity indicates usage:
 
-```typescript
-idle: {
-  timeout_seconds: 60,
-  action: "hibernate",
-  watch_dirs: ["/root/.openclaw"],
-}
+```yaml
+idle:
+  timeoutSeconds: 60
+  action: hibernate
+  watchDirs:
+    - /root/.openclaw
 ```
 
-Boilerhouse periodically checks the modification time of files in `watch_dirs`. If files have been modified since the last check, the idle timer resets. This catches activity that doesn't generate network traffic (e.g., an agent writing files locally).
-
-The poller runs every few seconds and uses `find + stat` inside the container to get the latest modification time. A global semaphore limits concurrent polling to avoid overwhelming the runtime.
+The operator periodically checks the modification time of files in `watchDirs`. If files have been modified since the last check, the idle timer resets. This catches activity that doesn't generate network traffic (e.g., an agent writing files locally).

@@ -16,115 +16,104 @@ Some use cases:
 
 ## Features
 
-- **On-demand provisioning** — claim a container via API, webhook, Slack, Telegram, or cron trigger
+- **On-demand provisioning** — claim a container via API, webhook, Telegram, or cron trigger
 - **Warm pools** — pre-start instances so tenants get sub-second claim times
 - **Hibernation & snapshots** — suspend idle containers and restore tenant state on the next claim
-- **Multi-runtime** — run workloads on Docker or Kubernetes with a unified API
-- **Tenant isolation** — per-tenant secrets, filesystem overlays, and network scoping
+- **Kubernetes-native** — workloads, pools, claims, and triggers are first-class Custom Resources
+- **Tenant isolation** — per-tenant secrets, filesystem overlays, and NetworkPolicy-based network scoping
 - **Observability** — OpenTelemetry metrics/tracing and structured logging built in
 
 ## Quick Start
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) >= 1.3
-- [Docker](https://docs.docker.com/get-docker/) (for container workloads)
-- Optionally, a Kubernetes cluster (minikube works)
+- [Go](https://go.dev/) 1.26+
+- [Docker](https://docs.docker.com/get-docker/) and [minikube](https://minikube.sigs.k8s.io/) (for local development)
+- [Bun](https://bun.sh/) >= 1.3 (only for the dashboard and the `kadai` task runner)
 
-### Install and run
+### Set up a local cluster
 
 ```sh
 git clone https://github.com/zdavison/boilerhouse.git
 cd boilerhouse
-bun install
-
-# Start the API server and dashboard
-bun run dev
+bunx kadai run setup      # install Go + TS deps and dev tools
+bunx kadai run minikube   # create and configure a local minikube cluster
 ```
 
-The API server listens on `http://localhost:3000` and the dashboard on `http://localhost:3001`.
-
-### Observability stack (optional)
+### Run the operator and API
 
 ```sh
-docker compose up -d
-# Grafana:    http://localhost:3003
-# Prometheus: http://localhost:9090
+bunx kadai run dev
 ```
+
+This starts the operator and API server against your minikube cluster. The API listens on `http://localhost:3000`. Ctrl+C stops both.
+
+To run the dashboard in another terminal:
+
+```sh
+cd ts && bun run dev
+```
+
+The dashboard is served on `http://localhost:3001` and proxies API calls to the Go server.
 
 ## Documentation
 
-Full documentation is available at the [Boilerhouse docs site](https://zdavison.github.io/boilerhouse/), covering architecture, core concepts, workload authoring, the REST API, CLI reference, and more.
+Full documentation is available at the [Boilerhouse docs site](https://zdavison.github.io/boilerhouse/), covering architecture, core concepts, workload authoring, the REST API, CRD reference, and more.
 
 ## Project Structure
 
 ```
-apps/
-├── api/               # REST API server (Elysia)
-├── operator/          # Kubernetes operator (CRDs, controllers)
-├── cli/               # Command-line tool
-├── dashboard/         # Web dashboard (React)
-├── trigger-gateway/   # Event dispatcher service
-└── docs/              # Documentation site (VitePress)
+go/                           # Go source (module github.com/zdavison/boilerhouse/go)
+├── cmd/
+│   ├── api/                  # REST API server (go-chi)
+│   ├── operator/             # Kubernetes operator (controller-runtime)
+│   └── trigger/              # Trigger gateway (webhook, cron, telegram)
+├── api/v1alpha1/             # CRD Go types (kubebuilder-annotated)
+└── internal/
+    ├── api/                  # HTTP routes, WebSocket streaming
+    ├── operator/             # Controllers, translator, snapshots, sidecar
+    ├── trigger/              # Gateway, adapters, drivers, guards
+    ├── envoy/                # Envoy proxy config generation
+    └── o11y/                 # OpenTelemetry + structured logging
 
-packages/
-├── core/              # Domain types, workload schema, state machines
-├── db/                # SQLite database (Drizzle ORM)
-├── domain/            # Business logic (tenant, pool, instance managers)
-├── runtime-docker/    # Docker runtime backend
-├── k8s/               # Kubernetes client and manifests
-├── storage/           # Blob storage (disk, S3, encrypted, tiered)
-├── triggers/          # Trigger system and adapters
-├── envoy-config/      # Envoy proxy configuration
-└── o11y/              # Observability (Pino, OpenTelemetry)
+config/
+├── crd/bases-go/             # CRDs generated from Go types (authoritative)
+├── crd/bases/                # Original CRDs from the TS implementation
+└── deploy/                   # Kustomize deployment manifests
 
-workloads/             # Example workload definitions
-tests/                 # Integration, E2E, and security tests
-deploy/                # Prometheus, Grafana, Tempo configs
+ts/                           # Legacy TypeScript implementation
+├── apps/dashboard/           # Web dashboard (React) — still used
+└── apps/docs/                # Documentation site (VitePress)
+
+workloads/                    # Example BoilerhouseWorkload YAML
 ```
 
 ## Development
 
 ### Testing
 
-Tests are organized into tiers. Only unit tests run by default.
-
 ```sh
-# Unit tests
-bun test
+# Unit and controller tests (uses envtest — no real cluster needed)
+bunx kadai run tests/unit
 
-# Integration tests (require Docker / minikube)
-bun test tests/integration/docker.integration.test.ts --timeout 60000
-bun test tests/integration/kubernetes.integration.test.ts --timeout 60000
+# E2E tests against a running minikube cluster
+bunx kadai run tests/e2e-operator
 
-# E2E tests (all detected runtimes)
-bun test tests/e2e/ --timeout 120000
-
-# Security scans (via kadai)
-bunx kadai run security
-bunx kadai run security-breakout
+# Run a single package or test
+cd go
+go test ./internal/operator/ -run TestClaimController -v
+go test ./internal/api/ -run TestCreateWorkload -v
 ```
 
-To set up a minikube cluster for Kubernetes tests:
+Controller tests in `go/internal/operator/` use `sigs.k8s.io/controller-runtime/pkg/envtest` (spins up a real apiserver+etcd locally — no kubelet, so Pods never actually run). API tests in `go/internal/api/` combine envtest with `httptest`.
+
+### Tearing down
 
 ```sh
-bunx kadai run minikube
+bunx kadai run nuke
 ```
 
-### Linting and type checking
-
-```sh
-bun run lint
-bun run typecheck
-```
-
-### Building
-
-```sh
-bun run build
-```
-
-Compiles the CLI, dashboard, and trigger gateway to standalone binaries in `dist/`.
+Deletes all Boilerhouse resources from the cluster.
 
 ## License
 

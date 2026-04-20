@@ -1,360 +1,327 @@
 # Workload Schema Reference
 
-Complete reference for the workload definition object passed to `defineWorkload()` or `POST /api/v1/workloads`.
+Complete reference for `BoilerhouseWorkload.spec`. The authoritative schema is generated from `go/api/v1alpha1/workload_types.go` and validated by the CRD.
 
 ## Top-Level Structure
 
-```typescript
-defineWorkload({
-  name: string,          // required
-  version: string,       // required
-  image: ImageConfig,    // required
-  resources: Resources,  // required
-  network: Network,      // required
-  idle: IdleConfig,      // required
-  filesystem?: Filesystem,
-  health?: HealthCheck,
-  entrypoint?: Entrypoint,
-  pool?: PoolConfig,
-  metadata?: Record<string, unknown>,
-})
+```yaml
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: my-agent
+  namespace: boilerhouse
+spec:
+  version: <string>           # required
+  image: <ImageConfig>        # required
+  resources: <Resources>      # required
+  network: <Network>          # optional
+  filesystem: <Filesystem>    # optional
+  idle: <IdleConfig>          # optional
+  health: <HealthCheck>       # optional
+  entrypoint: <Entrypoint>    # optional
 ```
 
-When submitting via the API, the top-level object wraps these fields:
+When creating workloads via the REST API, wrap these fields:
 
 ```json
 {
-  "workload": { "name": "...", "version": "..." },
-  "image": { ... },
-  "resources": { ... },
-  "network": { ... },
-  "idle": { ... }
+  "name": "my-agent",
+  "spec": {
+    "version": "1.0.0",
+    "image": { "ref": "..." },
+    "resources": { "vcpus": 2, "memoryMb": 2048, "diskGb": 10 }
+  }
 }
 ```
 
 ---
 
-## `name`
+## `metadata.name`
 
 - **Type:** `string`
 - **Required:** yes
 
-The workload name. Used in API calls to identify the workload (e.g., `{"workload": "my-agent"}` in claim requests). Must be unique across all registered workloads.
+The workload identifier. Used in claim requests (`{"workload": "my-agent"}`) and as the referenced name in `BoilerhousePool.spec.workloadRef` / `BoilerhouseClaim.spec.workloadRef`. Must be a valid Kubernetes resource name.
 
-## `version`
+## `spec.version`
 
 - **Type:** `string`
 - **Required:** yes
 
-The workload version. Used for tracking configuration changes. A workload with the same name and version cannot be registered twice.
+The workload version string. Tracks configuration changes. Surfaced in kubectl output and API responses.
 
 ---
 
-## `image`
+## `spec.image`
 
-- **Type:** `{ ref: string }` or `{ dockerfile: string }`
-- **Required:** yes (exactly one of `ref` or `dockerfile`)
+- **Type:** object
+- **Required:** yes
+
+Exactly one of `ref` or `dockerfile` must be set.
 
 ### `image.ref`
 
+- **Type:** `string`
+
 OCI image reference from a container registry:
 
-```typescript
-image: { ref: "alpine:latest" }
-image: { ref: "ghcr.io/myorg/my-agent:v2.1.0" }
+```yaml
+image:
+  ref: alpine:3.19
 ```
 
 ### `image.dockerfile`
 
-Path to a Dockerfile, relative to the workloads directory:
+- **Type:** `string`
 
-```typescript
-image: { dockerfile: "my-agent/Dockerfile" }
+Path to a Dockerfile, relative to the operator's `WORKLOADS_DIR`:
+
+```yaml
+image:
+  dockerfile: my-agent/Dockerfile
 ```
 
-The Docker runtime builds the image locally. Kubernetes requires pre-built images (except with minikube, which builds locally).
+When set, the operator builds the image inside the cluster and tags it `boilerhouse/<name>:<version>`.
 
 ---
 
-## `resources`
+## `spec.resources`
 
-- **Type:** `{ vcpus: number, memory_mb: number, disk_gb?: number }`
+- **Type:** object
 - **Required:** yes
 
-### `resources.vcpus`
+```yaml
+resources:
+  vcpus: 2        # CPU cores
+  memoryMb: 2048  # memory in megabytes
+  diskGb: 10      # scratch disk in gigabytes
+```
 
-- **Type:** `number`
-- **Required:** yes
+| Field | Type | Required |
+|-------|------|----------|
+| `vcpus` | integer | yes |
+| `memoryMb` | integer | yes |
+| `diskGb` | integer | yes |
 
-CPU cores allocated to the container.
-
-### `resources.memory_mb`
-
-- **Type:** `number`
-- **Required:** yes
-
-Memory in megabytes.
-
-### `resources.disk_gb`
-
-- **Type:** `number`
-- **Default:** `2`
-
-Disk space in gigabytes.
+These map to Pod resource requests and limits.
 
 ---
 
-## `network`
+## `spec.network`
 
-- **Type:** `object`
-- **Required:** yes
+- **Type:** object
+- **Required:** no
 
 ### `network.access`
 
-- **Type:** `"none" | "unrestricted" | "restricted"`
-- **Required:** yes
+- **Type:** `string` — one of `none`, `restricted`, `unrestricted`
 
 | Value | Description |
 |-------|-------------|
-| `none` | No network access. No DNS, no outbound, no exposed ports. |
-| `unrestricted` | Full internet access. Cloud metadata endpoints blocked. |
-| `restricted` | Only allowed domains. Enforced by Envoy sidecar. |
+| `none` | Deny all egress via NetworkPolicy |
+| `restricted` | Allow DNS + HTTPS only; Envoy sidecar enforces allowlist + injects credentials when configured |
+| `unrestricted` | Allow all egress except link-local (169.254.0.0/16) |
 
 ### `network.allowlist`
 
 - **Type:** `string[]`
-- **Required:** no (only used with `restricted`)
 
-Domains the container is allowed to reach:
-
-```typescript
-allowlist: ["api.anthropic.com", "*.github.com"]
-```
+Domains the container is allowed to reach (for `restricted` mode). Supports wildcards like `*.github.com`.
 
 ### `network.expose`
 
-- **Type:** `Array<{ guest: number, host_range: [number, number] }>`
-- **Required:** no
+- **Type:** array of `{ guest: integer }`
 
-Expose container ports to the host.
+Ports to expose via a `ClusterIP` Service:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `guest` | `number` | Port inside the container |
-| `host_range` | `[number, number]` | Min and max host port range |
+```yaml
+expose:
+  - guest: 8080
+```
 
 ### `network.websocket`
 
 - **Type:** `string`
-- **Required:** no
 
 WebSocket path. Returned in claim responses so clients know where to connect:
 
-```typescript
-websocket: "/ws"
+```yaml
+websocket: /ws
 ```
 
 ### `network.credentials`
 
-- **Type:** `Array<{ domain: string, headers: Record<string, string | SecretRef> }>`
-- **Required:** no
+- **Type:** array
 
-Inject HTTP headers into outbound requests for specific domains:
+Inject HTTP headers into outbound requests for specific domains. Triggers the Envoy sidecar.
 
-```typescript
-import { secret } from "@boilerhouse/core";
-
-credentials: [{
-  domain: "api.anthropic.com",
-  headers: {
-    "x-api-key": secret("ANTHROPIC_API_KEY"),
-    "x-custom": "static-value",
-  },
-}]
+```yaml
+credentials:
+  - domain: api.anthropic.com
+    headers:
+      - name: x-api-key
+        valueFrom:
+          secretKeyRef:
+            name: anthropic-api
+            key: key
+      - name: x-client-id
+        value: public-static-value
 ```
 
-`secret("NAME")` references a secret in the Boilerhouse secret store. Static strings are also supported.
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | string | Target domain |
+| `headers[].name` | string | HTTP header name |
+| `headers[].value` | string | Literal value (exclusive with `valueFrom`) |
+| `headers[].valueFrom.secretKeyRef.name` | string | Kubernetes Secret name in the operator's namespace |
+| `headers[].valueFrom.secretKeyRef.key` | string | Key within the Secret |
 
 ---
 
-## `filesystem`
+## `spec.filesystem`
 
-- **Type:** `object`
+- **Type:** object
 - **Required:** no
 
-### `filesystem.overlay_dirs`
+### `filesystem.overlayDirs`
 
 - **Type:** `string[]`
-- **Required:** no
 
-Directories to persist across hibernation cycles:
+Directories to persist across hibernation cycles. Each becomes an `emptyDir` volume that gets extracted as a tar archive on release.
 
-```typescript
-overlay_dirs: ["/workspace", "/home/user"]
+```yaml
+filesystem:
+  overlayDirs:
+    - /workspace
+    - /home/user
 ```
 
-### `filesystem.encrypt_overlays`
+### `filesystem.encryptOverlays`
 
-- **Type:** `boolean`
-- **Default:** `true`
+- **Type:** `bool`
 
-Encrypt overlay archives at rest using AES-256-GCM.
+Reserved for future use. In the current implementation, overlay encryption at rest is the responsibility of the snapshot PVC's storage class.
 
 ---
 
-## `idle`
+## `spec.idle`
 
-- **Type:** `object`
-- **Required:** yes
-
-### `idle.timeout_seconds`
-
-- **Type:** `number`
+- **Type:** object
 - **Required:** no
+
+### `idle.timeoutSeconds`
+
+- **Type:** `integer`
 
 Seconds of inactivity before the idle action triggers. Omit to disable idle timeout.
 
 ### `idle.action`
 
-- **Type:** `"hibernate" | "destroy"`
-- **Default:** `"hibernate"`
+- **Type:** `string` — one of `hibernate`, `destroy`
 
-What to do when idle:
-- `hibernate` — extract overlay, save to storage, destroy container
-- `destroy` — destroy container, discard state
+- `hibernate` — extract overlay, destroy Pod, preserve state for next claim
+- `destroy` — destroy Pod, discard state
 
-### `idle.watch_dirs`
+### `idle.watchDirs`
 
 - **Type:** `string[]`
-- **Required:** no
 
-Directories to monitor for filesystem changes. If files change, the idle timer resets:
+Directories to monitor for filesystem changes. If files are modified, the idle timer resets.
 
-```typescript
-watch_dirs: ["/root/.openclaw"]
+```yaml
+idle:
+  timeoutSeconds: 300
+  action: hibernate
+  watchDirs:
+    - /workspace
 ```
 
 ---
 
-## `health`
+## `spec.health`
 
-- **Type:** `object`
+- **Type:** object
 - **Required:** no
 
-If omitted, the instance transitions to active immediately after the container starts.
+If omitted, the Pod is considered ready as soon as the container starts.
 
-### `health.interval_seconds`
+### `health.intervalSeconds`
 
-- **Type:** `number`
-- **Required:** yes (when `health` is present)
+- **Type:** `integer`
 
-Polling interval for health probes.
+Readiness probe interval.
 
-### `health.unhealthy_threshold`
+### `health.unhealthyThreshold`
 
-- **Type:** `number`
-- **Required:** yes (when `health` is present)
+- **Type:** `integer`
 
-Number of consecutive health check failures before the instance is considered unhealthy.
+Number of consecutive failures before the Pod is marked unready.
 
-### `health.check_timeout_seconds`
+### `health.httpGet`
 
-- **Type:** `number`
-- **Default:** `60`
+- **Type:** `{ path: string, port: integer }`
 
-Total time to wait for the container to become healthy before giving up.
+HTTP GET probe. Passes on any 2xx response.
 
-### `health.http_get`
-
-- **Type:** `{ path: string, port?: number }`
-
-HTTP GET health probe. The check passes on any 2xx response.
-
-```typescript
-http_get: { path: "/health", port: 8080 }
+```yaml
+health:
+  intervalSeconds: 5
+  unhealthyThreshold: 10
+  httpGet:
+    path: /health
+    port: 8080
 ```
-
-If `port` is omitted, the first exposed port is used.
 
 ### `health.exec`
 
 - **Type:** `{ command: string[] }`
 
-Exec health probe. The check passes on exit code 0.
+Exec probe. Passes on exit code 0.
 
-```typescript
-exec: { command: ["pg_isready"] }
+```yaml
+health:
+  intervalSeconds: 5
+  unhealthyThreshold: 10
+  exec:
+    command: ["pg_isready"]
 ```
 
-Only one of `http_get` or `exec` should be specified.
+Only one of `httpGet` or `exec` should be specified.
 
 ---
 
-## `entrypoint`
+## `spec.entrypoint`
 
-- **Type:** `object`
+- **Type:** object
 - **Required:** no
 
 Override the container's default entrypoint.
 
-### `entrypoint.cmd`
-
-- **Type:** `string`
-
-The command to run.
-
-### `entrypoint.args`
-
-- **Type:** `string[]`
-
-Arguments to the command.
-
-### `entrypoint.workdir`
-
-- **Type:** `string`
-
-Working directory.
-
-### `entrypoint.env`
-
-- **Type:** `Record<string, string>`
-
-Environment variables.
-
----
-
-## `pool`
-
-- **Type:** `object`
-- **Required:** no
-
-### `pool.size`
-
-- **Type:** `number`
-- **Default:** `3`
-
-Number of warm instances to maintain.
-
-### `pool.max_fill_concurrency`
-
-- **Type:** `number`
-- **Default:** `2`
-
-Maximum number of instances to create in parallel when filling the pool.
-
----
-
-## `metadata`
-
-- **Type:** `Record<string, unknown>`
-- **Required:** no
-
-Arbitrary metadata. Stored with the workload and returned in API responses.
-
-```typescript
-metadata: {
-  description: "My AI agent",
-  homepage: "https://example.com",
-  connect_url: "http://{{host}}:{{port}}/",
-}
+```yaml
+entrypoint:
+  cmd: node
+  args: ["server.js"]
+  workdir: /app
+  env:
+    NODE_ENV: production
+    PORT: "8080"
 ```
+
+| Field | Type |
+|-------|------|
+| `cmd` | string |
+| `args` | string[] |
+| `workdir` | string |
+| `env` | map of string → string |
+
+---
+
+## Status
+
+Written by the operator, read by `kubectl` and the API.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `phase` | string | `Creating`, `Ready`, or `Error` |
+| `detail` | string | Human-readable phase detail |
+| `observedGeneration` | integer | Last reconciled generation |

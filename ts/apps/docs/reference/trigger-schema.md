@@ -1,51 +1,44 @@
 # Trigger Schema Reference
 
-Complete reference for the trigger definition object passed to `defineTrigger()` or `POST /api/v1/triggers`.
+Complete reference for `BoilerhouseTrigger.spec`. The authoritative schema is generated from `go/api/v1alpha1/trigger_types.go`.
 
 ## Top-Level Structure
 
-```typescript
-defineTrigger({
-  name: string,                    // required
-  type: TriggerType,               // required
-  workload: string,                // required
-  tenant: TenantMapping,           // required
-  config: AdapterConfig,           // required
-  driver?: string,
-  driverOptions?: Record<string, unknown>,
-  guards?: GuardStep[],
-})
+```yaml
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseTrigger
+metadata:
+  name: <string>
+  namespace: boilerhouse
+spec:
+  type: <TriggerType>      # required
+  workloadRef: <string>    # required
+  tenant: <TenantMapping>
+  driver: <string>
+  driverOptions: <map>
+  guards: <GuardStep[]>
+  config: <AdapterConfig>
 ```
 
 ---
 
-## `name`
+## `spec.type`
+
+- **Type:** `string` — one of `webhook`, `slack`, `telegram`, `cron`
+- **Required:** yes
+
+Determines which adapter handles events and which `config` shape is expected.
+
+## `spec.workloadRef`
 
 - **Type:** `string`
 - **Required:** yes
 
-Unique trigger name.
-
-## `type`
-
-- **Type:** `"webhook" | "slack" | "telegram-poll" | "cron"`
-- **Required:** yes
-
-The adapter type. Determines which `config` shape is expected.
-
-## `workload`
-
-- **Type:** `string`
-- **Required:** yes
-
-Name of the workload to claim when the trigger fires.
+Name of the `BoilerhouseWorkload` to claim when the trigger fires.
 
 ---
 
-## `tenant`
-
-- **Type:** `TenantMapping`
-- **Required:** yes
+## `spec.tenant`
 
 How to resolve the tenant ID from the incoming event.
 
@@ -53,163 +46,165 @@ How to resolve the tenant ID from the incoming event.
 
 Always maps to the same tenant:
 
-```typescript
-tenant: { static: "system-user" }
+```yaml
+tenant:
+  static: system-user
 ```
 
 ### Field Mapping
 
 Extracts the tenant ID from the event:
 
-```typescript
-tenant: { fromField: "userId" }
-tenant: { fromField: "usernameOrId", prefix: "tg-" }
+```yaml
+tenant:
+  from: userId
+```
+
+```yaml
+tenant:
+  from: usernameOrId
+  prefix: "tg-"
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `fromField` | `string` | Field name to extract from the parsed event |
-| `prefix` | `string` | Optional prefix prepended to the extracted value |
+| `from` | string | Field to extract from the parsed event |
+| `prefix` | string | Optional prefix prepended to the extracted value |
+| `static` | string | Literal tenant ID (mutually exclusive with `from`) |
 
 Available fields per adapter:
 
 | Adapter | Fields |
 |---------|--------|
 | Webhook | Any JSON body field path |
-| Slack | `userId`, `channelId`, `teamId` |
 | Telegram | `chatId`, `userId`, `usernameOrId` |
 | Cron | N/A (use `static`) |
 
 ---
 
-## `config`
+## `spec.config`
 
-Adapter-specific configuration. Shape depends on `type`.
+Adapter-specific configuration. `kubebuilder:pruning:PreserveUnknownFields` is set so you can embed free-form config here — the operator passes it to the appropriate adapter.
 
-### Webhook Config
+### Webhook
 
-```typescript
-config: {
-  path: string,              // required — URL path (e.g., "/hooks/deploy")
-  secret?: string,           // HMAC-SHA256 secret for signature verification
-  rateLimit?: {
-    max: number,             // max requests per window
-    windowMs: number,        // window size in milliseconds
-  },
-}
+```yaml
+config:
+  path: /hooks/deploy
+  secretRef:
+    name: webhook-hmac
+    key: secret
+  rateLimit:
+    max: 10
+    windowSeconds: 60
 ```
 
-The webhook validates `X-Hub-Signature-256` if `secret` is set.
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | URL path the gateway serves |
+| `secretRef` | SecretKeyRef | Optional HMAC-SHA256 secret for `X-Hub-Signature-256` verification |
+| `rateLimit.max` | integer | Max requests per window |
+| `rateLimit.windowSeconds` | integer | Window size in seconds |
 
-### Slack Config
+### Telegram
 
-```typescript
-config: {
-  signingSecret: string,     // required — Slack signing secret
-  botToken: string,          // required — Slack bot token (xoxb-...)
-  eventTypes?: string[],     // event types to handle (default: all)
-  rateLimit?: {
-    max: number,
-    windowMs: number,
-  },
-}
+```yaml
+config:
+  botTokenSecretRef:
+    name: telegram-bot-token
+    key: token
+  updateTypes: [message]
+  pollTimeoutSeconds: 30
 ```
 
-The adapter handles URL verification challenges automatically and verifies request signatures.
+| Field | Type | Description |
+|-------|------|-------------|
+| `botTokenSecretRef` | SecretKeyRef | Bot token from a Kubernetes Secret |
+| `updateTypes` | string[] | Telegram update types to handle |
+| `pollTimeoutSeconds` | integer | Long-poll timeout |
+| `apiBaseUrl` | string | Custom Telegram API URL |
 
-### Telegram Poll Config
+### Cron
 
-```typescript
-config: {
-  botToken: string,              // required — Telegram bot token
-  updateTypes?: string[],        // update types to process (default: all)
-  pollTimeoutSeconds?: number,   // long-poll timeout (default: 30)
-  apiBaseUrl?: string,           // custom Telegram API URL
-}
+```yaml
+config:
+  schedule: "0 2 * * *"
+  payload:
+    task: cleanup
 ```
 
-The adapter long-polls `getUpdates` — no inbound endpoint required.
-
-### Cron Config
-
-```typescript
-config: {
-  schedule: string,                      // required — cron expression
-  payload?: Record<string, unknown>,     // optional static payload
-}
-```
-
-Standard cron syntax (e.g., `"0 2 * * *"` for 2 AM daily, `"*/5 * * * *"` for every 5 minutes).
+| Field | Type | Description |
+|-------|------|-------------|
+| `schedule` | string | Cron expression (e.g., `"*/5 * * * *"`) |
+| `payload` | map | Static payload sent on each tick |
 
 ---
 
-## `driver`
+## `spec.driver`
 
 - **Type:** `string`
 - **Required:** no
 
-Protocol driver package for formatting payloads before sending to the container.
+Protocol driver for formatting payloads before sending to the container.
 
-Built-in drivers:
+| Value | Protocol |
+|-------|----------|
+| `claude-code` | Claude Code WebSocket bridge |
+| `openclaw` | OpenClaw WebSocket |
+| (unset) | Plain HTTP POST JSON to the container's first exposed port |
 
-| Package | Protocol |
-|---------|----------|
-| `@boilerhouse/driver-claude-code` | Claude Code WebSocket bridge |
-| `@boilerhouse/driver-openclaw` | OpenClaw control WebSocket |
-| `@boilerhouse/driver-pi` | Pi agent WebSocket |
+## `spec.driverOptions`
 
-If omitted, payloads are sent as plain HTTP POST JSON to the container's first exposed port.
-
-## `driverOptions`
-
-- **Type:** `Record<string, unknown>`
+- **Type:** free-form map
 - **Required:** no
 
-Driver-specific configuration options.
+Driver-specific configuration.
 
 ---
 
-## `guards`
+## `spec.guards`
 
-- **Type:** `GuardStep[]`
-- **Required:** no
+Authorization guards executed before a claim is created. Guards run as a chain — if any guard denies, the trigger is rejected.
 
-Authorization guards executed before claiming an instance. Guards run as a chain — if any guard denies, the trigger is rejected.
-
-```typescript
-guards: [{
-  guard: string,                           // guard package name
-  guardOptions?: Record<string, unknown>,  // guard-specific config
-}]
+```yaml
+guards:
+  - type: allowlist
+    config:
+      tenantIds:
+        - tg-alice
+        - tg-bob
+      denyMessage: "Not authorized."
 ```
 
 ### Allowlist Guard
 
-```typescript
-{
-  guard: "@boilerhouse/guard-allowlist",
-  guardOptions: {
-    tenantIds: ["tg-alice", "tg-bob"],   // allowed tenant IDs (case-insensitive)
-    denyMessage: "Not authorized.",       // optional denial message
-  },
-}
+```yaml
+- type: allowlist
+  config:
+    tenantIds: ["tg-alice", "tg-bob"]
+    denyMessage: "Not authorized."
 ```
+
+Matching is case-insensitive.
 
 ### API Guard
 
-```typescript
-{
-  guard: "@boilerhouse/guard-api",
-  guardOptions: {
-    url: "https://api.example.com/auth",  // authorization endpoint
-    headers: {                             // optional request headers
-      "Authorization": "Bearer token",
-    },
-    denyMessage: "Access denied.",         // optional fallback denial message
-  },
-}
+```yaml
+- type: api
+  config:
+    url: https://api.example.com/auth
+    headers:
+      Authorization: "Bearer token"
+    denyMessage: "Access denied."
 ```
 
-The API guard POSTs `{ tenantId, source }` to the URL. Expected response: `{ ok: true }` or `{ ok: false, message: "reason" }`.
+POSTs `{ tenantId, source }` to `url`. Expected response: `{ "ok": true }` or `{ "ok": false, "message": "reason" }`. Fails closed.
 
-Fails closed: network errors, timeouts (3s), non-2xx responses, and malformed JSON all result in denial.
+---
+
+## Status
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `phase` | string | `Active` or `Error` |
+| `detail` | string | Human-readable phase detail |

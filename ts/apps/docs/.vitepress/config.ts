@@ -31,19 +31,13 @@ export default defineConfig({
           ],
         },
         {
-          text: "Runtimes",
-          items: [
-            { text: "Docker", link: "/guide/runtime-docker" },
-            { text: "Kubernetes Operator", link: "/guide/runtime-kubernetes" },
-          ],
-        },
-        {
           text: "Features",
           items: [
             { text: "Networking & Security", link: "/guide/networking" },
             { text: "Triggers", link: "/guide/triggers" },
             { text: "Storage", link: "/guide/storage" },
             { text: "Observability", link: "/guide/observability" },
+            { text: "Dashboard", link: "/guide/dashboard" },
           ],
         },
         {
@@ -56,11 +50,11 @@ export default defineConfig({
       ],
       "/reference/": [
         {
-          text: "API & CLI",
+          text: "API",
           items: [
             { text: "REST API", link: "/reference/api" },
-            { text: "CLI", link: "/reference/cli" },
             { text: "WebSocket Events", link: "/reference/websocket" },
+            { text: "CLI (Legacy)", link: "/reference/cli" },
           ],
         },
         {
@@ -75,6 +69,7 @@ export default defineConfig({
           text: "Kubernetes",
           items: [
             { text: "CRD Reference", link: "/reference/crds" },
+            { text: "State Machines", link: "/reference/state-machines" },
           ],
         },
       ],

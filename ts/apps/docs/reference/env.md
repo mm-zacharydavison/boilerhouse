@@ -1,77 +1,55 @@
 # Environment Variables
 
-Complete reference of all environment variables used by Boilerhouse.
+Complete reference of all environment variables used by Boilerhouse. The Go rewrite reads far fewer variables than the TypeScript version — most configuration now lives in Custom Resources.
 
-## Core
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | API server listen port |
-| `LISTEN_HOST` | `127.0.0.1` | API server listen address |
-| `DB_PATH` | `boilerhouse.db` | SQLite database file path |
-| `STORAGE_PATH` | `./data` | Local storage directory for overlays and snapshots |
-| `RUNTIME_TYPE` | `docker` | Container runtime: `docker`, `kubernetes`, or `fake` |
-| `MAX_INSTANCES` | `100` | Maximum concurrent instances per node |
-| `WORKLOADS_DIR` | — | Directory to auto-discover `.workload.ts` and `.trigger.ts` files |
-| `CORS_ORIGIN` | — | Comma-separated list of allowed CORS origins |
-
-## Security
+## Shared (all binaries)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOILERHOUSE_API_KEY` | — | API authentication key. When set, all requests require `Authorization: Bearer <key>` |
-| `BOILERHOUSE_SECRET_KEY` | — | Master encryption key for tenant data and secrets. **Required for production.** |
+| `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig file. Not needed when running in-cluster. |
+| `K8S_NAMESPACE` | `boilerhouse` | Namespace where CRDs and Pods are managed |
+| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+
+## API Server (`cmd/api`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | HTTP listen port |
+| `LISTEN_HOST` | `127.0.0.1` | Bind address |
+| `BOILERHOUSE_API_KEY` | — | Bearer token for `/api/v1/*` routes. When unset, the API is unauthenticated. |
+| `CORS_ORIGIN` | — | Comma-separated list of allowed CORS origins. `*` is accepted as wildcard. |
+
+## Operator (`cmd/operator`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `METRICS_PORT` | `9464` | Prometheus metrics endpoint port |
+| `HEALTH_PORT` | `8081` | Health/readiness probe port |
+| `LEADER_ELECT` | `true` | Enable leader election via Kubernetes `Lease`. Set to `"false"` to disable. |
+| `WORKLOADS_DIR` | — | Directory containing Dockerfiles referenced by `image.dockerfile` in workload specs. Only required if you use Dockerfile-based workload images. |
+
+## Trigger Gateway (`cmd/trigger`)
+
+The trigger gateway reads its configuration from `BoilerhouseTrigger` Custom Resources; it has no trigger-specific environment variables beyond the shared set.
 
 ## Observability
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `METRICS_PORT` | `9464` | Prometheus metrics endpoint port |
-| `METRICS_HOST` | `127.0.0.1` | Prometheus metrics endpoint bind address |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP endpoint URL (e.g., `http://localhost:4318`) |
-| `LOG_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP HTTP endpoint (e.g., `http://otel-collector:4318`) |
 
-## S3 Storage
+## What Was Removed
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `S3_ENABLED` | `false` | Enable S3 backend for overlay storage |
-| `S3_BUCKET` | — | S3 bucket name |
-| `S3_REGION` | — | AWS region (e.g., `us-east-1`) or `auto` for S3-compatible |
-| `S3_ENDPOINT` | — | Custom S3 endpoint URL (for MinIO, R2, Tigris, etc.) |
-| `AWS_ACCESS_KEY_ID` | — | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | — | AWS secret key |
+These variables existed in the TypeScript implementation and no longer apply:
 
-## Overlay Cache
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OVERLAY_CACHE_DIR` | — | Local directory for overlay LRU cache. Defaults to `STORAGE_PATH` if not set. |
-| `OVERLAY_CACHE_MAX_BYTES` | `10737418240` | Maximum cache size in bytes (default: 10 GB) |
-
-## Docker Runtime
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DOCKER_SOCKET` | Auto-detected | Path to Docker daemon socket. Auto-detects `/var/run/docker.sock` or `~/.docker/run/docker.sock` |
-| `SECCOMP_PROFILE_PATH` | — | Path to a custom seccomp profile JSON file |
-| `ENDPOINT_HOST` | `127.0.0.1` | Host returned in endpoint responses. Set to `host.docker.internal` for Docker-in-Docker |
-
-## Kubernetes Runtime
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `K8S_API_URL` | — | Kubernetes API server URL (for token-based auth) |
-| `K8S_TOKEN` | — | Bearer token for Kubernetes API authentication |
-| `K8S_CA_CERT` | — | Path to Kubernetes CA certificate file |
-| `K8S_NAMESPACE` | `boilerhouse` | Kubernetes namespace for Boilerhouse resources |
-| `K8S_CONTEXT` | — | kubectl context name (for kubeconfig-based auth) |
-| `K8S_MINIKUBE_PROFILE` | — | Minikube profile name (enables local image building and port forwarding) |
-
-## Operator
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LEADER_ELECTION_NAMESPACE` | — | Namespace for the leader election Lease resource |
-| `LEADER_ELECTION_NAME` | — | Name of the leader election Lease |
-| `INTERNAL_API_PORT` | `9090` | Operator internal API port (health checks, stats) |
+| Removed | Replacement |
+|---------|-------------|
+| `DB_PATH`, `STORAGE_PATH` | All state lives in the Kubernetes API |
+| `RUNTIME_TYPE` | Kubernetes is the only runtime |
+| `MAX_INSTANCES` | Use Kubernetes `ResourceQuota` on the namespace |
+| `BOILERHOUSE_SECRET_KEY` | Overlay encryption is the PVC storage class's responsibility; credential injection uses Kubernetes `Secret` resources |
+| `S3_*`, `AWS_*`, `OVERLAY_CACHE_*` | Overlay archives are stored on a `PersistentVolumeClaim` |
+| `DOCKER_SOCKET`, `SECCOMP_PROFILE_PATH`, `ENDPOINT_HOST` | Docker runtime removed |
+| `K8S_API_URL`, `K8S_TOKEN`, `K8S_CA_CERT`, `K8S_CONTEXT`, `K8S_MINIKUBE_PROFILE` | All binaries use `ctrl.GetConfig()` (KUBECONFIG or in-cluster) |
+| `LEADER_ELECTION_NAMESPACE`, `LEADER_ELECTION_NAME` | Hard-coded to `K8S_NAMESPACE` / `boilerhouse-operator` |
+| `METRICS_HOST` | Metrics bind to `0.0.0.0:$METRICS_PORT` |

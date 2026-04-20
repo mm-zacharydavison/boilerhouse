@@ -1,31 +1,32 @@
 # Instances
 
-An instance is a running container managed by Boilerhouse. Instances are created from workload definitions, assigned to tenants via claims, and eventually hibernated or destroyed.
+An instance is a running Pod managed by Boilerhouse. Instances are created from `BoilerhouseWorkload` specs, assigned to tenants via `BoilerhouseClaim` resources, and eventually hibernated or destroyed.
+
+Boilerhouse instances are always Pods labeled `boilerhouse.dev/managed=true`. You can list them with either `kubectl` or the API.
 
 ## Lifecycle
 
-Every instance progresses through a state machine:
+The lifecycle is driven by two state machines: the Pod's own phase and the `BoilerhouseClaim` phase that owns it.
 
 ```
-starting ──► active ──► hibernating ──► hibernated
-                │
-                └──► destroying ──► destroyed
+Pod: Pending ──► Running ──► Succeeded / Failed
+Claim: Pending ──► Active ──► Releasing ──► Released
 ```
 
-| Status | Description |
-|--------|-------------|
-| `starting` | Container is being created by the runtime (Docker or K8s). Health checks are running. |
-| `active` | Container is running, healthy, and assigned to a tenant. |
-| `hibernating` | Tenant overlay is being extracted. Container is about to shut down. |
-| `hibernated` | Container destroyed. Overlay data saved to storage for future restoration. |
-| `destroying` | Container is being torn down. |
-| `destroyed` | Container fully removed. No data retained. |
+| Claim Phase | Meaning |
+|-------------|---------|
+| `Pending` | Claim created; controller is selecting or starting a Pod |
+| `Active` | Pod is running, healthy, and bound to this tenant |
+| `Releasing` | Tenant released; overlay is being extracted |
+| `Released` | Overlay saved, Pod destroyed |
+| `ReleaseFailed` | Overlay extraction failed; manual cleanup may be required |
+| `Error` | Claim could not be fulfilled |
 
-The transition from `starting` to `active` happens automatically once health checks pass. The transition from `active` to `hibernating` or `destroying` is triggered by tenant release or idle timeout.
+See [State Machines](../reference/state-machines) for the full reference.
 
 ## Claiming and Releasing
 
-Instances are acquired through the **claim** mechanism. You don't create instances directly — you claim one for a tenant, and Boilerhouse decides how to provide it.
+Instances are acquired through the **claim** mechanism. You don't create instances directly — you claim one for a tenant, and the operator decides how to provide it.
 
 ### Claim
 
@@ -40,23 +41,23 @@ Response:
 ```json
 {
   "tenantId": "user-123",
-  "instanceId": "inst_abc123",
-  "endpoint": { "host": "127.0.0.1", "ports": [30042] },
+  "phase": "Active",
+  "instanceId": "inst-user-123-my-agent-a1b2c3",
+  "endpoint": { "host": "10.244.0.12", "port": 8080 },
   "source": "pool",
-  "latencyMs": 450,
-  "websocket": "/ws"
+  "claimedAt": "2026-04-20T10:30:00Z"
 }
 ```
 
-The `source` tells you which path was taken:
+The `source` tells you which path the controller took:
 
 | Source | Meaning | Typical Latency |
 |--------|---------|----------------|
-| `existing` | Tenant already had a running instance | <10ms |
-| `pool` | Acquired from pre-warmed pool | 200-800ms |
+| `existing` | Tenant already had a running instance | <100ms |
+| `pool` | Acquired from a pre-warmed pool | 200-800ms |
 | `pool+data` | Pool instance with tenant overlay restored | 500-2000ms |
-| `cold` | New container booted from scratch | 2-10s |
-| `cold+data` | New container with tenant overlay restored | 3-15s |
+| `cold` | New Pod booted from scratch | 2-10s |
+| `cold+data` | New Pod with tenant overlay restored | 3-15s |
 
 ### Release
 
@@ -66,19 +67,20 @@ curl -X POST http://localhost:3000/api/v1/tenants/user-123/release \
   -d '{"workload": "my-agent"}'
 ```
 
-Release performs these steps:
-1. Pauses the container (if the runtime supports it)
-2. Extracts overlay directories as a tar archive
-3. Saves the archive to blob storage (with optional encryption)
-4. Destroys the container (hibernation) or marks it destroyed
-5. Replenishes the pool if configured
+Release triggers the operator to:
+1. Mark the claim as `Releasing`
+2. Extract overlay directories as a tar archive via a helper Pod
+3. Save the archive to the snapshots PVC
+4. Destroy the Pod
+5. Mark the claim as `Released` (then delete it)
+6. Replenish the pool if one is configured
 
 ## Exec
 
 Run commands inside a running instance:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/instances/inst_abc123/exec \
+curl -X POST http://localhost:3000/api/v1/instances/<id>/exec \
   -H "Content-Type: application/json" \
   -d '{"command": ["ls", "-la", "/workspace"]}'
 ```
@@ -91,94 +93,72 @@ curl -X POST http://localhost:3000/api/v1/instances/inst_abc123/exec \
 }
 ```
 
-The instance must be in `active` status. The `command` field is an array of strings (not a shell command — use `["sh", "-c", "your command"]` for shell features).
+The API server shells out to `kubectl exec` under the hood, so your kubeconfig must be reachable from wherever the API runs.
 
 ## Logs
 
 Retrieve container logs:
 
 ```bash
-curl http://localhost:3000/api/v1/instances/inst_abc123/logs?tail=100
+curl http://localhost:3000/api/v1/instances/<id>/logs?tail=100
 ```
 
-```json
-{
-  "instanceId": "inst_abc123",
-  "logs": "2024-01-15T10:30:00Z Starting server...\n..."
-}
-```
-
-The `tail` parameter controls how many lines to return (default: 200, max: 5000). Logs are only available while the container is running — hibernated and destroyed instances have no logs.
+Returns raw text. The `tail` query parameter limits the number of lines.
 
 ## Destroy
 
-Force-destroy an instance without extracting overlays:
+Force-destroy a Pod without extracting overlays:
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/instances/inst_abc123/destroy
+curl -X POST http://localhost:3000/api/v1/instances/<id>/destroy
 ```
 
-This skips the hibernation flow and immediately tears down the container.
-
-## Hibernate
-
-Trigger hibernation (extract overlay + destroy) for a specific instance:
-
-```bash
-curl -X POST http://localhost:3000/api/v1/instances/inst_abc123/hibernate
-```
-
-This releases the tenant's claim, extracts the overlay, and hibernates the instance.
-
-## Endpoint
-
-Get the network endpoint for a running instance:
-
-```bash
-curl http://localhost:3000/api/v1/instances/inst_abc123/endpoint
-```
-
-```json
-{
-  "instanceId": "inst_abc123",
-  "status": "active",
-  "endpoint": { "host": "127.0.0.1", "ports": [30042] }
-}
-```
-
-Pool instances (not yet claimed) do not expose endpoints.
-
-## Resource Limits
-
-Resources are enforced at the runtime level:
-
-- **Docker** — CPU and memory limits set via Docker's resource constraints. Disk limits via storage driver quotas.
-- **Kubernetes** — CPU and memory set as Pod resource requests and limits. Disk via emptyDir size limits.
-
-If a node is at capacity (`MAX_INSTANCES` reached), new claims return `503 Service Unavailable` with a `Retry-After` header.
+This skips the hibernation flow and deletes the Pod immediately. The claim is left in whatever phase it was in — normally you'd release the tenant first.
 
 ## Listing Instances
 
 ```bash
-# All instances
+# All managed pods
 curl http://localhost:3000/api/v1/instances
 
-# Filter by status
-curl http://localhost:3000/api/v1/instances?status=active
+# Or just use kubectl
+kubectl get pods -n boilerhouse -l boilerhouse.dev/managed=true
 ```
 
-Each instance in the response includes:
+Each response entry includes:
 
 ```json
 {
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz",
-  "nodeId": "node_1",
-  "tenantId": "user-123",
-  "status": "active",
-  "hasSidecar": true,
-  "lastActivity": "2024-01-15T10:35:00.000Z",
-  "claimedAt": "2024-01-15T10:30:00.000Z",
-  "createdAt": "2024-01-15T10:29:55.000Z"
+  "name": "inst-alice-my-agent-a1b2c3",
+  "phase": "Running",
+  "tenantId": "alice",
+  "workloadRef": "my-agent",
+  "ip": "10.244.0.12",
+  "labels": {
+    "boilerhouse.dev/managed": "true",
+    "boilerhouse.dev/workload": "my-agent",
+    "boilerhouse.dev/tenant": "alice"
+  },
+  "createdAt": "2026-04-20T10:29:55Z",
+  "lastActivity": "2026-04-20T10:35:00Z",
+  "claimedAt": "2026-04-20T10:30:00Z"
 }
 ```
+
+## Labels
+
+Every managed Pod carries a standard set of labels the operator uses for reconciliation and that you can query with kubectl:
+
+| Label | Meaning |
+|-------|---------|
+| `boilerhouse.dev/managed` | Always `true` for managed instances |
+| `boilerhouse.dev/workload` | Name of the `BoilerhouseWorkload` |
+| `boilerhouse.dev/tenant` | Tenant ID (only on claimed Pods) |
+| `boilerhouse.dev/pool` | Pool name (only on warm Pods) |
+| `boilerhouse.dev/pool-status` | `warming` or `ready` |
+
+## Capacity
+
+Instance count is bounded by the cluster's resource quota. Unlike the old `MAX_INSTANCES` setting, scheduling is now Kubernetes' job — if no node can fit the Pod, it stays `Pending` until one can.
+
+For hard caps, apply a `ResourceQuota` or `LimitRange` to the `boilerhouse` namespace.

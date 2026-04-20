@@ -1,5 +1,11 @@
 # CLI Reference
 
+::: warning Legacy — TypeScript implementation only
+The `boilerhouse` CLI documented on this page is part of the original TypeScript implementation. It has **not** been ported to the Go rewrite yet and currently does not live in the repository.
+
+A Go port is planned; commands, flags, and defaults will likely change. Treat this page as historical reference — for current development workflows use `bunx kadai run <action>` and `kubectl` directly (see [Quick Start](../guide/quick-start)).
+:::
+
 The Boilerhouse CLI (`boilerhouse`) provides commands for running and managing the API server.
 
 ## Installation

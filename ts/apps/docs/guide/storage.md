@@ -1,163 +1,82 @@
 # Storage
 
-Boilerhouse uses a blob storage layer for persisting tenant overlay data, snapshots, and workload images. The storage system supports local disk, S3-compatible backends, and transparent encryption.
+Boilerhouse persists tenant overlay archives on a Kubernetes `PersistentVolumeClaim`. Everything else — workloads, pools, claims, triggers — lives in the Kubernetes API server itself, so there is no separate database to configure.
 
-## Storage Architecture
+## What Gets Stored Where
 
-```
-                 ┌──────────────┐
-                 │ BlobStore    │  (interface)
-                 └──────┬───────┘
-                        │
-           ┌────────────┼────────────┐
-           │            │            │
-    ┌──────▼──────┐ ┌───▼────┐ ┌────▼─────────┐
-    │ DiskCache   │ │ S3     │ │ TieredStore  │
-    │ (local LRU) │ │ Backend│ │ (disk + S3)  │
-    └─────────────┘ └────────┘ └──────────────┘
-                        │
-                 ┌──────▼───────┐
-                 │ Encrypted    │  (optional wrapper)
-                 │ Store        │
-                 └──────────────┘
-```
+| Data | Storage |
+|------|---------|
+| Workload / pool / claim / trigger definitions | Kubernetes API (CRDs) |
+| Running instances | Kubernetes Pods |
+| Per-workload config (Envoy, etc.) | ConfigMaps |
+| Credentials for injection | Kubernetes `Secret` resources |
+| Tenant overlay archives | `PersistentVolumeClaim` mounted by the snapshot helper Pod |
+| Leader election | `coordination.k8s.io/Lease` |
 
-## Local Disk
+## Snapshot PVC
 
-The default storage backend. Overlays are stored as files on the local filesystem.
+The operator expects a PVC named `boilerhouse-snapshots` in its namespace, mounted at `/snapshots` inside the `boilerhouse-snapshot-helper` Pod. The helper runs `tar`, `find`, and `cat` against this PVC on behalf of the operator and API.
 
-```bash
-export STORAGE_PATH=./data  # default
-```
-
-All overlay archives are stored under `STORAGE_PATH` in a hierarchical key structure:
+### Layout
 
 ```
-data/
-├── tenants/alice/wkl_abc/overlay.tar.gz
-├── tenants/bob/wkl_abc/overlay.tar.gz
-└── tenants/carol/wkl_xyz/overlay.tar.gz
+/snapshots/
+├── <tenantId>/
+│   ├── <workload>.tar.gz
+│   └── <other-workload>.tar.gz
+└── <another-tenantId>/
+    └── <workload>.tar.gz
 ```
 
-The disk cache uses LRU eviction to stay within configured size limits:
+Each archive is the `tar czf` output of the workload's `overlayDirs`.
 
-```bash
-export OVERLAY_CACHE_DIR=./cache     # separate cache directory
-export OVERLAY_CACHE_MAX_BYTES=10737418240  # 10 GB (default)
-```
+### Sizing
 
-When the cache exceeds `OVERLAY_CACHE_MAX_BYTES`, the least recently accessed entries are evicted.
+Size the PVC based on:
+- Expected number of active tenants
+- Average overlay size per tenant
+- Retention policy (currently: overlays persist until the tenant's next hibernation or manual cleanup)
 
-## S3 Backend
+### Storage Class
 
-For production, use S3-compatible storage for durability and shared access across nodes.
+The PVC can use any storage class the cluster supports. For production, use a storage class backed by a durable provider (EBS, GCP PD, Longhorn, etc.). For local development, minikube's default `standard` class works.
 
-```bash
-export S3_ENABLED=true
-export S3_BUCKET=my-boilerhouse-overlays
-export S3_REGION=us-east-1
-```
+Adjust the PVC spec in `config/deploy/` to match your cluster.
 
-### AWS S3
+## Secrets
 
-```bash
-export S3_ENABLED=true
-export S3_BUCKET=my-boilerhouse-overlays
-export S3_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=AKIA...
-export AWS_SECRET_ACCESS_KEY=...
-```
-
-### S3-Compatible (MinIO, R2, Tigris)
-
-```bash
-export S3_ENABLED=true
-export S3_BUCKET=boilerhouse
-export S3_REGION=auto
-export S3_ENDPOINT=http://localhost:9000  # MinIO
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
-```
-
-The S3 backend uses multipart upload for files larger than 5 MiB.
-
-## Tiered Storage
-
-When S3 is enabled, Boilerhouse automatically uses tiered storage:
-
-1. **Read path:** check local disk cache first, fall back to S3
-2. **Write path:** upload to S3, then cache locally
-3. **Eviction:** local cache uses LRU, S3 retains everything
-
-This gives you the durability of S3 with the performance of local reads. Concurrent requests for the same key are deduplicated — only one S3 download happens.
-
-```bash
-# Enable tiered storage
-export S3_ENABLED=true
-export S3_BUCKET=boilerhouse
-export OVERLAY_CACHE_DIR=./cache
-export OVERLAY_CACHE_MAX_BYTES=5368709120  # 5 GB local cache
-```
-
-## Encryption
-
-Overlay archives can be encrypted at rest. Encryption is controlled per-workload:
-
-```typescript
-filesystem: {
-  overlay_dirs: ["/workspace"],
-  encrypt_overlays: true,  // default
-}
-```
-
-### How It Works
-
-- **Algorithm:** AES-256-GCM
-- **Key derivation:** HKDF-SHA256 from the master secret + per-blob salt
-- **Format:** `[12-byte IV][ciphertext][16-byte auth tag]`
-- **Master key:** set via `BOILERHOUSE_SECRET_KEY` environment variable
-
-Each overlay archive gets a unique encryption key derived from the master key and the blob's storage key. The authentication tag ensures data integrity.
-
-### Configuration
-
-```bash
-# Required for encryption
-export BOILERHOUSE_SECRET_KEY=your-secret-key-here
-```
-
-Without `BOILERHOUSE_SECRET_KEY`, encryption is disabled and overlays are stored in plaintext even if `encrypt_overlays: true` is set in the workload.
-
-## What Gets Stored
-
-| Data Type | Storage Key Pattern | Description |
-|-----------|-------------------|-------------|
-| Tenant overlay | `tenants/{tenantId}/{workloadId}/overlay.tar.gz` | Tenant filesystem state |
-| Golden snapshot | `golden/{workloadId}/{snapshotId}` | Immutable workload reference |
-
-## Storage for Kubernetes
-
-The Kubernetes operator uses the same storage layer. Configure S3 credentials as environment variables on the operator Deployment, or mount them from a Kubernetes Secret:
+Workload credential injection references Kubernetes `Secret` resources in the operator's namespace:
 
 ```yaml
-env:
-  - name: S3_ENABLED
-    value: "true"
-  - name: S3_BUCKET
-    value: boilerhouse-overlays
-  - name: AWS_ACCESS_KEY_ID
-    valueFrom:
-      secretKeyRef:
-        name: boilerhouse-s3
-        key: access-key-id
+network:
+  credentials:
+    - domain: api.anthropic.com
+      headers:
+        - name: x-api-key
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-api
+              key: key
 ```
 
-## Development: MinIO
-
-The included `docker-compose.yml` provides a MinIO instance for local S3-compatible storage:
+Create secrets with `kubectl`:
 
 ```bash
-docker compose up -d minio
+kubectl -n boilerhouse create secret generic anthropic-api \
+  --from-literal=key="sk-ant-..."
 ```
 
-MinIO is available at `http://localhost:9000` with default credentials `minioadmin:minioadmin`.
+For production, integrate with External Secrets Operator, Vault CSI, or your cloud provider's secret manager — anything that projects secrets into the `boilerhouse` namespace.
+
+## What's No Longer Here
+
+The TypeScript implementation had a blob store with disk, S3, and encrypted-tiered backends; a SQLite database; and a per-tenant encrypted secret store. The Go rewrite replaced all of those with native Kubernetes primitives:
+
+| Old (TS) | New (Go) |
+|----------|---------|
+| SQLite + Drizzle ORM | Kubernetes API server |
+| `BlobStore` / `DiskCache` / S3 backend | `PersistentVolumeClaim` + snapshot helper Pod |
+| `BOILERHOUSE_SECRET_KEY` + AES-GCM overlay encryption | Disk encryption is the PVC's concern (cluster-level) |
+| Per-tenant secret store | Kubernetes `Secret` resources |
+
+If you need overlay encryption at rest, use a storage class that provides encryption (most cloud-backed ones do).

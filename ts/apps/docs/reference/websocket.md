@@ -1,130 +1,80 @@
 # WebSocket Events Reference
 
-Boilerhouse exposes a WebSocket endpoint for real-time domain events.
+The API server exposes a single WebSocket endpoint that streams Kubernetes resource change events to connected clients (primarily the dashboard).
 
 ## Connecting
-
-```
-ws://localhost:3000/ws?token=YOUR_API_KEY
-```
-
-If `BOILERHOUSE_API_KEY` is set, the `token` query parameter is required. Without it, the connection is rejected with `401`.
-
-If no API key is configured, connect without the token parameter:
 
 ```
 ws://localhost:3000/ws
 ```
 
+The `/ws` endpoint is outside the API auth middleware — the dashboard proxy doesn't forward `BOILERHOUSE_API_KEY`. If you need to protect it, run the API behind a reverse proxy that enforces auth at the edge.
+
 ## Protocol
 
-- **Direction:** server-to-client only. Client-to-server messages are ignored.
-- **Format:** Each message is a JSON-encoded domain event.
-- **Connection:** Standard WebSocket. Reconnect on disconnect — there is no message buffering.
+- **Direction:** server-to-client only. Client-to-server messages are drained but ignored (used to detect disconnect).
+- **Format:** each message is a JSON object.
+- **Buffering:** server writes with a 10-second deadline; there is no replay on reconnect.
+
+The server runs two watchers per connection:
+- A Pod watcher (filtered by `boilerhouse.dev/managed=true`)
+- A `BoilerhouseClaim` watcher (all claims in the namespace)
 
 ## Event Types
 
-All events have a `type` field identifying the event kind. Additional fields depend on the type.
+All events have a `type` field. Additional fields depend on the type.
 
-### Instance Events
+### `instance.state`
 
-#### `instance.transition`
-
-An instance changed status.
+A managed Pod was added, modified, or deleted.
 
 ```json
 {
-  "type": "instance.transition",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz",
-  "from": "starting",
-  "to": "active"
-}
-```
-
-### Tenant Events
-
-#### `tenant.claimed`
-
-A tenant claimed an instance.
-
-```json
-{
-  "type": "tenant.claimed",
-  "tenantId": "alice",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz",
-  "source": "pool"
-}
-```
-
-#### `tenant.released`
-
-A tenant's claim was released.
-
-```json
-{
-  "type": "tenant.released",
-  "tenantId": "alice",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz"
-}
-```
-
-### Idle Events
-
-#### `idle.timeout`
-
-An instance's idle timeout fired.
-
-```json
-{
-  "type": "idle.timeout",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz",
+  "type": "instance.state",
+  "name": "inst-alice-my-agent-a1b2c3",
+  "phase": "Running",
+  "workloadRef": "my-agent",
   "tenantId": "alice"
 }
 ```
 
-### Trigger Events
+`phase` is the Pod phase (`Pending`, `Running`, `Succeeded`, `Failed`, `Unknown`) or `"Deleted"` when the Pod is removed.
 
-#### `trigger.dispatched`
+### `pool.instance.ready`
 
-A trigger dispatched an event to a container.
+A pool Pod transitioned from `warming` to `ready` (based on the `boilerhouse.dev/pool-status` label).
 
 ```json
 {
-  "type": "trigger.dispatched",
-  "triggerId": "trg_abc",
-  "tenantId": "tg-alice",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz"
+  "type": "pool.instance.ready",
+  "name": "inst-my-agent-pool-x1y2z3",
+  "workloadRef": "my-agent"
 }
 ```
 
-### Pool Events
+### `tenant.claimed`
 
-#### `pool.acquired`
-
-An instance was acquired from a pool.
+A `BoilerhouseClaim` transitioned to phase `Active`.
 
 ```json
 {
-  "type": "pool.acquired",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz"
+  "type": "tenant.claimed",
+  "name": "claim-alice-my-agent",
+  "tenantId": "alice",
+  "workloadRef": "my-agent",
+  "source": "pool"
 }
 ```
 
-#### `pool.replenished`
+### `tenant.released`
 
-A new instance was added to a pool.
+A claim transitioned to phase `Released` or was deleted.
 
 ```json
 {
-  "type": "pool.replenished",
-  "instanceId": "inst_def456",
-  "workloadId": "wkl_xyz"
+  "type": "tenant.released",
+  "name": "claim-alice-my-agent",
+  "tenantId": "alice"
 }
 ```
 
@@ -133,7 +83,7 @@ A new instance was added to a pool.
 ### JavaScript
 
 ```javascript
-const ws = new WebSocket("ws://localhost:3000/ws?token=my-key");
+const ws = new WebSocket("ws://localhost:3000/ws");
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
@@ -141,13 +91,16 @@ ws.onmessage = (event) => {
 };
 
 ws.onclose = () => {
-  // Reconnect after delay
-  setTimeout(() => connect(), 1000);
+  setTimeout(connect, 1000);
 };
 ```
 
 ### CLI (wscat)
 
 ```bash
-npx wscat -c "ws://localhost:3000/ws?token=my-key"
+npx wscat -c ws://localhost:3000/ws
 ```
+
+## Notes on Reconnection
+
+Neither the server nor the Kubernetes watch API replays events from a historical point. On reconnect, do a snapshot `GET` (`/api/v1/instances`, `/api/v1/tenants`) to rebuild current state, then resume streaming from the WebSocket. The dashboard implements this pattern.

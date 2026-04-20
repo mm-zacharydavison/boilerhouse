@@ -2,13 +2,13 @@
 
 Complete reference for Boilerhouse Kubernetes Custom Resource Definitions.
 
-All resources use API group `boilerhouse.dev` and version `v1alpha1`.
+All resources use API group `boilerhouse.dev` and version `v1alpha1`. The authoritative schemas are generated from `go/api/v1alpha1/*_types.go` and live in `config/crd/bases-go/`.
 
 ---
 
 ## BoilerhouseWorkload
 
-Defines a container workload — image, resources, network, health checks, and idle policy.
+Short name: `bhw`. Defines a container workload — image, resources, network, health checks, and idle policy.
 
 ```yaml
 apiVersion: boilerhouse.dev/v1alpha1
@@ -30,12 +30,15 @@ spec:
       - api.anthropic.com
     expose:
       - guest: 8080
-        hostRange: [30000, 30099]
     websocket: /ws
     credentials:
       - domain: api.anthropic.com
         headers:
-          x-api-key: secret:ANTHROPIC_API_KEY
+          - name: x-api-key
+            valueFrom:
+              secretKeyRef:
+                name: anthropic-api
+                key: key
   filesystem:
     overlayDirs:
       - /workspace
@@ -48,7 +51,6 @@ spec:
   health:
     intervalSeconds: 5
     unhealthyThreshold: 10
-    checkTimeoutSeconds: 120
     httpGet:
       path: /health
       port: 8080
@@ -66,47 +68,52 @@ spec:
 |-------|------|----------|-------------|
 | `version` | string | yes | Workload version |
 | `image.ref` | string | yes* | OCI image reference |
-| `image.dockerfile` | string | yes* | Dockerfile path (mutually exclusive with `ref`) |
+| `image.dockerfile` | string | yes* | Dockerfile path relative to `WORKLOADS_DIR` (mutually exclusive with `ref`) |
 | `resources.vcpus` | integer | yes | CPU cores |
-| `resources.memoryMb` | integer | yes | Memory in MB |
-| `resources.diskGb` | integer | no | Disk in GB (default: 2) |
-| `network.access` | string | yes | `none`, `unrestricted`, or `restricted` |
+| `resources.memoryMb` | integer | yes | Memory in megabytes |
+| `resources.diskGb` | integer | yes | Scratch disk in gigabytes |
+| `network.access` | string | no | `none`, `restricted`, or `unrestricted` |
 | `network.allowlist` | string[] | no | Allowed domains (for `restricted`) |
 | `network.expose` | array | no | Port exposures |
-| `network.expose[].guest` | integer | yes | Container port |
-| `network.expose[].hostRange` | [int, int] | yes | Host port range |
+| `network.expose[].guest` | integer | no | Container port |
 | `network.websocket` | string | no | WebSocket path |
 | `network.credentials` | array | no | Per-domain credential injection |
-| `network.credentials[].domain` | string | yes | Target domain |
-| `network.credentials[].headers` | map | yes | Headers to inject |
-| `filesystem.overlayDirs` | string[] | no | Directories to persist |
-| `filesystem.encryptOverlays` | boolean | no | Encrypt at rest (default: true) |
-| `idle.timeoutSeconds` | integer | no | Idle timeout |
-| `idle.action` | string | no | `hibernate` or `destroy` (default: hibernate) |
-| `idle.watchDirs` | string[] | no | Directories to monitor for activity |
-| `health.intervalSeconds` | integer | yes | Probe interval |
-| `health.unhealthyThreshold` | integer | yes | Failure count |
-| `health.checkTimeoutSeconds` | integer | no | Total timeout (default: 60) |
-| `health.httpGet.path` | string | yes* | HTTP probe path |
+| `network.credentials[].domain` | string | no | Target domain |
+| `network.credentials[].headers` | array | no | Headers to inject |
+| `network.credentials[].headers[].name` | string | yes | HTTP header name |
+| `network.credentials[].headers[].value` | string | no | Literal header value |
+| `network.credentials[].headers[].valueFrom.secretKeyRef.name` | string | yes | Kubernetes Secret name |
+| `network.credentials[].headers[].valueFrom.secretKeyRef.key` | string | yes | Key within the Secret |
+| `filesystem.overlayDirs` | string[] | no | Directories to persist across hibernation |
+| `filesystem.encryptOverlays` | bool | no | Reserved (storage-class level encryption in practice) |
+| `idle.timeoutSeconds` | integer | no | Idle timeout before hibernation/destroy |
+| `idle.action` | string | no | `hibernate` or `destroy` |
+| `idle.watchDirs` | string[] | no | Directories whose mtime changes reset the idle timer |
+| `health.intervalSeconds` | integer | no | Readiness probe interval |
+| `health.unhealthyThreshold` | integer | no | Failure count before unhealthy |
+| `health.httpGet.path` | string | no | HTTP probe path |
 | `health.httpGet.port` | integer | no | HTTP probe port |
-| `health.exec.command` | string[] | yes* | Exec probe command |
-| `entrypoint.cmd` | string | no | Override command |
+| `health.exec.command` | string[] | no | Exec probe command |
+| `entrypoint.cmd` | string | no | Override container command |
 | `entrypoint.args` | string[] | no | Command arguments |
 | `entrypoint.workdir` | string | no | Working directory |
 | `entrypoint.env` | map | no | Environment variables |
+
+\* Exactly one of `image.ref` / `image.dockerfile` must be set.
 
 ### Status
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `phase` | string | `Creating`, `Ready`, or `Error` |
+| `detail` | string | Human-readable phase detail |
 | `observedGeneration` | integer | Last reconciled generation |
 
 ---
 
 ## BoilerhousePool
 
-Maintains a set of pre-warmed instances for a workload.
+Short name: `bhp`. Maintains a set of pre-warmed Pods for a workload.
 
 ```yaml
 apiVersion: boilerhouse.dev/v1alpha1
@@ -125,8 +132,8 @@ spec:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `workloadRef` | string | yes | Name of the BoilerhouseWorkload to pool |
-| `size` | integer | yes | Number of warm instances to maintain |
-| `maxFillConcurrency` | integer | no | Max parallel instance creations (default: 2) |
+| `size` | integer | yes | Number of warm instances to maintain (min 0) |
+| `maxFillConcurrency` | integer | no | Max parallel instance creations (min 1) |
 
 ### Status
 
@@ -140,19 +147,23 @@ spec:
 
 ## BoilerhouseClaim
 
-Represents a tenant's claim on an instance. Create a Claim to allocate an instance; delete it to release.
+Short name: `bhc`. Represents a tenant's claim on an instance. Create a Claim to allocate a Pod; delete it to release.
 
 ```yaml
 apiVersion: boilerhouse.dev/v1alpha1
 kind: BoilerhouseClaim
 metadata:
-  name: alice-my-agent
+  name: claim-alice-my-agent
   namespace: boilerhouse
+  labels:
+    boilerhouse.dev/tenant: alice
 spec:
   tenantId: alice
   workloadRef: my-agent
   resume: true
 ```
+
+Claim name convention: `claim-<tenantId>-<workloadRef>`.
 
 ### Spec Fields
 
@@ -160,35 +171,33 @@ spec:
 |-------|------|----------|-------------|
 | `tenantId` | string | yes | Tenant identifier |
 | `workloadRef` | string | yes | Name of the BoilerhouseWorkload |
-| `resume` | boolean | no | Restore tenant's previous overlay data (default: false) |
+| `resume` | boolean | no | Restore tenant's previous overlay data |
 
 ### Status
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `phase` | string | `Pending`, `Active`, `Releasing`, `Released`, or `Error` |
-| `instanceId` | string | Allocated instance ID |
-| `source` | string | How the instance was provisioned: `existing`, `cold`, `cold+data`, `pool`, `pool+data` |
-| `endpoint.host` | string | Pod IP or forwarded host |
+| `phase` | string | `Pending`, `Active`, `Releasing`, `Released`, `ReleaseFailed`, or `Error` |
+| `instanceId` | string | Name of the Pod assigned to this claim |
+| `endpoint.host` | string | Pod IP or Service host |
 | `endpoint.port` | integer | Service port |
-| `claimedAt` | string | ISO 8601 timestamp |
-| `message` | string | Error message (when phase is Error) |
+| `source` | string | How the instance was provisioned: `existing`, `cold`, `cold+data`, `pool`, `pool+data` |
+| `claimedAt` | string | Timestamp the claim reached `Active` |
+| `detail` | string | Human-readable phase detail |
 
 ### Lifecycle
 
 1. **Create** the Claim resource
 2. Operator sets phase to `Pending`, then allocates an instance
 3. Phase transitions to `Active` with endpoint details
-4. **Delete** the Claim resource to release
-5. Operator extracts overlay, hibernates/destroys instance, sets phase to `Released`
-
-Idle timeout also releases claims — the operator annotates the claim and transitions to `Released`.
+4. **Delete** the Claim resource to release (or rely on idle timeout)
+5. Operator extracts overlay, destroys the Pod, sets phase to `Released`
 
 ---
 
 ## BoilerhouseTrigger
 
-Connects external events to tenant claims.
+Short name: `bht`. Connects external events to tenant claims.
 
 ```yaml
 apiVersion: boilerhouse.dev/v1alpha1
@@ -197,19 +206,20 @@ metadata:
   name: tg-my-agent
   namespace: boilerhouse
 spec:
-  type: telegram-poll
+  type: telegram
   workloadRef: my-agent
   tenant:
     from: usernameOrId
     prefix: "tg-"
-  driver: "@boilerhouse/driver-claude-code"
-  driverOptions: {}
+  driver: claude-code
   guards:
     - type: allowlist
       config:
         tenantIds: ["tg-alice", "tg-bob"]
   config:
-    botToken: "${TELEGRAM_BOT_TOKEN}"
+    botTokenSecretRef:
+      name: telegram-bot-token
+      key: token
     updateTypes: ["message"]
     pollTimeoutSeconds: 30
 ```
@@ -218,32 +228,28 @@ spec:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | yes | `webhook`, `slack`, `telegram-poll`, or `cron` |
+| `type` | string | yes | `webhook`, `slack`, `telegram`, or `cron` |
 | `workloadRef` | string | yes | Target workload name |
+| `tenant.static` | string | yes* | Static tenant ID |
 | `tenant.from` | string | yes* | Field to extract tenant ID from |
 | `tenant.prefix` | string | no | Prefix for extracted tenant ID |
-| `tenant.static` | string | yes* | Static tenant ID (mutually exclusive with `from`) |
-| `driver` | string | no | Protocol driver package |
-| `driverOptions` | map | no | Driver configuration |
+| `driver` | string | no | Protocol driver (`claude-code`, `openclaw`, or unset for plain HTTP) |
+| `driverOptions` | map | no | Driver configuration (free-form) |
 | `guards` | array | no | Authorization guard chain |
-| `guards[].type` | string | yes | Guard type (`allowlist`, `api`) |
-| `guards[].config` | map | yes | Guard configuration |
-| `config` | map | yes | Adapter-specific configuration (see [Trigger Schema](./trigger-schema)) |
+| `guards[].type` | string | no | Guard type (`allowlist`, `api`) |
+| `guards[].config` | map | no | Guard configuration (free-form) |
+| `config` | map | no | Adapter-specific configuration (see [Trigger Schema](./trigger-schema)) |
+
+\* Exactly one of `tenant.static` / `tenant.from` must be set.
 
 ### Status
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `phase` | string | `Active` or `Error` |
-| `message` | string | Error details |
+| `detail` | string | Human-readable phase detail |
 
 ---
-
-## Finalizers
-
-All Boilerhouse CRDs use the finalizer `boilerhouse.dev/cleanup`. This ensures the operator can clean up associated resources (Pods, Services, database rows) before the Kubernetes resource is deleted.
-
-Do not remove the finalizer manually unless you're debugging a stuck deletion.
 
 ## Labels
 
@@ -252,6 +258,13 @@ The operator labels managed resources with:
 | Label | Value |
 |-------|-------|
 | `boilerhouse.dev/managed` | `true` |
-| `boilerhouse.dev/workload` | workload name |
-| `boilerhouse.dev/instance` | instance ID |
-| `boilerhouse.dev/pool` | pool name (pool instances only) |
+| `boilerhouse.dev/workload` | Workload name |
+| `boilerhouse.dev/tenant` | Tenant ID (claimed Pods only) |
+| `boilerhouse.dev/pool` | Pool name (pool Pods only) |
+| `boilerhouse.dev/pool-status` | `warming` or `ready` (pool Pods only) |
+
+## Annotations
+
+| Annotation | Where | Meaning |
+|------------|-------|---------|
+| `boilerhouse.dev/last-activity` | `BoilerhouseClaim` | Timestamp of the most recent API activity — used by the idle monitor |

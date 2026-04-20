@@ -1,60 +1,54 @@
 # Observability
 
-Boilerhouse provides structured logging, Prometheus metrics, and OpenTelemetry distributed tracing.
+All three Boilerhouse binaries (operator, API, trigger gateway) emit structured logs, OpenTelemetry metrics, and OpenTelemetry traces through the shared `go/internal/o11y` package.
 
 ## Logging
 
-Boilerhouse uses [Pino](https://github.com/pinojs/pino) for structured JSON logging.
+Boilerhouse uses Go's standard `log/slog` for structured JSON logging.
 
 ### Log Levels
 
 ```bash
-export LOG_LEVEL=info  # trace, debug, info, warn, error, fatal
+export LOG_LEVEL=info  # debug, info, warn, error
 ```
 
 ### Log Format
 
-Logs include contextual fields:
+Logs are JSON with contextual fields:
 
 ```json
 {
-  "level": 30,
-  "time": 1705312200000,
-  "msg": "Tenant claimed",
+  "time": "2026-04-20T10:30:00Z",
+  "level": "INFO",
+  "msg": "tenant claimed",
   "tenantId": "alice",
-  "instanceId": "inst_abc123",
-  "workloadId": "wkl_xyz",
-  "source": "pool",
-  "latencyMs": 450
+  "instanceId": "inst-alice-my-agent-a1b2c3",
+  "workloadRef": "my-agent",
+  "source": "pool"
 }
 ```
 
-In development, Pino pretty-prints logs. In production (when `NODE_ENV=production`), logs are emitted as JSON for log aggregation.
-
-### Bootstrap Logs
-
-Workload startup logs are captured separately and available via:
-
-```bash
-curl http://localhost:3000/api/v1/workloads/my-agent/logs
-```
-
-These are useful for debugging workload image build or startup failures.
+The controller-runtime operator uses `zap` in dev mode for human-readable logs during development and JSON in production.
 
 ## Metrics
 
-Boilerhouse exposes Prometheus metrics on a dedicated port.
+Each binary exposes Prometheus metrics on a dedicated port.
 
 ### Configuration
 
 ```bash
-export METRICS_PORT=9464     # default
-export METRICS_HOST=127.0.0.1  # default
+# Operator
+export METRICS_PORT=9464  # default
+
+# API / trigger
+# metrics served on the same port as the /metrics route
 ```
 
-Scrape metrics at `http://localhost:9464/metrics`.
+Scrape metrics at `http://<binary>:<port>/metrics`.
 
 ### Available Metrics
+
+Metrics are grouped into categories. The operator emits most of them; the API and trigger gateway emit the HTTP and dispatch metrics.
 
 #### Tenant Metrics
 
@@ -69,17 +63,17 @@ Scrape metrics at `http://localhost:9464/metrics`.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `boilerhouse.instances` | Gauge | status | Instance count by status |
+| `boilerhouse.instances` | Gauge | phase | Pod count by phase |
 | `boilerhouse.instance.transitions` | Counter | from, to, workload | State transitions |
-| `boilerhouse.instance.transition.duration` | Histogram | workload | Time from starting to ready |
+| `boilerhouse.instance.transition.duration` | Histogram | workload | Time from Pending to Running |
 | `boilerhouse.idle.timeouts` | Counter | workload | Idle timeout events |
 
 #### Pool Metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `boilerhouse.pool.depth` | Gauge | workload | Ready instances in pool |
-| `boilerhouse.pool.cold_start.duration` | Histogram | workload | Time to create a pool instance |
+| `boilerhouse.pool.depth` | Gauge | workload | Ready Pods in pool |
+| `boilerhouse.pool.cold_start.duration` | Histogram | workload | Time to warm a new pool Pod |
 
 #### Snapshot Metrics
 
@@ -87,15 +81,6 @@ Scrape metrics at `http://localhost:9464/metrics`.
 |--------|------|--------|-------------|
 | `boilerhouse.snapshot.creates` | Counter | workload | Snapshot creations |
 | `boilerhouse.snapshot.create.duration` | Histogram | workload | Snapshot creation time |
-| `boilerhouse.snapshot.disk.total` | Gauge | workload, type | Total snapshot storage bytes |
-| `boilerhouse.snapshot.count` | Gauge | workload, type | Number of snapshots |
-
-#### Health Check Metrics
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `boilerhouse.healthcheck.duration` | Histogram | workload | Time until healthy |
-| `boilerhouse.healthcheck.failures` | Counter | workload | Failed health checks |
 
 #### Trigger Metrics
 
@@ -103,24 +88,6 @@ Scrape metrics at `http://localhost:9464/metrics`.
 |--------|------|--------|-------------|
 | `boilerhouse.trigger.dispatches` | Counter | type, outcome | Trigger dispatch events |
 | `boilerhouse.trigger.dispatch.duration` | Histogram | type | Dispatch processing time |
-
-#### Capacity Metrics
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `boilerhouse.node.capacity.max` | Gauge | node | Maximum instances per node |
-| `boilerhouse.node.capacity.used` | Gauge | node | Current instances per node |
-
-#### System Metrics
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `boilerhouse.system.cpus` | Gauge | — | Logical CPU count |
-| `boilerhouse.system.mem.capacity` | Gauge | — | Total memory bytes |
-| `boilerhouse.system.mem.available` | Gauge | — | Available memory bytes |
-| `boilerhouse.system.cpu.usage` | Gauge | — | CPU usage (0.0-1.0) |
-| `boilerhouse.container.cpu` | Gauge | instance | Per-container CPU |
-| `boilerhouse.container.mem` | Gauge | instance | Per-container memory |
 
 #### HTTP Metrics
 
@@ -137,7 +104,7 @@ Scrape metrics at `http://localhost:9464/metrics`.
 
 ## Tracing
 
-Boilerhouse supports OpenTelemetry distributed tracing via OTLP export.
+Boilerhouse exports OpenTelemetry traces via OTLP.
 
 ### Configuration
 
@@ -156,66 +123,40 @@ Spans are created for:
 | `HTTP {method} {route}` | Every HTTP request |
 | `tenant.claim` | Tenant claim operation (includes source, instance ID) |
 | `tenant.release` | Tenant release operation |
+| `reconcile.<crd>` | Controller reconcile invocations |
 
 Span attributes include `tenant.id`, `workload.id`, `instance.id`, `claim.source`, and error details when applicable.
 
 ### Route Normalization
 
 HTTP routes are normalized in traces to avoid high cardinality:
-- UUIDs are replaced with `:id`
-- Numeric path segments are replaced with `:id`
-- Example: `/api/v1/instances/abc-123-def/logs` becomes `/api/v1/instances/:id/logs`
-
-## Activity Log
-
-Boilerhouse maintains a persistent audit trail of lifecycle events in the database:
-
-```bash
-curl http://localhost:3000/api/v1/audit?limit=50
-```
-
-```json
-[
-  {
-    "id": 42,
-    "event": "tenant.claimed",
-    "instanceId": "inst_abc123",
-    "workloadId": "wkl_xyz",
-    "tenantId": "alice",
-    "metadata": { "source": "pool" },
-    "createdAt": "2024-01-15T10:30:00.000Z"
-  }
-]
-```
-
-Filter by instance, tenant, workload, or event type:
-
-```bash
-curl "http://localhost:3000/api/v1/audit?tenantId=alice&event=tenant.claimed"
-```
+- Path parameters (`{id}`, `{name}`) are kept as templates, e.g. `/api/v1/instances/{id}/logs`
 
 ## Real-time Events
 
-Connect via WebSocket to receive domain events in real time:
+The API's WebSocket endpoint streams Pod and Claim changes in real time, consumed primarily by the dashboard:
 
 ```bash
-wscat -c "ws://localhost:3000/ws?token=YOUR_API_KEY"
+wscat -c "ws://localhost:3000/ws"
 ```
 
-Events include state transitions, claims, releases, idle timeouts, trigger dispatches, and health check results.
+See [WebSocket Events](../reference/websocket) for the event schema.
 
-## Observability Stack
+## Kubernetes-Native Views
 
-The repository includes a Docker Compose file for a local observability stack:
+Because all state lives in the Kubernetes API, you can observe Boilerhouse with standard kubectl:
 
 ```bash
-docker compose up -d prometheus grafana tempo
+# Watch claim phase transitions live
+kubectl get boilerhouseclaims -n boilerhouse -w
+
+# Watch pool fill progress
+kubectl get boilerhousepools -n boilerhouse -w
+
+# See raw events (useful for failure modes)
+kubectl get events -n boilerhouse --sort-by=.lastTimestamp
 ```
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| Prometheus | `http://localhost:9090` | Metrics collection and querying |
-| Grafana | `http://localhost:3001` | Dashboards and visualization |
-| Tempo | `http://localhost:3200` | Distributed trace storage |
+## Observability Stack (Local Dev)
 
-Prometheus is pre-configured to scrape `http://localhost:9464/metrics`. Grafana has Prometheus and Tempo as pre-configured data sources.
+A reference Compose file for a local observability stack is not currently shipped with the Go rewrite. To set one up for development, run Prometheus, Grafana, and Tempo separately and point `OTEL_EXPORTER_OTLP_ENDPOINT` at your local collector.

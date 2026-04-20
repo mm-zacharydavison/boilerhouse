@@ -6,55 +6,51 @@ Boilerhouse provides fine-grained control over container network access, from fu
 
 Every workload declares its network access level:
 
-```typescript
-network: {
-  access: "none" | "unrestricted" | "restricted"
-}
+```yaml
+network:
+  access: none | restricted | unrestricted
 ```
+
+The operator translates this into a `NetworkPolicy` attached to the Pod.
 
 ### `none`
 
-The container has no network access at all. No outbound connections, no DNS resolution, no exposed ports.
+The Pod has no network egress at all. No outbound connections, no DNS resolution, no exposed ports.
 
-```typescript
-network: { access: "none" }
+```yaml
+network:
+  access: none
 ```
 
-**Docker:** Container runs with `NetworkMode: "none"`.  
-**Kubernetes:** A NetworkPolicy denies all egress.
+The operator generates a NetworkPolicy that denies all egress from the Pod.
 
 Use for: sandboxed code execution, untrusted workloads, workloads that only need local filesystem access.
 
 ### `unrestricted`
 
-The container has full outbound internet access. Cloud metadata endpoints (169.254.0.0/16) are blocked to prevent credential leakage.
+The Pod has full outbound internet access. Cloud metadata endpoints (169.254.0.0/16) are blocked to prevent credential leakage.
 
-```typescript
-network: { access: "unrestricted" }
+```yaml
+network:
+  access: unrestricted
 ```
 
-**Docker:** Bridge network with iptables blocking metadata.  
-**Kubernetes:** NetworkPolicy allows all egress except link-local addresses.
+The NetworkPolicy allows all egress except link-local addresses.
 
 Use for: workloads that need broad internet access and you trust the code running inside.
 
 ### `restricted`
 
-The container can only reach domains on the allowlist. All other outbound traffic is blocked. An Envoy sidecar proxy enforces the restrictions.
+The Pod can only reach domains on the allowlist. DNS and HTTPS are allowed at the NetworkPolicy layer, and an Envoy sidecar (when credential injection is configured) enforces domain-level filtering and header injection.
 
-```typescript
-network: {
-  access: "restricted",
-  allowlist: [
-    "api.anthropic.com",
-    "registry.npmjs.org",
-    "github.com",
-  ],
-}
+```yaml
+network:
+  access: restricted
+  allowlist:
+    - api.anthropic.com
+    - registry.npmjs.org
+    - github.com
 ```
-
-**Docker:** Bridge network + Envoy sidecar container + iptables redirect.  
-**Kubernetes:** NetworkPolicy allows only DNS + HTTPS. Envoy sidecar in the Pod enforces domain-level filtering.
 
 Use for: AI agents, sandboxed environments where you want controlled internet access.
 
@@ -62,99 +58,100 @@ Use for: AI agents, sandboxed environments where you want controlled internet ac
 
 The allowlist specifies which domains the container can reach:
 
-```typescript
-allowlist: [
-  "api.anthropic.com",
-  "*.github.com",        // wildcard subdomains
-  "registry.npmjs.org",
-]
+```yaml
+allowlist:
+  - api.anthropic.com
+  - "*.github.com"          # wildcard subdomains
+  - registry.npmjs.org
 ```
 
-The Envoy sidecar intercepts all outbound HTTPS traffic and only forwards requests to allowed domains. Requests to non-allowed domains are rejected.
+When the Envoy sidecar is present (i.e., the workload has `credentials`), it intercepts all outbound HTTPS traffic and only forwards requests to allowed domains. Requests to non-allowed domains are rejected.
 
-DNS resolution is allowed (port 53) so the container can resolve hostnames.
+DNS resolution is always allowed (port 53) so the container can resolve hostnames.
 
 ## Credential Injection
 
 Inject API keys and authentication headers into outbound requests without exposing them to the container:
 
-```typescript
-import { secret } from "@boilerhouse/core";
+```yaml
+network:
+  access: restricted
+  allowlist:
+    - api.anthropic.com
+  credentials:
+    - domain: api.anthropic.com
+      headers:
+        - name: x-api-key
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-api
+              key: key
+```
 
-network: {
-  access: "restricted",
-  allowlist: ["api.anthropic.com"],
-  credentials: [{
-    domain: "api.anthropic.com",
-    headers: {
-      "x-api-key": secret("ANTHROPIC_API_KEY"),
-    },
-  }],
-}
+Create the referenced Secret in the operator's namespace:
+
+```bash
+kubectl -n boilerhouse create secret generic anthropic-api \
+  --from-literal=key="sk-ant-..."
 ```
 
 ### How It Works
 
-1. The Envoy sidecar generates a self-signed CA certificate
-2. For each credential domain, a leaf TLS certificate is generated
-3. The sidecar acts as a MITM TLS proxy for those domains
-4. Outbound HTTPS requests to `api.anthropic.com` are intercepted
-5. The `x-api-key` header is injected into the request
-6. The request is forwarded to the real destination
+1. The operator generates a self-signed CA certificate per workload
+2. For each credential domain, a leaf TLS certificate is generated and stored in a ConfigMap
+3. Envoy (running as a sidecar in the Pod) acts as a MITM TLS proxy for those domains
+4. The operator injects the CA into the container's trust store and sets `https_proxy`
+5. Outbound HTTPS requests to `api.anthropic.com` are intercepted
+6. The `x-api-key` header is injected into the request
+7. The request is forwarded to the real destination
 
-The container sees `http://api.anthropic.com` (the sidecar handles TLS) and the API key is never exposed inside the container.
+The container never sees the key — it sees `http://api.anthropic.com` routed through the sidecar, and the sidecar holds the real credential.
 
-### Secret References
+### Inline Values
 
-The `secret()` function references a secret stored in Boilerhouse:
+For non-secret headers, use `value` directly instead of `valueFrom`:
 
-```typescript
-// In the workload definition
-headers: { "x-api-key": secret("ANTHROPIC_API_KEY") }
+```yaml
+credentials:
+  - domain: api.example.com
+    headers:
+      - name: x-client-id
+        value: public-client-id
+      - name: x-api-key
+        valueFrom:
+          secretKeyRef:
+            name: example-api
+            key: secret
 ```
-
-Store the actual secret value via the API:
-
-```bash
-curl -X PUT http://localhost:3000/api/v1/tenants/alice/secrets/ANTHROPIC_API_KEY \
-  -H "Content-Type: application/json" \
-  -d '{"value": "sk-ant-..."}'
-```
-
-Per-tenant secrets allow each tenant to use their own API key with the same workload definition.
 
 ## Port Exposure
 
-Expose container ports to the outside:
+Expose container ports so claims can return an endpoint:
 
-```typescript
-network: {
-  access: "restricted",
-  expose: [{
-    guest: 8080,
-    host_range: [30000, 30099],
-  }],
-}
+```yaml
+network:
+  access: restricted
+  expose:
+    - guest: 8080
 ```
 
-| Field | Description |
-|-------|-------------|
-| `guest` | Port inside the container |
-| `host_range` | `[min, max]` range for the host port. Boilerhouse picks an available port. |
-
-The mapped port is returned in the claim response:
+`guest` is the port inside the container. The operator creates a `ClusterIP` Service routing to the Pod. Claim responses include the Service address:
 
 ```json
 {
-  "endpoint": { "host": "127.0.0.1", "ports": [30042] }
+  "endpoint": { "host": "10.244.0.12", "port": 8080 }
 }
 ```
 
-On Kubernetes, exposed ports create a ClusterIP Service. For minikube development, `kubectl port-forward` maps the port to localhost.
+For external access, add a `LoadBalancer` or `Ingress` in front of the Service, or use `kubectl port-forward` for local development:
+
+```bash
+kubectl port-forward -n boilerhouse svc/<service-name> 8080:8080
+```
 
 ## Envoy Sidecar
 
-The Envoy sidecar is the enforcement mechanism for `restricted` network access and credential injection.
+The Envoy sidecar is the enforcement mechanism for credential injection on `restricted` workloads.
 
 ### What It Does
 
@@ -162,57 +159,45 @@ The Envoy sidecar is the enforcement mechanism for `restricted` network access a
 - Filters requests against the domain allowlist
 - Performs MITM TLS termination for credential injection domains
 - Injects configured headers into matching requests
-- Logs all proxied requests
 
-### When It's Used
+### When It's Added
 
-The sidecar is added automatically when:
-- `network.access` is `"restricted"` AND the workload has `credentials`, OR
-- the workload needs domain-level filtering with credential injection
-
-For `restricted` access without credentials, NetworkPolicies (K8s) or iptables rules (Docker) handle the filtering without a sidecar.
+The sidecar is injected into the Pod when the workload has `credentials` configured. For `restricted` access without credentials, the NetworkPolicy alone enforces filtering (at the port/host level, not per-domain).
 
 ### TLS Certificates
 
-The sidecar generates:
-- A self-signed CA certificate (EC prime256v1)
+The operator generates:
+- A self-signed CA certificate per workload (EC prime256v1)
 - Per-domain leaf certificates signed by the CA
-- Certificates are stored in a ConfigMap (K8s) or temp directory (Docker)
+- Certificates are stored in a ConfigMap mounted into the sidecar
 
-The CA certificate is injected into the container's trust store so the container trusts the sidecar's certificates.
+The CA certificate is projected into the container's trust store via `/etc/ssl/certs` so the container trusts the sidecar's certificates.
 
 ## Container Security
 
-Beyond network isolation, Boilerhouse applies defense-in-depth security:
+Beyond network isolation, the operator applies a hardened Pod security context:
 
 ### Linux Capabilities
 
 All capabilities are dropped by default:
 
-```
-CAP_DROP: ALL
+```yaml
+securityContext:
+  capabilities:
+    drop: [ALL]
 ```
 
 No capabilities are re-added unless required by the workload.
 
-### Seccomp Profiles
-
-Apply a custom seccomp profile to restrict system calls:
-
-```bash
-export SECCOMP_PROFILE_PATH=/path/to/seccomp.json
-```
-
 ### Privilege Escalation
 
-- `no_new_privileges: true` prevents setuid/setgid binaries from gaining elevated privileges
-- `allowPrivilegeEscalation: false` (Kubernetes)
-- `readOnlyRootFilesystem: true` (Kubernetes) — only overlay directories are writable
+- `allowPrivilegeEscalation: false` prevents setuid/setgid binaries from gaining elevated privileges
+- `runAsNonRoot: true` is applied when the image supports it
 
 ### Resource Limits
 
-CPU, memory, and disk limits are enforced at the runtime level. Containers cannot exceed their declared resource allocation.
+`resources.vcpus`, `resources.memoryMb`, and `resources.diskGb` are enforced as Pod resource requests/limits. Pods cannot exceed their declared resource allocation.
 
 ### Metadata Server Blocking
 
-Cloud metadata endpoints (169.254.0.0/16) are blocked for all containers with network access. This prevents containers from accessing cloud instance credentials on AWS, GCP, or Azure hosts.
+Cloud metadata endpoints (169.254.0.0/16) are blocked by the generated NetworkPolicy for all access modes except `none` (which blocks everything anyway). This prevents Pods from accessing cloud instance credentials on AWS, GCP, or Azure nodes.

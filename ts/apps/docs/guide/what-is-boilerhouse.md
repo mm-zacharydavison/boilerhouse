@@ -1,6 +1,6 @@
 # What is Boilerhouse?
 
-Boilerhouse is a multi-tenant container orchestration platform. It lets you run isolated, on-demand containers for individual tenants — spinning them up when needed, hibernating them when idle, and restoring them with full state on the next request.
+Boilerhouse is a Kubernetes-native, multi-tenant container orchestration platform. It lets you run isolated, on-demand containers for individual tenants — spinning them up when needed, hibernating them when idle, and restoring them with full state on the next request.
 
 It was built for running AI agents (Claude Code, OpenClaw, Pi) in isolated containers, but works for any workload where you need per-tenant container isolation with lifecycle management.
 
@@ -12,9 +12,9 @@ You want to give each user their own container. Maybe it's a coding agent, a san
 - **State persistence** — when a user leaves, their work is saved; when they return, it's restored
 - **Fast startup** — users shouldn't wait 30 seconds for a cold boot
 - **Cost efficiency** — idle containers should be shut down, not left running
-- **Multi-runtime** — deploy to Docker on a single host or Kubernetes at scale
+- **Declarative configuration** — workloads, pools, and triggers defined as Kubernetes resources and reconciled by an operator
 
-Boilerhouse handles all of this with a single API.
+Boilerhouse handles all of this on top of Kubernetes.
 
 ## How It Works
 
@@ -22,40 +22,49 @@ The core flow has five steps:
 
 ### 1. Define a Workload
 
-A workload is a TypeScript file that describes your container — its image, resources, network rules, health checks, and idle policy.
+A workload is a `BoilerhouseWorkload` Custom Resource that describes your container — its image, resources, network rules, health checks, and idle policy.
 
-```typescript
-import { defineWorkload } from "@boilerhouse/core";
-
-export default defineWorkload({
-  name: "my-agent",
-  version: "1.0.0",
-  image: { ref: "my-registry/my-agent:latest" },
-  resources: { vcpus: 2, memory_mb: 2048 },
-  network: { access: "restricted", allowlist: ["api.openai.com"] },
-  idle: { timeout_seconds: 300, action: "hibernate" },
-  filesystem: { overlay_dirs: ["/workspace"] },
-  health: {
-    interval_seconds: 5,
-    unhealthy_threshold: 3,
-    http_get: { path: "/health", port: 8080 },
-  },
-});
+```yaml
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: my-agent
+  namespace: boilerhouse
+spec:
+  version: "1.0.0"
+  image:
+    ref: my-registry/my-agent:latest
+  resources:
+    vcpus: 2
+    memoryMb: 2048
+    diskGb: 10
+  network:
+    access: restricted
+    allowlist: ["api.openai.com"]
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  filesystem:
+    overlayDirs: ["/workspace"]
+  health:
+    intervalSeconds: 5
+    unhealthyThreshold: 3
+    httpGet:
+      path: /health
+      port: 8080
 ```
 
-### 2. Register the Workload
-
-Register it with the API, or place the file in your workloads directory for auto-discovery.
+### 2. Apply It
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/workloads \
-  -H "Content-Type: application/json" \
-  -d @my-agent.json
+kubectl apply -f my-agent.yaml
 ```
+
+The operator picks it up, validates the spec, and transitions the workload to `Ready`. Pools and triggers work the same way — `kubectl apply` a `BoilerhousePool` or `BoilerhouseTrigger` to configure them.
 
 ### 3. Claim an Instance
 
-When a tenant needs a container, claim one. Boilerhouse finds the fastest path:
+When a tenant needs a container, claim one via the REST API. Boilerhouse finds the fastest path:
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/tenants/user-123/claim \
@@ -66,10 +75,10 @@ curl -X POST http://localhost:3000/api/v1/tenants/user-123/claim \
 ```json
 {
   "tenantId": "user-123",
-  "instanceId": "inst_abc123",
-  "endpoint": { "host": "127.0.0.1", "ports": [30042] },
-  "source": "pool",
-  "latencyMs": 847
+  "phase": "Active",
+  "instanceId": "inst-abc123",
+  "endpoint": { "host": "10.0.0.5", "port": 8080 },
+  "source": "pool"
 }
 ```
 
@@ -82,11 +91,11 @@ The `source` field tells you how the instance was provisioned:
 
 ### 4. Work
 
-The tenant connects to their container endpoint and does their work. Boilerhouse monitors idle activity.
+The tenant connects to their container endpoint and does their work. The operator monitors idle activity.
 
 ### 5. Hibernate & Restore
 
-When the idle timeout fires, Boilerhouse extracts the tenant's filesystem overlay, saves it to storage, and destroys the container. Next time they claim, their state is restored automatically.
+When the idle timeout fires, Boilerhouse extracts the tenant's filesystem overlay, saves it to a PVC, and destroys the Pod. Next time they claim, their state is restored automatically.
 
 ## Use Cases
 
@@ -95,36 +104,25 @@ When the idle timeout fires, Boilerhouse extracts the tenant's filesystem overla
 - **On-demand dev environments** — spin up per-user environments that persist state between sessions
 - **Multi-tenant SaaS backends** — isolate tenant workloads with per-tenant resource limits and data separation
 
-## Deployment Modes
+## Components
 
-Boilerhouse runs in two modes:
+Boilerhouse is three Go binaries plus a dashboard, all running against a Kubernetes cluster.
 
-### API Server (Docker)
+### Operator
 
-A standalone server that manages containers via the Docker daemon. Good for single-host deployments, development, and smaller workloads.
+A controller-runtime operator that watches the four CRDs and reconciles them into Pods, Services, PVCs, NetworkPolicies, and ConfigMaps. Everything happens through the Kubernetes API — there is no database.
 
-```bash
-boilerhouse api start
-```
+### API Server
 
-### Kubernetes Operator
+A thin REST layer over the Kubernetes API (go-chi + controller-runtime client). It exposes `/api/v1/*` endpoints for creating workloads, claiming instances, listing pods as "instances", and streaming events over WebSocket.
 
-A full Kubernetes operator that manages workloads, pools, and claims as Custom Resources. Good for production, multi-node deployments.
+### Trigger Gateway
 
-```yaml
-apiVersion: boilerhouse.dev/v1alpha1
-kind: BoilerhouseWorkload
-metadata:
-  name: my-agent
-spec:
-  image:
-    ref: my-registry/my-agent:latest
-  resources:
-    vcpus: 2
-    memoryMb: 2048
-```
+Receives external events (webhooks, cron, Telegram) and creates `BoilerhouseClaim` resources. Guards (allowlist, API-based) authorize tenants before claims are created.
 
-Both modes share the same core domain logic — workload definitions, claim semantics, pooling, hibernation, and idle monitoring work identically.
+### Dashboard
+
+A React app for inspecting workloads, pools, claims, and live instance events. It lives in `ts/apps/dashboard/` and talks to the API server.
 
 ## Next Steps
 

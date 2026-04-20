@@ -1,141 +1,90 @@
 # State Machines
 
-Every core entity in Boilerhouse follows a finite state machine. Transitions are validated at runtime — attempting an invalid transition throws an `InvalidTransitionError` (HTTP 409 in the API).
+Every Boilerhouse CRD has a `status.phase` field that follows a finite state machine. The operator writes phases; clients read them. CRD validation enforces the phase enums at the API server.
 
-## Instance
-
-Instances represent running containers. This is the most complex state machine.
-
-```
-starting ──→ active
-         ──→ restoring
-         ──→ destroying ──→ destroyed
-         ──→ destroyed
-
-restoring ──→ active
-          ──→ destroying
-
-active ──→ hibernating ──→ hibernated
-       ──→ destroying              ──→ restoring
-       ──→ destroyed               ──→ destroying
-
-hibernating ──→ destroying
-
-destroying ──→ destroyed
-```
-
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `starting` | `active` | `started` | Boot completed, health checks passing |
-| `starting` | `restoring` | `restoring` | Snapshot restore initiated |
-| `starting` | `destroying` | `destroy` | Boot failed or cancelled |
-| `starting` | `destroyed` | `recover` | Force recovery to terminal state |
-| `restoring` | `active` | `restored` | Restore completed, healthy |
-| `restoring` | `destroying` | `destroy` | Restore failed |
-| `active` | `hibernating` | `hibernate` | Idle timeout reached |
-| `active` | `destroying` | `destroy` | Explicit destruction |
-| `active` | `destroyed` | `recover` | Force recovery |
-| `hibernating` | `hibernated` | `hibernated` | Snapshot saved |
-| `hibernating` | `destroying` | `hibernating_failed` | Snapshot failed |
-| `hibernated` | `restoring` | `restoring` | Resume from hibernation |
-| `hibernated` | `destroying` | `destroy` | Explicit destruction |
-| `destroying` | `destroyed` | `destroyed` | Teardown complete |
-
-## Claim
-
-Claims bind tenants to instances.
-
-```
-creating ──→ active ──→ releasing ──→ active (cycle for hibernation recovery)
-```
-
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `creating` | `active` | `created` | Instance assigned |
-| `active` | `releasing` | `release` | Release initiated (idle or explicit) |
-| `releasing` | `active` | `recover` | Re-claimed after hibernation |
-
-::: info
-The `releasing → active` transition enables the hibernation-resume cycle: a tenant's claim stays alive across hibernation so that the next claim restores state rather than starting fresh.
-:::
-
-## Workload
+## BoilerhouseWorkload
 
 Workloads are container blueprints.
 
 ```
-creating ──→ ready
-         ──→ error ──→ creating (retry)
+Creating ──► Ready
+         ──► Error ──► Creating (on retry)
 
-ready ──→ creating (on update)
+Ready ──► Creating (on spec change)
+      ──► Error
 ```
 
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `creating` | `ready` | `created` | Pool warmed, health checks passing |
-| `creating` | `error` | `failed` | Build or health failure |
-| `ready` | `creating` | `retry` | Workload updated, re-priming |
-| `error` | `creating` | `recover` | Retry after failure |
+| From | To | Trigger |
+|------|----|---------|
+| `Creating` | `Ready` | Image is available and spec validates |
+| `Creating` | `Error` | Build or validation failure |
+| `Ready` | `Creating` | Spec change (new `observedGeneration`) |
+| `Error` | `Creating` | Retry after operator restart or spec fix |
 
-## Tenant
+## BoilerhousePool
 
-Tenants are users or agents that claim instances.
-
-```
-idle ──→ claiming ──→ active ──→ releasing ──→ idle
-                  ──→ idle                  ──→ released ──→ claiming
-                                            ──→ active
-
-active ──→ claiming (re-claim for different workload)
-```
-
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `idle` | `claiming` | `claim` | Claim requested |
-| `claiming` | `active` | `claimed` | Instance assigned |
-| `claiming` | `idle` | `claim_failed` | Claim failed |
-| `active` | `claiming` | `claim` | Re-claim (different workload) |
-| `active` | `releasing` | `release` | Release initiated |
-| `releasing` | `released` | `hibernated` | Hibernation complete |
-| `releasing` | `idle` | `destroyed` | Instance destroyed |
-| `releasing` | `active` | `recover` | Re-activated |
-| `released` | `claiming` | `claim` | New claim after release |
-
-## Snapshot
-
-Snapshots store persisted tenant or workload state.
+Pools maintain warm Pods for a workload.
 
 ```
-creating ──→ ready ──→ expired ──→ deleted
-                   ──→ deleted
-
-creating ──→ deleted (capture failed)
+Healthy ──► Degraded ──► Healthy
+        ──► Error
 ```
 
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `creating` | `ready` | `created` | Capture succeeded |
-| `creating` | `deleted` | `failed` | Capture failed |
-| `ready` | `expired` | `expire` | TTL reached |
-| `ready` | `deleted` | `delete` | Explicit deletion |
-| `expired` | `deleted` | `delete` | Cleanup |
+| From | To | Trigger |
+|------|----|---------|
+| `Healthy` | `Degraded` | `ready < size` (e.g., a warm Pod failed and is being replaced) |
+| `Degraded` | `Healthy` | `ready >= size` |
+| `Healthy` / `Degraded` | `Error` | Referenced workload missing, or persistent image-pull failure |
 
-## Node
+The `status.ready` and `status.warming` counters track the underlying Pods so you don't have to infer them from the phase.
 
-Nodes are host machines running containers.
+## BoilerhouseClaim
+
+Claims bind tenants to Pods. Most of the system's liveness concerns are in this state machine.
 
 ```
-online ──→ draining ──→ offline ──→ online
-                    ──→ online (cancel drain)
+Pending ──► Active ──► Releasing ──► Released
+                                 ──► ReleaseFailed
+        ──► Error
 ```
 
-| From | To | Trigger | Description |
-|------|----|---------|-------------|
-| `online` | `draining` | `drain` | Stop accepting new instances |
-| `draining` | `offline` | `shutdown` | All instances drained |
-| `draining` | `online` | `cancel_drain` | Drain cancelled |
-| `offline` | `online` | `activate` | Node brought back online |
+| From | To | Trigger |
+|------|----|---------|
+| `Pending` | `Active` | Pod assigned and healthy; endpoint written |
+| `Pending` | `Error` | Workload missing, capacity exhausted, or reconcile failure |
+| `Active` | `Releasing` | Claim deleted, or idle timeout fired |
+| `Releasing` | `Released` | Overlay extracted, Pod destroyed |
+| `Releasing` | `ReleaseFailed` | Overlay extraction failed — Pod may still exist and need manual cleanup |
 
-::: tip
-When a node is draining, existing instances continue running but no new instances are scheduled to it. Use this for rolling upgrades or maintenance windows.
-:::
+The `source` field on `status` records how the instance was acquired (`existing`, `cold`, `cold+data`, `pool`, `pool+data`) and is written once when transitioning to `Active`.
+
+### Idle-Triggered Release
+
+Idle release follows the same `Active → Releasing → Released` path. The operator sets `status.detail` to indicate the release was idle-triggered rather than user-initiated.
+
+### Revival After Hibernation
+
+To reclaim a hibernated tenant, delete the old `Released` Claim (the API does this for you) and create a new Claim with the same `tenantId` and `workloadRef`. The operator detects the saved overlay and sets `source` to `pool+data` or `cold+data`.
+
+## BoilerhouseTrigger
+
+Triggers are long-lived configuration.
+
+```
+Active ──► Error ──► Active
+```
+
+| From | To | Trigger |
+|------|----|---------|
+| `Active` | `Error` | Adapter failed to start (missing secret, invalid config) |
+| `Error` | `Active` | Config fixed, adapter restarted by the trigger gateway |
+
+## Pod Phase (Instance)
+
+Boilerhouse does not invent a new phase for instances — Pods use the standard Kubernetes `Pod.status.phase`:
+
+```
+Pending ──► Running ──► Succeeded / Failed
+```
+
+The operator enriches Pods with labels (`boilerhouse.dev/*`) so you can correlate them back to Workloads, Pools, Claims, and Tenants.
