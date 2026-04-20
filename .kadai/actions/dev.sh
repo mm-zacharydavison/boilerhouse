@@ -97,7 +97,7 @@ sleep 2
 echo ""
 echo "Building boilerhouse-trigger image in minikube's docker..."
 (
-  eval "$(minikube -p "$PROFILE" docker-env)"
+  eval "$(minikube -p "$PROFILE" docker-env --shell=bash)"
   cd "$SCRIPT_DIR/go"
   docker build -q -t boilerhouse-trigger:latest -f Dockerfile.trigger . >/dev/null
 )
