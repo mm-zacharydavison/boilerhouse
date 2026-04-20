@@ -173,18 +173,13 @@ func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (
 		},
 	}
 
-	// Resources
+	// Resources — request == limit gives the pod Guaranteed QoS. With the
+	// previous burstable sizing (CPU request = 25% of limit, memory request
+	// capped at 128Mi) large pods would be binpacked on nodes that couldn't
+	// actually fulfil their limits and OOMKilled under pressure. Tenants
+	// state what they need via spec.Resources; we honour that verbatim.
 	cpuMillis := spec.Resources.VCPUs * 1000
 	memMi := spec.Resources.MemoryMb
-
-	cpuReqMillis := spec.Resources.VCPUs * 250
-	if cpuReqMillis < 100 {
-		cpuReqMillis = 100
-	}
-	memReqMi := memMi
-	if memReqMi > 128 {
-		memReqMi = 128
-	}
 
 	container.Resources = corev1.ResourceRequirements{
 		Limits: corev1.ResourceList{
@@ -192,8 +187,8 @@ func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (
 			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memMi)),
 		},
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", cpuReqMillis)),
-			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memReqMi)),
+			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", cpuMillis)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memMi)),
 		},
 	}
 

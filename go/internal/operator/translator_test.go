@@ -445,19 +445,18 @@ func TestTranslate_ResourceLimits(t *testing.T) {
 
 	resources := result.Pod.Spec.Containers[0].Resources
 
-	// Limits: 2000m CPU, 4096Mi memory
+	// Request == limit for Guaranteed QoS: 2000m CPU, 4096Mi memory.
 	cpuLimit := resources.Limits[corev1.ResourceCPU]
 	assert.Equal(t, resource.MustParse("2000m"), cpuLimit)
 
 	memLimit := resources.Limits[corev1.ResourceMemory]
 	assert.Equal(t, resource.MustParse("4096Mi"), memLimit)
 
-	// Requests: max(100, 2*250)=500m CPU, min(4096, 128)=128Mi memory
 	cpuReq := resources.Requests[corev1.ResourceCPU]
-	assert.Equal(t, resource.MustParse("500m"), cpuReq)
+	assert.Equal(t, resource.MustParse("2000m"), cpuReq)
 
 	memReq := resources.Requests[corev1.ResourceMemory]
-	assert.Equal(t, resource.MustParse("128Mi"), memReq)
+	assert.Equal(t, resource.MustParse("4096Mi"), memReq)
 }
 
 func TestTranslate_InjectsAPIKeyEnvWhenClaimTokenSecretSet(t *testing.T) {
