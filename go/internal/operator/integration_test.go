@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,12 @@ func reconcileClaimUntilPhase(t *testing.T, r *ClaimReconciler, k8sClient client
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		require.NoError(t, err, "reconcile attempt %d", i+1)
 
+		// envtest has no kubelet, so pods never gain a PodIP on their own.
+		// The claim reconciler now refuses to activate without a PodIP,
+		// so simulate it by patching any pod in the ns that still has an
+		// empty status.podIP.
+		populateEmptyPodIPs(t, ctx, k8sClient, key.Namespace)
+
 		var claim v1alpha1.BoilerhouseClaim
 		if err := k8sClient.Get(ctx, key, &claim); err != nil {
 			continue
@@ -49,6 +56,38 @@ func reconcileClaimUntilPhase(t *testing.T, r *ClaimReconciler, k8sClient client
 		}
 	}
 	t.Fatalf("claim %s did not reach phase %q after %d reconciles", key, targetPhase, maxAttempts)
+}
+
+// populateEmptyPodIPs simulates kubelet assigning PodIPs + marking pods
+// Running in envtest. Called between reconciles so that claim activation
+// paths that depend on PodIP and PodPhase == Running can complete.
+func populateEmptyPodIPs(t *testing.T, ctx context.Context, k8sClient client.Client, namespace string) {
+	t.Helper()
+	var pods corev1.PodList
+	if err := k8sClient.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
+		return
+	}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Status.PodIP != "" && p.Status.Phase == corev1.PodRunning {
+			continue
+		}
+		if p.Status.PodIP == "" {
+			// Derive a deterministic fake IP from the pod name.
+			var last int
+			for _, c := range p.Name {
+				last = (last*31 + int(c)) & 0xFF
+			}
+			if last == 0 {
+				last = 1
+			}
+			p.Status.PodIP = fmt.Sprintf("10.244.0.%d", last)
+		}
+		if p.Status.Phase != corev1.PodRunning {
+			p.Status.Phase = corev1.PodRunning
+		}
+		_ = k8sClient.Status().Update(ctx, p)
+	}
 }
 
 // reconcileWorkloadUntilPhase calls Reconcile on the workload reconciler until

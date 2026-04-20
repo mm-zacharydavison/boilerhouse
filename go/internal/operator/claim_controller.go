@@ -304,12 +304,31 @@ func BuildProxyConfig(ctx context.Context, c client.Client, namespace string, wl
 }
 
 // activateClaim sets the claim to Active with the given Pod info and source.
-// Refuses to activate if the Pod hasn't been assigned an IP yet — returns a
-// requeue so the next reconcile sees the populated PodIP.
+// Refuses to activate if the Pod hasn't been assigned an IP yet — stamps the
+// provenance (source) + tenant pod id on the claim, leaves Phase as Pending,
+// and requeues so the next reconcile sees the populated PodIP. Preserving the
+// source across requeues means a claim coldBoot'd on reconcile N still
+// reports source=cold when it finally activates on reconcile N+1.
 func (r *ClaimReconciler) activateClaim(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, pod *corev1.Pod, source string) (reconcile.Result, error) {
 	podIP := pod.Status.PodIP
 	if podIP == "" {
+		// Stash provenance so we don't "forget" why we picked this pod on
+		// the next reconcile (which would otherwise see an existing tenant
+		// pod and attribute the claim to source=existing).
+		if claim.Status.Source != source || claim.Status.InstanceId != pod.Name {
+			claim.Status.Source = source
+			claim.Status.InstanceId = pod.Name
+			if err := r.Status().Update(ctx, claim); err != nil {
+				return reconcile.Result{}, err
+			}
+		}
 		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
+	}
+	// Preserve the original source set during coldBoot / claimFromPool if one
+	// exists — we only overwrite if the incoming source is stronger than
+	// "existing" (i.e. the handler knows better than the fallback path).
+	if source == "existing" && claim.Status.Source != "" && claim.Status.Source != "existing" {
+		source = claim.Status.Source
 	}
 	port := 0
 	if len(pod.Spec.Containers) > 0 && len(pod.Spec.Containers[0].Ports) > 0 {

@@ -79,6 +79,7 @@ func TestClaimController_ColdBootNewTenant(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify claim status.
@@ -168,6 +169,7 @@ func TestClaimController_ColdBootWithOverlayDirs(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify claim status: cold boot (no PVC check, snapshot injection
@@ -292,6 +294,7 @@ func TestClaimController_ClaimFromPool(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify claim status.
@@ -401,6 +404,7 @@ func TestClaimController_ExistingInstance(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify claim status.
@@ -483,6 +487,7 @@ func TestClaimController_ReleaseDeletesPod(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify Pod exists.
@@ -552,6 +557,7 @@ func TestClaimController_WorkloadNotFoundError(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := claimReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
 		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
 	}
 
 	// Verify claim phase=Error.
