@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -76,97 +73,24 @@ func (s *Server) claimInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimName := fmt.Sprintf("claim-%s-%s", tenantID, wlName)
-
-	// If a Released claim exists, delete it first (allows revive after hibernate).
-	var existing v1alpha1.BoilerhouseClaim
-	if err := s.client.Get(r.Context(), types.NamespacedName{Name: claimName, Namespace: s.namespace}, &existing); err == nil {
-		if existing.Status.Phase == "Released" {
-			// Strip finalizer to allow immediate deletion.
-			if len(existing.Finalizers) > 0 {
-				existing.Finalizers = nil
-				if err := s.client.Update(r.Context(), &existing); err != nil {
-					writeError(w, http.StatusInternalServerError, "failed to clear finalizer on old claim: "+err.Error())
-					return
-				}
-			}
-			if err := s.client.Delete(r.Context(), &existing); err != nil && !apierrors.IsNotFound(err) {
-				writeError(w, http.StatusInternalServerError, "failed to delete old claim: "+err.Error())
-				return
-			}
-			// Wait briefly for deletion to propagate.
-			time.Sleep(500 * time.Millisecond)
-		} else if existing.Status.Phase == "Active" {
-			// Already active — return existing claim info.
-			writeJSON(w, http.StatusOK, toClaimResponse(&existing))
-			return
-		}
+	claim, outcome, err := s.acquireClaim(r.Context(), tenantID, wlName, req.Resume)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-
-	now := metav1.Now()
-
-	claim := &v1alpha1.BoilerhouseClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName,
-			Namespace: s.namespace,
-			Labels: map[string]string{
-				"boilerhouse.dev/tenant": tenantID,
-			},
-			Annotations: map[string]string{
-				"boilerhouse.dev/last-activity": now.UTC().Format(time.RFC3339),
-			},
-		},
-		Spec: v1alpha1.BoilerhouseClaimSpec{
-			TenantId:    tenantID,
-			WorkloadRef: wlName,
-			Resume:      req.Resume,
-		},
-	}
-
-	if err := s.client.Create(r.Context(), claim); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create claim: "+err.Error())
+	if outcome == outcomeExistingActive {
+		writeJSON(w, http.StatusOK, toClaimResponse(claim))
 		return
 	}
 
-	// Poll until claim reaches a terminal phase or timeout.
-	result, err := s.pollClaim(r.Context(), claimName, 30*time.Second, 500*time.Millisecond)
+	// Poll the freshly-created claim until it reaches a terminal phase.
+	result, err := s.pollClaim(r.Context(), claim.Name, 30*time.Second, 500*time.Millisecond)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed polling claim: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, toClaimResponse(result))
-}
-
-// pollClaim waits for the claim to reach Active or Error phase.
-func (s *Server) pollClaim(ctx context.Context, name string, timeout, interval time.Duration) (*v1alpha1.BoilerhouseClaim, error) {
-	deadline := time.Now().Add(timeout)
-	key := types.NamespacedName{Name: name, Namespace: s.namespace}
-
-	for time.Now().Before(deadline) {
-		var claim v1alpha1.BoilerhouseClaim
-		if err := s.client.Get(ctx, key, &claim); err != nil {
-			return nil, err
-		}
-
-		switch claim.Status.Phase {
-		case "Active", "Error":
-			return &claim, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return &claim, ctx.Err()
-		case <-time.After(interval):
-		}
-	}
-
-	// Return the last state even on timeout.
-	var claim v1alpha1.BoilerhouseClaim
-	if err := s.client.Get(ctx, key, &claim); err != nil {
-		return nil, err
-	}
-	return &claim, nil
 }
 
 func (s *Server) releaseInstance(w http.ResponseWriter, r *http.Request) {
