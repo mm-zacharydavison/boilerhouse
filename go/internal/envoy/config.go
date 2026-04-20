@@ -62,6 +62,8 @@ static_resources:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: egress_http
+                http_protocol_options:
+                  allow_absolute_url: true
                 route_config:
                   virtual_hosts:
 {{- range .Credentials}}
