@@ -1,5 +1,9 @@
 # What is Boilerhouse?
 
+::: warning AI-generated placeholder
+These docs were drafted by an AI from the source and are a placeholder. They will be replaced with human-written documentation in future — expect gaps and inaccuracies until then.
+:::
+
 Boilerhouse is a Kubernetes-native, multi-tenant container orchestration platform. It lets you run isolated, on-demand containers for individual tenants — spinning them up when needed, hibernating them when idle, and restoring them with full state on the next request.
 
 It was built for running AI agents (Claude Code, OpenClaw, Pi) in isolated containers, but works for any workload where you need per-tenant container isolation with lifecycle management.
