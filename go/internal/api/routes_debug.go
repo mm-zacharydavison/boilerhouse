@@ -283,9 +283,13 @@ func podToEntry(p *corev1.Pod) (resourceEntry, error) {
 	if err != nil {
 		return resourceEntry{}, err
 	}
+	phase := string(p.Status.Phase)
+	if p.DeletionTimestamp != nil {
+		phase = "Terminating"
+	}
 	return resourceEntry{
 		Name:  p.Name,
-		Phase: string(p.Status.Phase),
+		Phase: phase,
 		Age:   formatAge(p.CreationTimestamp),
 		Summary: map[string]any{
 			"node":   p.Spec.NodeName,
@@ -328,10 +332,14 @@ func serviceToEntry(s *corev1.Service) (resourceEntry, error) {
 	}
 	ports := make([]string, 0, len(s.Spec.Ports))
 	for _, p := range s.Spec.Ports {
+		proto := p.Protocol
+		if proto == "" {
+			proto = corev1.ProtocolTCP
+		}
 		if p.Name != "" {
-			ports = append(ports, fmt.Sprintf("%s:%d", p.Name, p.Port))
+			ports = append(ports, fmt.Sprintf("%s:%d/%s", p.Name, p.Port, proto))
 		} else {
-			ports = append(ports, fmt.Sprintf("%d", p.Port))
+			ports = append(ports, fmt.Sprintf("%d/%s", p.Port, proto))
 		}
 	}
 	return resourceEntry{
