@@ -23,6 +23,15 @@ const (
 	snapshotsMountPath     = "/snapshots"
 )
 
+// Snapshotter abstracts overlay snapshot storage so the claim reconciler can
+// be unit-tested without a real kubectl-backed SnapshotManager.
+type Snapshotter interface {
+	HasSnapshot(ctx context.Context, tenantId, workloadName string) (bool, error)
+	InjectSnapshot(ctx context.Context, podName, tenantId, workloadName string) error
+	ExtractAndStore(ctx context.Context, podName, tenantId, workloadName string, overlayDirs []string) error
+	DeleteSnapshot(ctx context.Context, tenantId, workloadName string) error
+}
+
 // SnapshotManager handles storing and retrieving tenant overlay snapshots.
 // It uses kubectl exec to interact with Pods and a long-running helper Pod
 // that mounts the shared snapshots PVC for file I/O.
@@ -97,8 +106,12 @@ func (s *SnapshotManager) InjectSnapshot(ctx context.Context, podName, tenantId,
 	}
 
 	// 2. Inject into the target Pod.
+	// --no-same-owner + --no-same-permissions: skip restoring uid/gid/mode on
+	// pre-existing directories (e.g. /workspace, /home/claude) that were created
+	// by the container image with different perms. Without these flags, tar
+	// fails with "Cannot utime / Cannot change mode: Operation not permitted".
 	cmd := exec.CommandContext(ctx, "kubectl", "exec", "-i", podName, "-n", s.namespace,
-		"--", "tar", "xzf", "-", "-C", "/")
+		"--", "tar", "xzf", "-", "-C", "/", "--no-same-owner", "--no-same-permissions")
 	cmd.Stdin = bytes.NewReader(archive)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
