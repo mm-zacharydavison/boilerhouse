@@ -5,12 +5,16 @@ export default defineConfig({
   description: "Multi-tenant container orchestration platform",
   base: "/boilerhouse/",
   cleanUrls: true,
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/boilerhouse/logo.svg" }],
+  ],
   vite: {
     ssr: {
       noExternal: ["vitepress-theme-zac"],
     },
   },
   themeConfig: {
+    logo: "/logo.svg",
     nav: [
       { text: "Guide", link: "/guide/what-is-boilerhouse" },
       { text: "Reference", link: "/reference/api" },
