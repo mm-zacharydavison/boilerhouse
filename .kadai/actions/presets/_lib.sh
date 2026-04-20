@@ -176,5 +176,8 @@ apply_manifests() {
 }
 
 exec_dev() {
+  # Point dev.sh at the preset's staging dir so it only applies the
+  # preset-selected workloads (not every YAML under workloads/).
+  export WORKLOADS_APPLY_DIR="$PRESET_STAGE_DIR"
   exec bash "$PRESET_REPO/.kadai/actions/dev.sh"
 }

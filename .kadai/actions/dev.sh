@@ -66,8 +66,10 @@ echo "CRDs applied"
 
 # ── Apply workloads ─────────────────────────────────────────────────────────
 
-echo "Applying workloads..."
-for f in "$SCRIPT_DIR"/workloads/*.yaml; do
+WORKLOADS_APPLY_DIR="${WORKLOADS_APPLY_DIR:-$SCRIPT_DIR/workloads}"
+echo "Applying workloads from $WORKLOADS_APPLY_DIR..."
+for f in "$WORKLOADS_APPLY_DIR"/*.yaml; do
+  [ -e "$f" ] || continue  # no glob match
   kubectl apply -f "$f"
 done
 echo "Workloads applied"
