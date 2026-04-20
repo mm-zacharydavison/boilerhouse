@@ -17,19 +17,7 @@ spec:
       containers:
         - name: trigger
           image: boilerhouse-trigger:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: K8S_NAMESPACE
               value: boilerhouse
-          ports:
-            - containerPort: 8082
-              name: http
-            - containerPort: 8081
-              name: health
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: health
