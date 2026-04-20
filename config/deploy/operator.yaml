@@ -8,22 +8,44 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: boilerhouse-operator
+# Shared SA across operator + api + trigger (see api.yaml / trigger.yaml).
+# Verbs are enumerated rather than ["*"] so missing subresource grants
+# (which "*" does NOT include) become obvious.
 rules:
+  # Boilerhouse CRDs
   - apiGroups: ["boilerhouse.dev"]
-    resources: ["*"]
-    verbs: ["*"]
+    resources: ["boilerhouseworkloads", "boilerhousepools", "boilerhouseclaims", "boilerhousetriggers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["boilerhouse.dev"]
-    resources: ["*/status"]
+    resources: ["boilerhouseworkloads/status", "boilerhousepools/status", "boilerhouseclaims/status", "boilerhousetriggers/status"]
     verbs: ["get", "update", "patch"]
+  - apiGroups: ["boilerhouse.dev"]
+    resources: ["boilerhouseworkloads/finalizers", "boilerhouseclaims/finalizers"]
+    verbs: ["update"]
+  # Core Kubernetes objects the operator manages on behalf of workloads
   - apiGroups: [""]
-    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "events"]
-    verbs: ["*"]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pod subresources: exec for snapshots.go (kubectl exec helper); log for the
+  # API server's /instances/{id}/logs route. "*" on pods does NOT cover these.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Event recorder
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # NetworkPolicies per workload
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
