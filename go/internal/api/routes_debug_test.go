@@ -110,17 +110,21 @@ func TestListDebugResources(t *testing.T) {
 	var resp debugResourcesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 
+	// CRDs we created ourselves; the namespace is otherwise empty for them.
 	assert.Len(t, resp.Workloads, 1)
 	assert.Len(t, resp.Pools, 1)
 	assert.Len(t, resp.Claims, 1)
 	assert.Len(t, resp.Triggers, 1)
-	assert.Len(t, resp.Pods, 1, "only labeled Pod should be included")
-	assert.Len(t, resp.PersistentVolumeClaims, 1)
-	assert.Len(t, resp.Services, 1)
-	assert.Len(t, resp.NetworkPolicies, 1)
 
-	require.Len(t, resp.Pods, 1)
-	assert.Equal(t, "pod-managed", resp.Pods[0].Name)
+	// Native kinds: the namespace may contain apiserver-managed objects
+	// (e.g. the built-in "kubernetes" Service in the default namespace),
+	// so we assert the fixtures are present by name rather than by exact
+	// count. Both managed and unmanaged pods should now appear since the
+	// handler no longer filters by label.
+	assert.NotNil(t, findEntry(resp.Pods, "pod-managed"))
+	assert.NotNil(t, findEntry(resp.Pods, "pod-unmanaged"))
+	assert.NotNil(t, findEntry(resp.PersistentVolumeClaims, "pvc-1"))
+	assert.NotNil(t, findEntry(resp.NetworkPolicies, "np-1"))
 
 	require.Len(t, resp.Workloads, 1)
 	assert.Equal(t, "busybox:latest", resp.Workloads[0].Summary["image"])
@@ -133,6 +137,16 @@ func TestListDebugResources(t *testing.T) {
 	assert.Equal(t, "webhook", resp.Triggers[0].Summary["type"])
 	assert.Equal(t, "wl-1", resp.Triggers[0].Summary["workloadRef"])
 
-	require.Len(t, resp.Services, 1)
-	assert.Equal(t, "ClusterIP", resp.Services[0].Summary["type"])
+	svc := findEntry(resp.Services, "svc-1")
+	require.NotNil(t, svc)
+	assert.Equal(t, "ClusterIP", svc.Summary["type"])
+}
+
+func findEntry(entries []resourceEntry, name string) *resourceEntry {
+	for i := range entries {
+		if entries[i].Name == name {
+			return &entries[i]
+		}
+	}
+	return nil
 }

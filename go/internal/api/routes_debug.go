@@ -114,10 +114,8 @@ func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	if resp.Triggers == nil {
 		resp.Triggers = []resourceEntry{}
 	}
-	managed := client.MatchingLabels{"boilerhouse.dev/managed": "true"}
-
 	var pods corev1.PodList
-	if err := s.client.List(ctx, &pods, ns, managed); err != nil {
+	if err := s.client.List(ctx, &pods, ns); err != nil {
 		writeError(w, http.StatusInternalServerError, "list pods: "+err.Error())
 		return
 	}
@@ -132,7 +130,7 @@ func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pvcs corev1.PersistentVolumeClaimList
-	if err := s.client.List(ctx, &pvcs, ns, managed); err != nil {
+	if err := s.client.List(ctx, &pvcs, ns); err != nil {
 		writeError(w, http.StatusInternalServerError, "list pvcs: "+err.Error())
 		return
 	}
@@ -147,7 +145,7 @@ func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var svcs corev1.ServiceList
-	if err := s.client.List(ctx, &svcs, ns, managed); err != nil {
+	if err := s.client.List(ctx, &svcs, ns); err != nil {
 		writeError(w, http.StatusInternalServerError, "list services: "+err.Error())
 		return
 	}
@@ -162,7 +160,7 @@ func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var nps networkingv1.NetworkPolicyList
-	if err := s.client.List(ctx, &nps, ns, managed); err != nil {
+	if err := s.client.List(ctx, &nps, ns); err != nil {
 		writeError(w, http.StatusInternalServerError, "list networkpolicies: "+err.Error())
 		return
 	}
