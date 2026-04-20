@@ -55,7 +55,7 @@ static_resources:
       address:
         socket_address:
           address: 0.0.0.0
-          port_value: 18080
+          port_value: 80
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
@@ -102,7 +102,7 @@ static_resources:
       address:
         socket_address:
           address: 0.0.0.0
-          port_value: 18443
+          port_value: 443
       listener_filters:
         - name: envoy.filters.listener.tls_inspector
           typed_config:

@@ -29,7 +29,7 @@ func TestInjectSidecar(t *testing.T) {
 		},
 	}
 
-	InjectSidecar(pod, "my-proxy-config")
+	InjectSidecar(pod, "my-proxy-config", []string{"api.anthropic.com", "api.openai.com"})
 
 	// Verify envoy container was added.
 	require.Len(t, pod.Spec.Containers, 2)
@@ -39,19 +39,23 @@ func TestInjectSidecar(t *testing.T) {
 	assert.Equal(t, EnvoyImage, envoyContainer.Image)
 	assert.Equal(t, []string{"envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"}, envoyContainer.Command)
 
-	// Verify envoy ports.
+	// Verify envoy ports (transparent-proxy mode: 80 + 443).
 	require.Len(t, envoyContainer.Ports, 2)
 	assert.Equal(t, int32(EnvoyProxyPort), envoyContainer.Ports[0].ContainerPort)
 	assert.Equal(t, int32(EnvoyTLSPort), envoyContainer.Ports[1].ContainerPort)
+	assert.Equal(t, int32(80), envoyContainer.Ports[0].ContainerPort)
+	assert.Equal(t, int32(443), envoyContainer.Ports[1].ContainerPort)
 
 	// Verify envoy resources.
 	assert.Equal(t, "50m", envoyContainer.Resources.Requests.Cpu().String())
 	assert.Equal(t, "100m", envoyContainer.Resources.Limits.Cpu().String())
 
-	// Verify envoy security context.
+	// Verify envoy security context: NET_BIND_SERVICE added so envoy can
+	// bind privileged ports 80/443 as non-root.
 	require.NotNil(t, envoyContainer.SecurityContext)
 	require.NotNil(t, envoyContainer.SecurityContext.Capabilities)
 	assert.Equal(t, []corev1.Capability{"ALL"}, envoyContainer.SecurityContext.Capabilities.Drop)
+	assert.Equal(t, []corev1.Capability{"NET_BIND_SERVICE"}, envoyContainer.SecurityContext.Capabilities.Add)
 	require.NotNil(t, envoyContainer.SecurityContext.AllowPrivilegeEscalation)
 	assert.False(t, *envoyContainer.SecurityContext.AllowPrivilegeEscalation)
 	require.NotNil(t, envoyContainer.SecurityContext.ReadOnlyRootFilesystem)
@@ -73,17 +77,21 @@ func TestInjectSidecar(t *testing.T) {
 	}
 	assert.True(t, found, "proxy-config volume should exist")
 
-	// Verify proxy env vars on main container.
+	// Verify hostAliases redirect each credential domain to envoy.
+	require.Len(t, pod.Spec.HostAliases, 1)
+	assert.Equal(t, "127.0.0.1", pod.Spec.HostAliases[0].IP)
+	assert.ElementsMatch(t, []string{"api.anthropic.com", "api.openai.com"}, pod.Spec.HostAliases[0].Hostnames)
+
+	// Verify main container env: CA certs only, no HTTP_PROXY in transparent mode.
 	mainContainer := pod.Spec.Containers[0]
 	envMap := map[string]string{}
 	for _, e := range mainContainer.Env {
 		envMap[e.Name] = e.Value
 	}
-	assert.Contains(t, envMap, "HTTP_PROXY")
-	assert.Contains(t, envMap, "HTTPS_PROXY")
-	assert.Contains(t, envMap, "http_proxy")
-	assert.Contains(t, envMap, "https_proxy")
-	assert.Contains(t, envMap, "NODE_EXTRA_CA_CERTS")
+	assert.NotContains(t, envMap, "HTTP_PROXY")
+	assert.NotContains(t, envMap, "HTTPS_PROXY")
+	assert.NotContains(t, envMap, "http_proxy")
+	assert.NotContains(t, envMap, "https_proxy")
 	assert.Equal(t, "/etc/envoy/ca.crt", envMap["NODE_EXTRA_CA_CERTS"])
 
 	// Verify CA cert volume mount on main container.

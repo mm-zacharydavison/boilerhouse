@@ -14,9 +14,13 @@ import (
 )
 
 const (
-	EnvoyImage     = "docker.io/envoyproxy/envoy:v1.32-latest"
-	EnvoyProxyPort = 18080
-	EnvoyTLSPort   = 18443
+	EnvoyImage = "docker.io/envoyproxy/envoy:v1.32-latest"
+	// Transparent-proxy ports. Envoy binds 80 and 443 so that clients
+	// requesting http://api.anthropic.com / https://api.anthropic.com
+	// reach envoy directly via hostAliases (127.0.0.1). Admin stays on
+	// a non-privileged port.
+	EnvoyProxyPort = 80
+	EnvoyTLSPort   = 443
 	EnvoyAdminPort = 18081
 )
 
@@ -27,9 +31,16 @@ type ProxyConfig struct {
 	TLS       *envoy.TLSMaterial
 }
 
-// InjectSidecar modifies a Pod spec to add the Envoy sidecar container,
-// proxy-config volume, and proxy env vars on the main container.
-func InjectSidecar(pod *corev1.Pod, configMapName string) {
+// InjectSidecar modifies a Pod spec to add the Envoy sidecar container and
+// wire the main container for transparent credential injection:
+//   - envoy binds privileged ports 80 + 443 (via NET_BIND_SERVICE)
+//   - each credential domain is aliased in /etc/hosts to 127.0.0.1 so client
+//     traffic to http(s)://<domain>/... goes straight to envoy
+//   - the main container trusts envoy's CA (for TLS)
+//
+// No HTTP_PROXY / HTTPS_PROXY env vars are set — clients connect to the
+// real domain as if this pod were it, without having to understand proxies.
+func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
 	falseVal := false
 	readOnly := true
 
@@ -53,8 +64,11 @@ func InjectSidecar(pod *corev1.Pod, configMapName string) {
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
+			// Drop everything, then grant only NET_BIND_SERVICE so envoy
+			// can bind privileged ports 80 + 443 as non-root.
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
+				Add:  []corev1.Capability{"NET_BIND_SERVICE"},
 			},
 			AllowPrivilegeEscalation: &falseVal,
 			ReadOnlyRootFilesystem:   &readOnly,
@@ -81,20 +95,20 @@ func InjectSidecar(pod *corev1.Pod, configMapName string) {
 		},
 	})
 
-	// 3. Set proxy env vars and CA cert path on the main container.
-	if len(pod.Spec.Containers) > 0 {
-		proxyURL := fmt.Sprintf("http://127.0.0.1:%d", EnvoyProxyPort)
-		httpsProxyURL := fmt.Sprintf("http://127.0.0.1:%d", EnvoyTLSPort)
-		proxyEnvVars := []corev1.EnvVar{
-			{Name: "HTTP_PROXY", Value: proxyURL},
-			{Name: "HTTPS_PROXY", Value: httpsProxyURL},
-			{Name: "http_proxy", Value: proxyURL},
-			{Name: "https_proxy", Value: httpsProxyURL},
-			{Name: "NODE_EXTRA_CA_CERTS", Value: "/etc/envoy/ca.crt"},
-		}
-		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, proxyEnvVars...)
+	// 3. Point each credential domain at the local envoy via /etc/hosts.
+	if len(domains) > 0 {
+		pod.Spec.HostAliases = append(pod.Spec.HostAliases, corev1.HostAlias{
+			IP:        "127.0.0.1",
+			Hostnames: append([]string(nil), domains...),
+		})
+	}
 
-		// 4. Mount the CA cert into the main container for trust.
+	// 4. Main container: trust envoy's CA; no HTTP_PROXY env vars (traffic
+	// is redirected via hostAliases, not a forward proxy).
+	if len(pod.Spec.Containers) > 0 {
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{
+			Name: "NODE_EXTRA_CA_CERTS", Value: "/etc/envoy/ca.crt",
+		})
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
 			Name:      "proxy-config",
 			MountPath: "/etc/envoy/ca.crt",
