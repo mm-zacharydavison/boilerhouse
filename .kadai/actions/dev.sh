@@ -7,12 +7,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 OPERATOR_PID=""
+TRIGGER_PID=""
 DASHBOARD_PID=""
 
 cleanup() {
   echo ""
   echo "Shutting down..."
   [ -n "$OPERATOR_PID" ] && kill "$OPERATOR_PID" 2>/dev/null || true
+  [ -n "$TRIGGER_PID" ] && kill "$TRIGGER_PID" 2>/dev/null || true
   [ -n "$DASHBOARD_PID" ] && kill "$DASHBOARD_PID" 2>/dev/null || true
   wait 2>/dev/null || true
 }
@@ -85,6 +87,15 @@ echo "Operator running (PID $OPERATOR_PID)"
 
 # Give operator a moment to start
 sleep 2
+
+# ── Start trigger gateway in background ─────────────────────────────────────
+
+echo ""
+echo "Starting trigger gateway..."
+cd "$SCRIPT_DIR/go"
+K8S_NAMESPACE=boilerhouse go run ./cmd/trigger/ &
+TRIGGER_PID=$!
+echo "Trigger gateway running (PID $TRIGGER_PID)"
 
 # ── Start dashboard in background ───────────────────────────────────────────
 
