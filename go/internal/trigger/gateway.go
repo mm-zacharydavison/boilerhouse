@@ -260,17 +260,30 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 	claimName := fmt.Sprintf("trigger-%s-%s", workloadRef, tenantId)
 	claimKey := types.NamespacedName{Name: claimName, Namespace: g.namespace}
 
-	// Check if claim already exists and is active.
+	// Check if claim already exists.
 	var existing v1alpha1.BoilerhouseClaim
 	err := g.client.Get(ctx, claimKey, &existing)
 	if err == nil {
 		if existing.Status.Phase == "Active" && existing.Status.Endpoint != nil && existing.Status.Endpoint.Host != "" {
 			return formatEndpoint(existing.Status.Endpoint), nil
 		}
-		// Claim exists but not active yet (or endpoint not populated); fall through to poll.
-	} else if !apierrors.IsNotFound(err) {
-		return "", fmt.Errorf("get claim: %w", err)
-	} else {
+		// If the claim is in a terminal non-Active state, delete it so we
+		// can create a fresh one below. Released/Error never transition
+		// back to Active; polling them would just time out.
+		phase := existing.Status.Phase
+		if phase == "Released" || phase == "Error" || phase == "Releasing" {
+			if err := g.client.Delete(ctx, &existing); err != nil && !apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("delete terminal claim (phase=%s): %w", phase, err)
+			}
+			// Wait briefly for the delete to propagate before re-creating.
+			if err := g.waitForClaimDeleted(ctx, claimKey); err != nil {
+				return "", fmt.Errorf("waiting for terminal claim delete: %w", err)
+			}
+			err = apierrors.NewNotFound(v1alpha1.GroupVersion.WithResource("boilerhouseclaims").GroupResource(), claimName)
+		}
+	}
+
+	if apierrors.IsNotFound(err) {
 		// Create the claim.
 		resume := true
 		claim := &v1alpha1.BoilerhouseClaim{
@@ -284,15 +297,39 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 				Resume:      &resume,
 			},
 		}
-		if err := g.client.Create(ctx, claim); err != nil {
-			if !apierrors.IsAlreadyExists(err) {
-				return "", fmt.Errorf("create claim: %w", err)
-			}
+		if err := g.client.Create(ctx, claim); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("create claim: %w", err)
 		}
+	} else if err != nil {
+		return "", fmt.Errorf("get claim: %w", err)
 	}
 
 	// Poll until claim is Active.
 	return g.waitForClaim(ctx, claimKey)
+}
+
+// waitForClaimDeleted polls until the claim no longer exists or a short
+// timeout expires. Used after deleting a terminal claim so a fresh one can
+// be created under the same name without racing on finalizers.
+func (g *Gateway) waitForClaimDeleted(ctx context.Context, key types.NamespacedName) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for claim %s to delete", key.Name)
+		case <-ticker.C:
+			var claim v1alpha1.BoilerhouseClaim
+			err := g.client.Get(ctx, key, &claim)
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+		}
+	}
 }
 
 // waitForClaim polls the claim until it is Active or the timeout expires.
