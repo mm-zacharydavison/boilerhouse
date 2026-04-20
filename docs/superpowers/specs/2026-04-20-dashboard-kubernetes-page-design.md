@@ -21,7 +21,7 @@ Add a new sidebar page called **kubernetes** to the dashboard that lists all Boi
 | Service | native |
 | NetworkPolicy | native |
 
-Native objects are filtered by the label `app.kubernetes.io/managed-by=boilerhouse`. CRDs are listed without a label filter (the CRD itself implies ownership).
+Native objects are filtered by the label `boilerhouse.dev/managed=true`, which the operator already stamps on every Pod, PVC, Service, and NetworkPolicy it creates (see `go/internal/operator/translator.go` and `snapshots.go`). CRDs are listed without a label filter (the CRD itself implies ownership).
 
 ### Non-goals
 
@@ -30,15 +30,6 @@ Native objects are filtered by the label `app.kubernetes.io/managed-by=boilerhou
 - Editing, deleting, or exec-ing from this page.
 - WebSocket live streaming (polling is sufficient).
 - Gating behind a dev/debug flag — the nav item is always visible.
-
-## Operator change: managed-by label
-
-The operator must stamp `app.kubernetes.io/managed-by=boilerhouse` on every object it creates:
-
-- Pods built by `go/internal/operator/translator.go`.
-- PVCs, Services, and NetworkPolicies built by the Workload and Pool controllers.
-
-Add the label alongside existing labels (do not replace them). The controllers should include the label in their ownership filters when listing resources during reconciliation only if they already filter by label — otherwise leave listing logic alone. The label's purpose here is purely to let external consumers (this debug endpoint, `kubectl get ... -l ...`) identify Boilerhouse-owned objects.
 
 ## Backend
 
@@ -91,7 +82,7 @@ Per-kind `summary` fields (used to render row columns on the frontend):
 - Use the same controller-runtime client already injected into other handlers.
 - Namespace comes from `K8S_NAMESPACE` env (the value already used elsewhere).
 - Fetch all eight kinds in parallel with `errgroup`. If one kind fails, the whole request fails with a 500 and the first error — this is a debug endpoint and partial results would be misleading.
-- Filter native kinds with `client.MatchingLabels{"app.kubernetes.io/managed-by": "boilerhouse"}`.
+- Filter native kinds with `client.MatchingLabels{operator.LabelManaged: "true"}` (i.e. `boilerhouse.dev/managed=true`).
 - `Raw` is populated by marshaling the typed object back to JSON; no masking of Secrets is needed because Secrets are not included.
 
 ### Testing
@@ -173,8 +164,6 @@ The dashboard has no existing test infrastructure. Skip frontend tests; the envt
   - `go/internal/api/routes_debug_test.go`
   - `ts/apps/dashboard/src/pages/Kubernetes.tsx`
 - **Modified**:
-  - `go/internal/api/routes.go` (or wherever routes are wired) — register `/debug/resources`.
-  - `go/internal/operator/translator.go` — add managed-by label to Pod spec.
-  - `go/internal/operator/pool_controller.go`, `claim_controller.go`, `workload_controller.go` — add the label to any PVCs/Services/NetworkPolicies they create.
+  - `go/internal/api/server.go` — register `/debug/resources` route.
   - `ts/apps/dashboard/src/app.tsx` — add nav item and route.
   - `ts/apps/dashboard/src/api.ts` — add `DebugResourcesResponse` types and `fetchDebugResources`.
