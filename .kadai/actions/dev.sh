@@ -88,14 +88,30 @@ echo "Operator running (PID $OPERATOR_PID)"
 # Give operator a moment to start
 sleep 2
 
-# ── Start trigger gateway in background ─────────────────────────────────────
+# ── Build + deploy trigger gateway in-cluster ──────────────────────────────
+#
+# The trigger gateway must run inside the cluster: it dials pod IPs
+# (e.g. 10.244.x.y) to forward events to workload containers, and those
+# IPs are only routable from inside the K8s network.
 
 echo ""
-echo "Starting trigger gateway..."
-cd "$SCRIPT_DIR/go"
-K8S_NAMESPACE=boilerhouse go run ./cmd/trigger/ &
+echo "Building boilerhouse-trigger image in minikube's docker..."
+(
+  eval "$(minikube -p "$PROFILE" docker-env)"
+  cd "$SCRIPT_DIR/go"
+  docker build -q -t boilerhouse-trigger:latest -f Dockerfile.trigger . >/dev/null
+)
+echo "Image built"
+
+echo "Deploying trigger gateway..."
+kubectl apply -f "$SCRIPT_DIR/config/deploy/trigger.yaml" >/dev/null
+kubectl -n boilerhouse rollout restart deployment/boilerhouse-trigger >/dev/null
+kubectl -n boilerhouse rollout status deployment/boilerhouse-trigger --timeout=60s
+
+echo "Streaming trigger gateway logs..."
+kubectl -n boilerhouse logs -f deployment/boilerhouse-trigger --prefix=false &
 TRIGGER_PID=$!
-echo "Trigger gateway running (PID $TRIGGER_PID)"
+echo "Trigger gateway log tail (PID $TRIGGER_PID)"
 
 # ── Start dashboard in background ───────────────────────────────────────────
 
