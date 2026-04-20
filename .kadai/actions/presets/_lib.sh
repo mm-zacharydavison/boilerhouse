@@ -134,6 +134,32 @@ prompt_allowlist() {
   printf -v "${var}_JSON" '%s' "$json"
 }
 
+# ensure_allowlist PRESET_ID VAR PROMPT
+# Reads the allowlist JSON from a per-preset ConfigMap if one exists;
+# otherwise prompts (via prompt_allowlist) and saves the JSON to a fresh
+# ConfigMap so the next run reuses it. User can rotate with:
+#   kubectl -n boilerhouse delete configmap boilerhouse-preset-<preset-id>
+ensure_allowlist() {
+  local preset_id="$1" var="$2" prompt="$3"
+  local cm="boilerhouse-preset-$preset_id"
+
+  if kubectl -n "$PRESET_NS" get configmap "$cm" >/dev/null 2>&1; then
+    local existing
+    existing="$(kubectl -n "$PRESET_NS" get configmap "$cm" -o jsonpath='{.data.allowlist}')"
+    if [ -n "$existing" ]; then
+      printf -v "${var}_JSON" '%s' "$existing"
+      echo "  reusing allowlist from ConfigMap $cm: $existing"
+      return 0
+    fi
+  fi
+
+  prompt_allowlist "$var" "$prompt"
+  local json_var="${var}_JSON"
+  kubectl -n "$PRESET_NS" create configmap "$cm" \
+    --from-literal="allowlist=${!json_var}" >/dev/null
+  echo "  saved allowlist to ConfigMap $cm"
+}
+
 # ── Template rendering and apply ────────────────────────────────────────────
 
 # stage_manifests SRC_DIR DST_DIR FILE...

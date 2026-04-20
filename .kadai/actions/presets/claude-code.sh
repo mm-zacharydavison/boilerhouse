@@ -34,7 +34,7 @@ ensure_secret anthropic-api       key   ANTHROPIC_API_KEY \
 echo ""
 
 echo "Allowlist:"
-prompt_allowlist TELEGRAM_ALLOWLIST \
+ensure_allowlist claude-code TELEGRAM_ALLOWLIST \
   "Telegram usernames allowed to use this agent (comma-separated, e.g. alice,bob)"
 echo "  rendered: $TELEGRAM_ALLOWLIST_JSON"
 echo ""

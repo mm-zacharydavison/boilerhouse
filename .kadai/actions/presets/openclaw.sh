@@ -35,7 +35,7 @@ ensure_secret_generated openclaw-gateway-token token OPENCLAW_GATEWAY_TOKEN
 echo ""
 
 echo "Allowlist:"
-prompt_allowlist TELEGRAM_ALLOWLIST \
+ensure_allowlist openclaw TELEGRAM_ALLOWLIST \
   "Telegram usernames allowed to use this agent (comma-separated, e.g. alice,bob)"
 echo "  rendered: $TELEGRAM_ALLOWLIST_JSON"
 echo ""
