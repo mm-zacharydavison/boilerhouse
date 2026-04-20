@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/zdavison/boilerhouse/go/internal/scope"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -80,38 +81,47 @@ func (s *Server) buildRouter() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 
-			// Workloads
-			r.Post("/workloads", s.createWorkload)
-			r.Get("/workloads", s.listWorkloads)
-			r.Get("/workloads/{name}", s.getWorkload)
-			r.Put("/workloads/{name}", s.updateWorkload)
-			r.Delete("/workloads/{name}", s.deleteWorkload)
-			r.Get("/workloads/{name}/snapshots", s.listWorkloadSnapshots)
+			// Admin-only routes (dashboard + operators). Scoped pod tokens
+			// have no access here.
+			r.Group(func(r chi.Router) {
+				r.Use(requireAdmin)
 
-			// Snapshots
-			r.Get("/snapshots", s.listSnapshots)
+				// Workloads
+				r.Post("/workloads", s.createWorkload)
+				r.Get("/workloads", s.listWorkloads)
+				r.Get("/workloads/{name}", s.getWorkload)
+				r.Put("/workloads/{name}", s.updateWorkload)
+				r.Delete("/workloads/{name}", s.deleteWorkload)
+				r.Get("/workloads/{name}/snapshots", s.listWorkloadSnapshots)
 
-			// Tenants
-			r.Post("/tenants/{id}/claim", s.claimInstance)
-			r.Post("/tenants/{id}/release", s.releaseInstance)
-			r.Get("/tenants/{id}", s.getTenant)
-			r.Get("/tenants", s.listTenants)
+				// Snapshots
+				r.Get("/snapshots", s.listSnapshots)
 
-			// Instances
-			r.Get("/instances", s.listInstances)
-			r.Get("/instances/{id}", s.getInstance)
-			r.Get("/instances/{id}/logs", s.getInstanceLogs)
-			r.Post("/instances/{id}/exec", s.execInInstance)
-			r.Post("/instances/{id}/destroy", s.destroyInstance)
+				// Tenants (includes claim/release — agents do not claim
+				// themselves; the dashboard/orchestrator does).
+				r.Post("/tenants/{id}/claim", s.claimInstance)
+				r.Post("/tenants/{id}/release", s.releaseInstance)
+				r.Get("/tenants/{id}", s.getTenant)
+				r.Get("/tenants", s.listTenants)
 
-			// Triggers
-			r.Post("/triggers", s.createTrigger)
-			r.Get("/triggers", s.listTriggers)
-			r.Get("/triggers/{id}", s.getTrigger)
-			r.Delete("/triggers/{id}", s.deleteTrigger)
+				// Instances
+				r.Get("/instances", s.listInstances)
+				r.Get("/instances/{id}", s.getInstance)
+				r.Get("/instances/{id}/logs", s.getInstanceLogs)
+				r.Post("/instances/{id}/exec", s.execInInstance)
+				r.Post("/instances/{id}/destroy", s.destroyInstance)
 
-			// Debug
-			r.Get("/debug/resources", s.listDebugResources)
+				// Debug
+				r.Get("/debug/resources", s.listDebugResources)
+			})
+
+			// Triggers — the only surface scoped pod tokens can reach.
+			// Cross-tenant isolation is enforced inside each handler
+			// (type==cron, own-tenant, own-workload).
+			r.With(requireScope(scope.AgentTriggersRead)).Get("/triggers", s.listTriggers)
+			r.With(requireScope(scope.AgentTriggersRead)).Get("/triggers/{id}", s.getTrigger)
+			r.With(requireScope(scope.AgentTriggersWrite)).Post("/triggers", s.createTrigger)
+			r.With(requireScope(scope.AgentTriggersWrite)).Delete("/triggers/{id}", s.deleteTrigger)
 		})
 	})
 

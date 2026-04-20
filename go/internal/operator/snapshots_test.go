@@ -78,3 +78,36 @@ func TestNewSnapshotManager(t *testing.T) {
 	assert.NotNil(t, sm)
 	assert.Equal(t, "test-ns", sm.namespace)
 }
+
+func TestSnapshotSHAPath(t *testing.T) {
+	assert.Equal(t, "/snapshots/alice/wl.tar.gz.sha256", snapshotSHAPath("alice", "wl"))
+}
+
+func TestHashArchive_DeterministicHex(t *testing.T) {
+	// Known sha256 of "hello world".
+	const want = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	assert.Equal(t, want, hashArchive([]byte("hello world")))
+}
+
+func TestVerifyArchive_RoundTrip(t *testing.T) {
+	payload := []byte("some archive bytes")
+	sum := hashArchive(payload)
+	assert.NoError(t, verifyArchive(payload, sum))
+	// Whitespace padding (as might arrive from a file read) is tolerated.
+	assert.NoError(t, verifyArchive(payload, "\n"+sum+"\n"))
+}
+
+func TestVerifyArchive_MissingChecksum(t *testing.T) {
+	err := verifyArchive([]byte("x"), "")
+	assert.ErrorContains(t, err, "missing checksum")
+	err = verifyArchive([]byte("x"), "  \n")
+	assert.ErrorContains(t, err, "missing checksum")
+}
+
+func TestVerifyArchive_Tampered(t *testing.T) {
+	original := []byte("archive v1")
+	sum := hashArchive(original)
+	tampered := []byte("archive v2")
+	err := verifyArchive(tampered, sum)
+	assert.ErrorContains(t, err, "checksum mismatch")
+}

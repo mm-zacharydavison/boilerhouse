@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/zdavison/boilerhouse/go/internal/scope"
 )
@@ -86,4 +87,42 @@ func RequireOwnTenant(ctx context.Context, tenantID string) error {
 		return fmt.Errorf("cannot access another tenant's resources")
 	}
 	return nil
+}
+
+// requireAdmin is chi middleware that rejects any request not authenticated as
+// AuthAdmin. It assumes authMiddleware has already populated the AuthContext.
+func requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := AuthFromContext(r.Context())
+		if !ok {
+			// Dev mode (no admin key, no token store): authMiddleware is a
+			// no-op and no AuthContext is attached. Treat as admin.
+			next.ServeHTTP(w, r)
+			return
+		}
+		if ac.Kind != AuthAdmin {
+			writeError(w, http.StatusForbidden, "admin access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireScope returns chi middleware that rejects requests missing the given
+// scope. Admin callers always pass.
+func requireScope(s scope.Scope) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ac, ok := AuthFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !ac.HasScope(s) {
+				writeError(w, http.StatusForbidden, "missing scope: "+string(s))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

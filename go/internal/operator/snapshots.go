@@ -3,6 +3,8 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -21,7 +23,29 @@ const (
 	snapshotHelperImage    = "busybox:1.36"
 	snapshotsPVCSize       = "50Gi"
 	snapshotsMountPath     = "/snapshots"
+	snapshotHelperUID      = int64(65534) // nobody
 )
+
+// hashArchive returns the lowercase hex sha256 of the given bytes.
+func hashArchive(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+// verifyArchive returns nil if sha (lowercase hex, possibly whitespace-padded)
+// matches sha256(archive). Used by InjectSnapshot to detect partial writes or
+// PVC-level corruption before streaming into a tenant pod.
+func verifyArchive(archive []byte, sha string) error {
+	want := strings.TrimSpace(sha)
+	if want == "" {
+		return fmt.Errorf("missing checksum")
+	}
+	got := hashArchive(archive)
+	if got != want {
+		return fmt.Errorf("checksum mismatch: want %s, got %s", want, got)
+	}
+	return nil
+}
 
 // Snapshotter abstracts overlay snapshot storage so the claim reconciler can
 // be unit-tested without a real kubectl-backed SnapshotManager.
@@ -53,6 +77,11 @@ func snapshotPath(tenantId, workloadName string) string {
 	return fmt.Sprintf("/snapshots/%s/%s.tar.gz", tenantId, workloadName)
 }
 
+// snapshotSHAPath returns the path of the sidecar checksum for a snapshot.
+func snapshotSHAPath(tenantId, workloadName string) string {
+	return snapshotPath(tenantId, workloadName) + ".sha256"
+}
+
 // ExtractAndStore extracts overlay directories from a running Pod and stores
 // the resulting tar.gz archive in the snapshots PVC.
 func (s *SnapshotManager) ExtractAndStore(ctx context.Context, podName, tenantId, workloadName string, overlayDirs []string) error {
@@ -78,8 +107,18 @@ func (s *SnapshotManager) ExtractAndStore(ctx context.Context, podName, tenantId
 		return nil // nothing to store
 	}
 
-	// 2. Write the archive to the snapshots PVC via the helper Pod.
+	// 2. Write the archive + sha256 sidecar atomically to the snapshots PVC.
 	return s.writeToSnapshotsPVC(ctx, tenantId, workloadName, archive.Bytes())
+}
+
+// readSnapshotChecksum returns the stored sha256 hex for a tenant's snapshot,
+// or an error if the sidecar is missing.
+func (s *SnapshotManager) readSnapshotChecksum(ctx context.Context, tenantId, workloadName string) (string, error) {
+	raw, err := s.readFromSnapshotsPVC(ctx, snapshotSHAPath(tenantId, workloadName))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // HasSnapshot checks whether a snapshot archive exists for the given tenant+workload.
@@ -92,7 +131,9 @@ func (s *SnapshotManager) HasSnapshot(ctx context.Context, tenantId, workloadNam
 }
 
 // InjectSnapshot reads a snapshot from the PVC and injects it into a running Pod
-// via kubectl exec tar extract.
+// via kubectl exec tar extract. The sha256 sidecar is verified before any bytes
+// stream into the tenant pod — a mismatch or missing sidecar fails the inject
+// so the claim reconciler can retry.
 func (s *SnapshotManager) InjectSnapshot(ctx context.Context, podName, tenantId, workloadName string) error {
 	path := snapshotPath(tenantId, workloadName)
 
@@ -103,6 +144,15 @@ func (s *SnapshotManager) InjectSnapshot(ctx context.Context, podName, tenantId,
 	}
 	if len(archive) == 0 {
 		return nil
+	}
+
+	// 1b. Verify integrity against the sidecar checksum.
+	sha, err := s.readSnapshotChecksum(ctx, tenantId, workloadName)
+	if err != nil {
+		return fmt.Errorf("read snapshot checksum: %w", err)
+	}
+	if err := verifyArchive(archive, sha); err != nil {
+		return fmt.Errorf("snapshot %s: %w", path, err)
 	}
 
 	// 2. Inject into the target Pod.
@@ -122,15 +172,17 @@ func (s *SnapshotManager) InjectSnapshot(ctx context.Context, podName, tenantId,
 	return nil
 }
 
-// DeleteSnapshot removes a stored snapshot for a tenant+workload.
+// DeleteSnapshot removes a stored snapshot (archive + sidecar checksum) for a
+// tenant+workload.
 func (s *SnapshotManager) DeleteSnapshot(ctx context.Context, tenantId, workloadName string) error {
 	if err := s.ensureHelperPod(ctx); err != nil {
 		return fmt.Errorf("ensuring helper pod: %w", err)
 	}
 	path := snapshotPath(tenantId, workloadName)
+	shaPath := snapshotSHAPath(tenantId, workloadName)
 
 	cmd := exec.CommandContext(ctx, "kubectl", "exec", snapshotHelperPodName, "-n", s.namespace,
-		"--", "rm", "-f", path)
+		"--", "rm", "-f", path, shaPath)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -203,7 +255,9 @@ func (s *SnapshotManager) ensureHelperPod(ctx context.Context) error {
 	}
 
 	falseVal := false
+	trueVal := true
 	terminationGrace := int64(1)
+	uid := int64(snapshotHelperUID)
 	pod = corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      snapshotHelperPodName,
@@ -225,6 +279,11 @@ func (s *SnapshotManager) ensureHelperPod(ctx context.Context) error {
 							MountPath: snapshotsMountPath,
 						},
 					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: &falseVal,
+						ReadOnlyRootFilesystem:   &trueVal,
+						Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					},
 				},
 			},
 			Volumes: []corev1.Volume{
@@ -240,6 +299,15 @@ func (s *SnapshotManager) ensureHelperPod(ctx context.Context) error {
 			RestartPolicy:                 corev1.RestartPolicyAlways,
 			AutomountServiceAccountToken:  &falseVal,
 			TerminationGracePeriodSeconds: &terminationGrace,
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: &trueVal,
+				RunAsUser:    &uid,
+				RunAsGroup:   &uid,
+				FSGroup:      &uid, // make /snapshots writable by UID 65534
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 		},
 	}
 
@@ -249,29 +317,40 @@ func (s *SnapshotManager) ensureHelperPod(ctx context.Context) error {
 	return nil
 }
 
-// writeToSnapshotsPVC writes data to a path within the snapshots PVC via the helper Pod.
+// writeToSnapshotsPVC atomically writes the archive + sha256 sidecar for a
+// tenant/workload snapshot. The archive is first streamed to "<path>.tmp" and
+// the checksum to "<path>.sha256.tmp", then both are renamed into place in a
+// single shell invocation. A partial stream therefore never replaces a
+// previously-good snapshot.
 func (s *SnapshotManager) writeToSnapshotsPVC(ctx context.Context, tenantId, workloadName string, data []byte) error {
 	if err := s.ensureHelperPod(ctx); err != nil {
 		return fmt.Errorf("ensuring helper pod: %w", err)
 	}
 
 	path := snapshotPath(tenantId, workloadName)
+	shaPath := snapshotSHAPath(tenantId, workloadName)
 	dir := fmt.Sprintf("/snapshots/%s", tenantId)
+	sum := hashArchive(data)
 
-	// mkdir -p the tenant directory.
-	mkdirCmd := exec.CommandContext(ctx, "kubectl", "exec", snapshotHelperPodName, "-n", s.namespace,
-		"--", "mkdir", "-p", dir)
-	if err := mkdirCmd.Run(); err != nil {
-		return fmt.Errorf("creating snapshot dir %s: %w", dir, err)
-	}
+	// tenantId/workloadName are controller-originated (not user input) so
+	// shell-interpolating them into the one-liner below is safe. The
+	// checksum is hex, also safe. If any of these gain user-controlled
+	// sources in the future, switch this to a stdin-fed shell script.
+	script := fmt.Sprintf(
+		"set -e; mkdir -p %s; cat > %s.tmp; printf '%%s' %s > %s.tmp; mv %s.tmp %s; mv %s.tmp %s",
+		dir,
+		path,
+		sum, shaPath,
+		path, path,
+		shaPath, shaPath,
+	)
 
-	// Write the data via stdin.
-	writeCmd := exec.CommandContext(ctx, "kubectl", "exec", "-i", snapshotHelperPodName, "-n", s.namespace,
-		"--", "sh", "-c", fmt.Sprintf("cat > %s", path))
-	writeCmd.Stdin = bytes.NewReader(data)
+	cmd := exec.CommandContext(ctx, "kubectl", "exec", "-i", snapshotHelperPodName, "-n", s.namespace,
+		"--", "sh", "-c", script)
+	cmd.Stdin = bytes.NewReader(data)
 	var stderr bytes.Buffer
-	writeCmd.Stderr = &stderr
-	if err := writeCmd.Run(); err != nil {
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("writing snapshot %s: %w (stderr: %s)", path, err, stderr.String())
 	}
 
