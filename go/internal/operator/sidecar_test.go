@@ -48,7 +48,7 @@ func TestInjectSidecar(t *testing.T) {
 
 	// Verify envoy resources.
 	assert.Equal(t, "50m", envoyContainer.Resources.Requests.Cpu().String())
-	assert.Equal(t, "100m", envoyContainer.Resources.Limits.Cpu().String())
+	assert.Equal(t, "200m", envoyContainer.Resources.Limits.Cpu().String())
 
 	// Verify envoy security context: NET_BIND_SERVICE added so envoy can
 	// bind privileged ports 80/443 as non-root.
