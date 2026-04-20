@@ -70,15 +70,7 @@ func Translate(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (*Tran
 	// Inject Envoy sidecar if ProxyConfig is provided.
 	if opts.ProxyConfig != nil {
 		configMapName := fmt.Sprintf("proxy-%s", opts.InstanceId)
-		// Collect the domains envoy is configured for so that each one
-		// can be aliased to 127.0.0.1 in the pod's /etc/hosts.
-		var domains []string
-		if opts.ProxyConfig.TLS != nil {
-			for _, c := range opts.ProxyConfig.TLS.Certs {
-				domains = append(domains, c.Domain)
-			}
-		}
-		InjectSidecar(result.Pod, configMapName, domains)
+		InjectSidecar(result.Pod, configMapName)
 		result.ConfigMap = buildProxyConfigMap(opts, labels, configMapName)
 	}
 

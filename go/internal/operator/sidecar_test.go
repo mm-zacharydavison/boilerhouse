@@ -29,44 +29,62 @@ func TestInjectSidecar(t *testing.T) {
 		},
 	}
 
-	InjectSidecar(pod, "my-proxy-config", []string{"api.anthropic.com", "api.openai.com"})
+	InjectSidecar(pod, "my-proxy-config")
+
+	// Verify init container installs iptables rules.
+	require.Len(t, pod.Spec.InitContainers, 1)
+	initC := pod.Spec.InitContainers[0]
+	assert.Equal(t, "iptables-init", initC.Name)
+	assert.Equal(t, IPTablesImage, initC.Image)
+	require.NotNil(t, initC.SecurityContext)
+	require.NotNil(t, initC.SecurityContext.RunAsUser)
+	assert.Equal(t, int64(0), *initC.SecurityContext.RunAsUser, "iptables needs to run as root")
+	require.NotNil(t, initC.SecurityContext.Capabilities)
+	assert.Equal(t, []corev1.Capability{"ALL"}, initC.SecurityContext.Capabilities.Drop)
+	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, initC.SecurityContext.Capabilities.Add)
+	// Script should redirect 80/443 to envoy ports and exempt envoy's UID.
+	require.Len(t, initC.Command, 3)
+	script := initC.Command[2]
+	assert.Contains(t, script, "--uid-owner 101 -j RETURN")
+	assert.Contains(t, script, "--dport 80  -j REDIRECT --to-port 18080")
+	assert.Contains(t, script, "--dport 443 -j REDIRECT --to-port 18443")
+	assert.Contains(t, script, "169.254.0.0/16 -j DROP")
 
 	// Verify envoy container was added.
 	require.Len(t, pod.Spec.Containers, 2)
-
 	envoyContainer := pod.Spec.Containers[1]
 	assert.Equal(t, "envoy", envoyContainer.Name)
 	assert.Equal(t, EnvoyImage, envoyContainer.Image)
 	assert.Equal(t, []string{"envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"}, envoyContainer.Command)
 
-	// Verify envoy ports (transparent-proxy mode: 80 + 443).
+	// Non-privileged ports — no NET_BIND_SERVICE needed.
 	require.Len(t, envoyContainer.Ports, 2)
 	assert.Equal(t, int32(EnvoyProxyPort), envoyContainer.Ports[0].ContainerPort)
 	assert.Equal(t, int32(EnvoyTLSPort), envoyContainer.Ports[1].ContainerPort)
-	assert.Equal(t, int32(80), envoyContainer.Ports[0].ContainerPort)
-	assert.Equal(t, int32(443), envoyContainer.Ports[1].ContainerPort)
+	assert.Equal(t, int32(18080), envoyContainer.Ports[0].ContainerPort)
+	assert.Equal(t, int32(18443), envoyContainer.Ports[1].ContainerPort)
 
-	// Verify envoy resources.
-	assert.Equal(t, "100m", envoyContainer.Resources.Requests.Cpu().String())
-	assert.Equal(t, "500m", envoyContainer.Resources.Limits.Cpu().String())
+	assert.Equal(t, "50m", envoyContainer.Resources.Requests.Cpu().String())
+	assert.Equal(t, "200m", envoyContainer.Resources.Limits.Cpu().String())
 
-	// Verify envoy security context: NET_BIND_SERVICE added so envoy can
-	// bind privileged ports 80/443 as non-root.
+	// Envoy runs as uid 101 (matches iptables exemption) with all caps dropped.
 	require.NotNil(t, envoyContainer.SecurityContext)
+	require.NotNil(t, envoyContainer.SecurityContext.RunAsUser)
+	assert.Equal(t, int64(101), *envoyContainer.SecurityContext.RunAsUser)
 	require.NotNil(t, envoyContainer.SecurityContext.Capabilities)
 	assert.Equal(t, []corev1.Capability{"ALL"}, envoyContainer.SecurityContext.Capabilities.Drop)
-	assert.Equal(t, []corev1.Capability{"NET_BIND_SERVICE"}, envoyContainer.SecurityContext.Capabilities.Add)
+	assert.Empty(t, envoyContainer.SecurityContext.Capabilities.Add, "no added caps — iptables does the heavy lifting")
 	require.NotNil(t, envoyContainer.SecurityContext.AllowPrivilegeEscalation)
 	assert.False(t, *envoyContainer.SecurityContext.AllowPrivilegeEscalation)
 	require.NotNil(t, envoyContainer.SecurityContext.ReadOnlyRootFilesystem)
 	assert.True(t, *envoyContainer.SecurityContext.ReadOnlyRootFilesystem)
 
-	// Verify envoy volume mount.
+	// Envoy config volume mount.
 	require.Len(t, envoyContainer.VolumeMounts, 1)
 	assert.Equal(t, "proxy-config", envoyContainer.VolumeMounts[0].Name)
 	assert.Equal(t, "/etc/envoy", envoyContainer.VolumeMounts[0].MountPath)
 
-	// Verify proxy-config volume.
+	// proxy-config volume.
 	found := false
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == "proxy-config" {
@@ -77,12 +95,10 @@ func TestInjectSidecar(t *testing.T) {
 	}
 	assert.True(t, found, "proxy-config volume should exist")
 
-	// Verify hostAliases redirect each credential domain to envoy.
-	require.Len(t, pod.Spec.HostAliases, 1)
-	assert.Equal(t, "127.0.0.1", pod.Spec.HostAliases[0].IP)
-	assert.ElementsMatch(t, []string{"api.anthropic.com", "api.openai.com"}, pod.Spec.HostAliases[0].Hostnames)
+	// No hostAliases — iptables does the redirect.
+	assert.Empty(t, pod.Spec.HostAliases)
 
-	// Verify main container env: CA certs only, no HTTP_PROXY in transparent mode.
+	// Main container: CA certs only, no proxy env vars.
 	mainContainer := pod.Spec.Containers[0]
 	envMap := map[string]string{}
 	for _, e := range mainContainer.Env {
@@ -94,7 +110,7 @@ func TestInjectSidecar(t *testing.T) {
 	assert.NotContains(t, envMap, "https_proxy")
 	assert.Equal(t, "/etc/envoy/ca.crt", envMap["NODE_EXTRA_CA_CERTS"])
 
-	// Verify CA cert volume mount on main container.
+	// CA cert volume mount on main container.
 	var caMount *corev1.VolumeMount
 	for i := range mainContainer.VolumeMounts {
 		if mainContainer.VolumeMounts[i].MountPath == "/etc/envoy/ca.crt" {

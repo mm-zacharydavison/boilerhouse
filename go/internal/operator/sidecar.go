@@ -15,13 +15,20 @@ import (
 
 const (
 	EnvoyImage = "docker.io/envoyproxy/envoy:v1.32-latest"
-	// Transparent-proxy ports. Envoy binds 80 and 443 so that clients
-	// requesting http://api.anthropic.com / https://api.anthropic.com
-	// reach envoy directly via hostAliases (127.0.0.1). Admin stays on
-	// a non-privileged port.
-	EnvoyProxyPort = 80
-	EnvoyTLSPort   = 443
+	// IPTablesImage is a minimal image used by the init container that
+	// installs the NAT redirect rules directing pod outbound traffic
+	// into envoy.
+	IPTablesImage = "docker.io/alpine:3.21"
+	// Non-privileged ports envoy listens on. Client traffic is transparently
+	// redirected here by iptables NAT rules installed at pod startup.
+	EnvoyProxyPort = 18080
+	EnvoyTLSPort   = 18443
 	EnvoyAdminPort = 18081
+	// EnvoyRunAsUID is the uid envoy runs as (the default "envoy" user in
+	// the envoyproxy image). iptables rules use this to exempt envoy's own
+	// outbound traffic from the redirect — otherwise every upstream call
+	// would loop back into envoy itself.
+	EnvoyRunAsUID = int64(101)
 )
 
 // ProxyConfig holds pre-generated Envoy configuration and CA cert for sidecar injection.
@@ -31,20 +38,54 @@ type ProxyConfig struct {
 	TLS       *envoy.TLSMaterial
 }
 
-// InjectSidecar modifies a Pod spec to add the Envoy sidecar container and
-// wire the main container for transparent credential injection:
-//   - envoy binds privileged ports 80 + 443 (via NET_BIND_SERVICE)
-//   - each credential domain is aliased in /etc/hosts to 127.0.0.1 so client
-//     traffic to http(s)://<domain>/... goes straight to envoy
-//   - the main container trusts envoy's CA (for TLS)
+// InjectSidecar modifies a Pod spec for transparent credential injection:
 //
-// No HTTP_PROXY / HTTPS_PROXY env vars are set — clients connect to the
-// real domain as if this pod were it, without having to understand proxies.
-func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
+//   - An init container runs iptables and installs NAT rules redirecting
+//     outbound ports 80/443 to envoy's listeners on 127.0.0.1:18080/18443.
+//     The rules exempt envoy's own UID so envoy's upstream calls to the real
+//     destination aren't caught by the redirect (without this exemption the
+//     sidecar infinite-loops through itself).
+//   - Envoy runs as uid 101 on 127.0.0.1 (no privileged ports, no caps).
+//   - Main container trusts envoy's generated CA via NODE_EXTRA_CA_CERTS.
+//
+// Clients are unaware of the proxy — they connect to the real domain on
+// standard ports; the kernel does the redirection.
+func InjectSidecar(pod *corev1.Pod, configMapName string) {
 	falseVal := false
 	readOnly := true
+	runAsEnvoy := EnvoyRunAsUID
+	runAsRoot := int64(0)
 
-	// 1. Add envoy container.
+	// 1. Init container: install iptables redirect rules.
+	initContainer := corev1.Container{
+		Name:  "iptables-init",
+		Image: IPTablesImage,
+		Command: []string{"sh", "-c", buildIPTablesScript()},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("16Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			// NET_ADMIN is required to modify netfilter rules. Init runs
+			// as root (apk needs write access to /var/cache/apk).
+			RunAsUser: &runAsRoot,
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+				Add:  []corev1.Capability{"NET_ADMIN"},
+			},
+			AllowPrivilegeEscalation: &falseVal,
+		},
+	}
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, initContainer)
+
+	// 2. Envoy sidecar: listens on loopback, runs as uid 101 (must match
+	// iptables --uid-owner exemption).
 	envoyContainer := corev1.Container{
 		Name:    "envoy",
 		Image:   EnvoyImage,
@@ -55,20 +96,18 @@ func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("500m"),
-				corev1.ResourceMemory: resource.MustParse("1Gi"),
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			// Drop everything, then grant only NET_BIND_SERVICE so envoy
-			// can bind privileged ports 80 + 443 as non-root.
+			RunAsUser: &runAsEnvoy,
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
-				Add:  []corev1.Capability{"NET_BIND_SERVICE"},
 			},
 			AllowPrivilegeEscalation: &falseVal,
 			ReadOnlyRootFilesystem:   &readOnly,
@@ -83,7 +122,7 @@ func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
 	}
 	pod.Spec.Containers = append(pod.Spec.Containers, envoyContainer)
 
-	// 2. Add proxy-config volume.
+	// 3. proxy-config volume (envoy YAML + CA cert + per-domain certs).
 	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 		Name: "proxy-config",
 		VolumeSource: corev1.VolumeSource{
@@ -95,16 +134,8 @@ func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
 		},
 	})
 
-	// 3. Point each credential domain at the local envoy via /etc/hosts.
-	if len(domains) > 0 {
-		pod.Spec.HostAliases = append(pod.Spec.HostAliases, corev1.HostAlias{
-			IP:        "127.0.0.1",
-			Hostnames: append([]string(nil), domains...),
-		})
-	}
-
-	// 4. Main container: trust envoy's CA; no HTTP_PROXY env vars (traffic
-	// is redirected via hostAliases, not a forward proxy).
+	// 4. Main container: trust envoy's CA. No proxy env vars — iptables
+	// handles the redirect transparently.
 	if len(pod.Spec.Containers) > 0 {
 		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{
 			Name: "NODE_EXTRA_CA_CERTS", Value: "/etc/envoy/ca.crt",
@@ -116,6 +147,24 @@ func InjectSidecar(pod *corev1.Pod, configMapName string, domains []string) {
 			ReadOnly:  true,
 		})
 	}
+}
+
+// buildIPTablesScript returns the shell script run by the init container.
+// The rules redirect outbound 80/443 into envoy, exempt envoy's own UID so
+// envoy's upstream calls reach the real internet, and block the cloud
+// metadata server (169.254.0.0/16) as a basic hardening measure.
+func buildIPTablesScript() string {
+	return fmt.Sprintf(
+		`set -eu
+apk add --no-cache -q iptables >/dev/null 2>&1
+iptables -A OUTPUT -d 169.254.0.0/16 -j DROP
+iptables -t nat -A OUTPUT -m owner --uid-owner %d -j RETURN
+iptables -t nat -A OUTPUT -p tcp --dport 80  -j REDIRECT --to-port %d
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port %d
+echo "iptables rules installed"
+`,
+		EnvoyRunAsUID, EnvoyProxyPort, EnvoyTLSPort,
+	)
 }
 
 // ResolveCredentials resolves Secret references in workload credential headers.

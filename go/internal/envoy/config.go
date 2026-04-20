@@ -54,8 +54,8 @@ static_resources:
     - name: egress_http
       address:
         socket_address:
-          address: 0.0.0.0
-          port_value: 80
+          address: 127.0.0.1
+          port_value: 18080
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
@@ -103,8 +103,8 @@ static_resources:
     - name: egress_tls
       address:
         socket_address:
-          address: 0.0.0.0
-          port_value: 443
+          address: 127.0.0.1
+          port_value: 18443
       listener_filters:
         - name: envoy.filters.listener.tls_inspector
           typed_config:

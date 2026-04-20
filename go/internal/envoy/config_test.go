@@ -107,9 +107,9 @@ func TestGenerateEnvoyYAML_WithTLS(t *testing.T) {
 	yaml, err := GenerateEnvoyYAML(cfg)
 	require.NoError(t, err)
 
-	// Verify TLS listener present (transparent-proxy mode binds 443).
+	// Verify TLS listener present (loopback 18443; iptables redirects here).
 	assert.Contains(t, yaml, "egress_tls")
-	assert.Contains(t, yaml, "port_value: 443")
+	assert.Contains(t, yaml, "port_value: 18443")
 	assert.Contains(t, yaml, "tls_inspector")
 
 	// Verify per-domain cert references.
@@ -156,6 +156,6 @@ func TestGenerateEnvoyYAML_ValidYAMLStructure(t *testing.T) {
 	assert.Contains(t, yaml, "listeners:")
 	assert.Contains(t, yaml, "clusters:")
 	assert.Contains(t, yaml, "egress_http")
-	assert.Contains(t, yaml, "port_value: 80")
+	assert.Contains(t, yaml, "port_value: 18080")
 	assert.Contains(t, yaml, "port_value: 18081")
 }
