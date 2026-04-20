@@ -29,7 +29,7 @@ type BoilerhouseClaimSpec struct {
 type BoilerhouseClaimStatus struct {
 	// Phase is the current phase of the claim.
 	// +optional
-	// +kubebuilder:validation:Enum=Pending;Active;Releasing;Released;Error
+	// +kubebuilder:validation:Enum=Pending;Active;Releasing;Released;ReleaseFailed;Error
 	Phase string `json:"phase,omitempty"`
 	// InstanceId is the unique identifier of the claimed instance.
 	// +optional

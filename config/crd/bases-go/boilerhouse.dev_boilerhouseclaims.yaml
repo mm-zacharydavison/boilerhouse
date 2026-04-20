@@ -102,6 +102,7 @@ spec:
                 - Active
                 - Releasing
                 - Released
+                - ReleaseFailed
                 - Error
                 type: string
               source:

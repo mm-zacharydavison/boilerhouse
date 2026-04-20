@@ -62,8 +62,6 @@ static_resources:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: egress_http
-                http_protocol_options:
-                  allow_absolute_url: true
                 route_config:
                   virtual_hosts:
 {{- range .Credentials}}
@@ -160,15 +158,6 @@ static_resources:
     - name: upstream_{{safeDomain .Domain}}
       type: STRICT_DNS
       dns_lookup_family: V4_ONLY
-      # Defaults (1024 per priority) are too tight when a single tenant
-      # opens many concurrent / long-lived streaming requests.
-      circuit_breakers:
-        thresholds:
-          - priority: DEFAULT
-            max_connections: 65536
-            max_pending_requests: 65536
-            max_requests: 65536
-            max_retries: 8
       load_assignment:
         cluster_name: upstream_{{safeDomain .Domain}}
         endpoints:

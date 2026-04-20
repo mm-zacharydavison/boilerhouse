@@ -1,54 +1,47 @@
 # Go Operator/API Resilience Refactor
 
-Two surviving items extracted from the now-deleted `refactor-01_04_2026.md` (TS-era) — both still apply to the Go port and have direct file/line evidence in the current codebase.
+Two items extracted from the deleted `refactor-01_04_2026.md` (TS-era). R1 is partially shipped; R2 is outstanding.
 
 ---
 
 ## R1. `releaseClaim` loses overlay data on extraction failure
 
-**Files:** `go/internal/operator/claim_controller.go:392-414` (`releaseClaim`), `:454-471` (`handleDeletion`)
+**Status: shipped** (controller behavior + envtest coverage). Operator-facing remediation endpoints deferred — see "Outstanding" below.
 
-### Problem
+### Problem (resolved)
 
-Both release paths follow the same shape:
+Both release paths logged the extraction failure and fell through to `r.Delete(pod)`, permanently destroying overlay state. Same data-loss class as the TS-era `tenant-manager.ts` issue.
 
-```go
-if err := r.Snapshots.ExtractAndStore(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
-    ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on release", ...)
-}
-// ... falls through to Delete(pod) regardless ...
-if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) { ... }
-```
+### Shipped fix
 
-A failed extraction (transient kubelet error, pod EOF mid-stream, intermittent network) is logged and ignored. The Pod is then deleted, permanently destroying the tenant's overlay state. Only the previous successful snapshot survives.
+- `Snapshotter` interface introduced in `go/internal/operator/snapshots.go`. `ClaimReconciler.Snapshots` is now the interface; `*SnapshotManager` is the production implementation. Enabled unit-level testing of the failure paths without `kubectl`.
+- `ReleaseFailed` added to the claim phase enum (`go/api/v1alpha1/claim_types.go` + `config/crd/bases-go/boilerhouse.dev_boilerhouseclaims.yaml`).
+- `extractWithRetry` helper on `ClaimReconciler` retries `Snapshots.ExtractAndStore` per the configurable `ExtractRetryBackoff` schedule (default `[1s, 4s, 16s]`, ctx-aware sleeps). Tests inject zeros.
+- `releaseClaim` calls `markReleaseFailed` on exhausted retries — sets `phase=ReleaseFailed` with the error in `Detail`, requeues `5m`, leaves the Pod alive.
+- `handleDeletion` (finalizer path) refuses to remove the finalizer or delete the Pod on extract failure; requeues `5m`. Claim and Pod both survive.
+- `Reconcile` switch routes `ReleaseFailed` to a no-op so the held Pod isn't re-entered as a new claim.
 
-This is the same data-loss class as the TS-era `tenant-manager.ts` issue from the original refactor doc, just relocated to controller-runtime code.
+Three envtest tests in `go/internal/operator/claim_resilience_test.go`:
+- `TestClaimController_IdleReleaseExtractionFailureKeepsPod` — bug repro on idle path; asserts Pod retained, phase=`ReleaseFailed`, retried 3 times.
+- `TestClaimController_IdleReleaseExtractionRetrySucceeds` — proves retry actually retries (succeeds on 3rd attempt → `Released`).
+- `TestClaimController_DeletionExtractionFailureBlocksFinalizer` — bug repro on finalizer path; asserts Claim and Pod both retained, finalizer not removed.
 
-### Fix
+### Outstanding (R1 follow-ups)
 
-1. **Retry with backoff** inside `ExtractAndStore` (or wrap the call). Three attempts with exponential backoff (1s, 4s, 16s) covers transient pod/network issues without making release feel hung.
-
-2. **On exhausted retries, do not delete the Pod.** Set `claim.Status.Phase = "ReleaseFailed"` with `claim.Status.Detail` describing the failure, and requeue with a backoff (`reconcile.Result{RequeueAfter: 5 * time.Minute}`). The Pod stays alive so a future reconcile can retry extraction or an operator can intervene.
-
-3. **Add a `ReleaseFailed` phase** to the claim FSM (`api/v1alpha1/claim_types.go`'s status enum). Allowed transitions: `ReleaseFailed → Released` (manual force-destroy) and `ReleaseFailed → Active` (resume).
-
-4. **New API endpoint** `POST /api/v1/tenants/{id}/release/retry` and `POST /api/v1/tenants/{id}/release/force` (drops the snapshot, deletes Pod). Keeps operator workflow explicit.
-
-5. **Apply the same fix to `handleDeletion`** — currently the finalizer path has the same swallow-and-delete pattern (`claim_controller.go:457-460`). On extraction failure, refuse to remove the finalizer and requeue. The Pod and Claim both survive, blocking deletion until the snapshot lands or an operator force-removes.
-
-### Tests
-
-- envtest: simulate `ExtractAndStore` returning an error, assert Claim transitions to `ReleaseFailed`, Pod still exists, Claim is requeued.
-- envtest: simulate extraction failing N times then succeeding, assert claim ends up `Released`.
-- envtest: deletion path with extraction failure → finalizer remains, deletion blocked, requeue scheduled.
-
-### Scope
-
-`claim_controller.go`, `snapshots.go` (retry helper), `api/v1alpha1/claim_types.go` (new phase), `internal/api/routes_tenant.go` (retry/force endpoints), tests in `claim_controller_test.go`. ~150 lines net, plus tests.
+- **Operator-facing remediation endpoints.** Currently a `ReleaseFailed` claim sits with a held Pod indefinitely (background requeue every 5 minutes will keep retrying, but there's no explicit operator workflow). Add:
+  - `POST /api/v1/tenants/{id}/release/retry` — re-enter `releaseClaim` immediately, returns the new phase.
+  - `POST /api/v1/tenants/{id}/release/force` — delete the snapshot, delete the Pod, transition the claim to `Released` regardless of extract state. Operator-only escape hatch.
+  Files: `go/internal/api/routes_tenant.go` (mount), new handlers, tests via httptest+envtest.
+- **Background retry behavior under sustained failure.** The 5-minute requeue keeps trying with backoff `[1s, 4s, 16s]` per attempt. If the underlying issue is permanent (snapshot PVC full, helper Pod gone), this is wasted churn. Consider an attempt-count annotation on the Claim and a backoff cap, or fall back to "alert and stop retrying after N failures". Defer until the endpoints exist and we observe operator behavior.
+- **e2e coverage on minikube.** Inject a real failure (e.g. shut down the snapshot helper Pod mid-release) via `tests/e2e-operator` and verify the new behavior end-to-end. Envtest can't reach kubectl/exec, so the in-process tests use a fake `Snapshotter`.
+- **`destroy` action with extract+delete.** When `idle.action=destroy`, the controller currently `DeleteSnapshot` (best-effort) then deletes the Pod. There's no overlay-loss concern (the operator explicitly asked to destroy), so no fix needed — just noting that `destroy` deliberately bypasses `extractWithRetry`.
 
 ---
 
 ## R2. Graceful shutdown of in-flight snapshot extractions
+
+**Status: not started.**
+
 
 **Files:** `go/cmd/operator/main.go`, `go/internal/operator/snapshots.go`, `go/internal/trigger/gateway.go`
 
@@ -86,9 +79,11 @@ K8s gives the pod a `terminationGracePeriodSeconds` window (default 30s). We mus
 
 ## Sequencing
 
-R1 and R2 are independent. R1 is higher impact (fixes a routine failure mode); R2 fixes a less frequent but operationally critical case. Do R1 first.
+R1's controller behavior is shipped. Remaining work, in order of impact:
 
-Both depend on no other refactor work.
+1. **R1 follow-up: remediation endpoints** (`/release/retry`, `/release/force`). Small, unblocks operator workflow. Self-contained — does not depend on R2.
+2. **R2: graceful shutdown.** Same problem class on a different trigger (SIGTERM mid-extraction instead of single failed call). Independent of the endpoints.
+3. **R1 follow-up: e2e coverage and backoff cap.** Lowest priority; inform with operator feedback first.
 
 ## Why nothing else from the old plan survives
 

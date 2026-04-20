@@ -257,7 +257,10 @@ func (g *Gateway) buildGuards(ctx context.Context, trigger *v1alpha1.Boilerhouse
 // ensureClaim creates or finds a BoilerhouseClaim for the given tenant and
 // workload, then waits for it to become Active.
 func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef string) (string, error) {
-	claimName := fmt.Sprintf("trigger-%s-%s", workloadRef, tenantId)
+	// Match the naming used by routes_tenant.go's POST/DELETE handlers so
+	// the dashboard's hibernate/release buttons find the same claim the
+	// trigger gateway created.
+	claimName := fmt.Sprintf("claim-%s-%s", tenantId, workloadRef)
 	claimKey := types.NamespacedName{Name: claimName, Namespace: g.namespace}
 
 	// Check if claim already exists.
