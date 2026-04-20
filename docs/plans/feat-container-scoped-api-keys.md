@@ -338,3 +338,62 @@ Items 1-2 in parallel. Items 3-4 sequential (3 calls into 4). Items 5-6 in paral
 - **Token rotation:** for Claims that exceed 24h, do we auto-extend on each authenticated request (`lastUsedAt` annotation), or require an explicit refresh endpoint? Lean toward auto-extend; simpler for agents.
 - **Scopes per-tenant override:** different tenants of the same workload might need different scopes. Defer — start with workload-wide.
 - **K8s ServiceAccount tokens as an alternative:** Projected SA tokens with TokenRequest API would give us K8s-native rotation and audience scoping. Rejected for now because (a) the security plan disabled `automountServiceAccountToken` deliberately, and (b) ServiceAccounts don't carry tenant identity, requiring a parallel mapping anyway. Revisit if/when K8s API access becomes a workload feature.
+
+---
+
+## Addendum: execution adjustments (2026-04-20)
+
+Written after validating the plan against the current codebase. Applies on top of the sections above — nothing is replaced wholesale.
+
+### A1. API server lookup strategy — standalone controller-runtime cache
+
+The plan assumes the API server already has or can trivially subscribe to a controller-runtime cache. Today it doesn't: `go/cmd/api/main.go` builds a plain `client.Client` with no manager and no informers.
+
+**Decision:** instantiate a standalone `sigs.k8s.io/controller-runtime/pkg/cache.Cache` directly in `cmd/api/main.go`, scoped to the operator namespace and with a label selector on `boilerhouse.io/api-token=true`. The `TokenStore` owns this cache, starts it in a goroutine, blocks on `WaitForCacheSync`, and registers an event handler that maintains an in-memory `sha256(token) → AuthContext` map.
+
+No controller-runtime manager is introduced — just the cache + a `client.Client` that reads through it. This matches the operator's idiom without promoting the API to a reconciler.
+
+### A2. Cold-miss fallback — label selector, in-process scan
+
+The original plan proposed "list with the token hash as a label match." A SHA-256 hex digest is 64 chars and exceeds the 63-char k8s label value limit, so this fallback won't compile. Replace with:
+
+1. `List` Secrets with selector `boilerhouse.io/api-token=true` in the operator namespace (set is small — one per active Claim).
+2. Recompute `sha256` in-process over each Secret's `data["token"]` and match.
+3. On hit, cache the entry; on miss, reject.
+
+Cold misses should be rare in steady state (the watch handler fills the cache eagerly), so the cost of the scan is acceptable.
+
+### A3. CRD regeneration — controller-gen, not make
+
+There is no `Makefile` in the repo. The setup script installs `controller-gen`. The concrete commands to regenerate after touching `go/api/v1alpha1/`:
+
+```sh
+cd go
+controller-gen object paths=./api/...
+controller-gen crd paths=./api/... output:crd:dir=../config/crd/bases-go
+```
+
+Ship these as a new kadai action `codegen` so future CRD edits have a single entry point.
+
+### A4. Line-number drift in the plan
+
+The line numbers embedded in the plan were written against an older tree. The real anchors at the time of execution:
+
+| Plan reference | Actual location |
+|---|---|
+| `server.go:46,161` (authMiddleware) | `server.go:159` |
+| `claim_controller.go:297` (`Phase = "Active"`) | `claim_controller.go:339` inside `activateClaim` |
+| `releaseClaim` / `handleDeletion` hook points | `releaseClaim` at ~line 442, `handleDeletion` at ~line 533 |
+
+Follow the *shape* of the plan; verify the anchor in-code before editing.
+
+### A5. In-cluster API URL
+
+Confirmed against `config/deploy/api.yaml`: service name `boilerhouse-api`, namespace `boilerhouse`, port 3000. `BOILERHOUSE_API_URL` defaults to `http://boilerhouse-api.boilerhouse.svc:3000` and is overridable via operator env (for dev against a forwarded port).
+
+### A6. Not in v1
+
+Locked for this PR:
+- No token rotation / refresh endpoint — 24h hard TTL documented, no auto-extend.
+- No retrofitting scope checks onto existing admin-only routes. Helpers ship; first route to use them is wake-up-tasks (feat #6).
+- No per-tenant scope override. Workload-wide only.

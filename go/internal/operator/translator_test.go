@@ -459,3 +459,74 @@ func TestTranslate_ResourceLimits(t *testing.T) {
 	memReq := resources.Requests[corev1.ResourceMemory]
 	assert.Equal(t, resource.MustParse("128Mi"), memReq)
 }
+
+func TestTranslate_InjectsAPIKeyEnvWhenClaimTokenSecretSet(t *testing.T) {
+	spec := v1alpha1.BoilerhouseWorkloadSpec{
+		Version:   "1.0.0",
+		Image:     v1alpha1.WorkloadImage{Ref: "nginx:latest"},
+		Resources: v1alpha1.WorkloadResources{VCPUs: 1, MemoryMb: 256, DiskGb: 10},
+		Network:   &v1alpha1.WorkloadNetwork{Access: "none"},
+		Entrypoint: &v1alpha1.WorkloadEntrypoint{
+			Env: envRaw(map[string]string{"FOO": "bar"}),
+		},
+	}
+	opts := TranslateOpts{
+		InstanceId:       "inst-tok",
+		WorkloadName:     "wl-tok",
+		Namespace:        "boilerhouse",
+		ClaimTokenSecret: "claim-key-my-claim",
+		APIServiceURL:    "http://boilerhouse-api.boilerhouse.svc:3000",
+	}
+
+	result, err := Translate(spec, opts)
+	require.NoError(t, err)
+
+	env := result.Pod.Spec.Containers[0].Env
+	var foundKey, foundURL bool
+	for _, e := range env {
+		switch e.Name {
+		case "BOILERHOUSE_API_KEY":
+			require.NotNil(t, e.ValueFrom)
+			require.NotNil(t, e.ValueFrom.SecretKeyRef)
+			assert.Equal(t, "claim-key-my-claim", e.ValueFrom.SecretKeyRef.Name)
+			assert.Equal(t, "token", e.ValueFrom.SecretKeyRef.Key)
+			foundKey = true
+		case "BOILERHOUSE_API_URL":
+			assert.Equal(t, "http://boilerhouse-api.boilerhouse.svc:3000", e.Value)
+			foundURL = true
+		}
+	}
+	assert.True(t, foundKey, "BOILERHOUSE_API_KEY env not injected")
+	assert.True(t, foundURL, "BOILERHOUSE_API_URL env not injected")
+
+	// Pre-existing env var from the workload must still be present.
+	var foundFoo bool
+	for _, e := range env {
+		if e.Name == "FOO" && e.Value == "bar" {
+			foundFoo = true
+		}
+	}
+	assert.True(t, foundFoo, "workload env var FOO was dropped")
+}
+
+func TestTranslate_NoAPIKeyEnvWhenClaimTokenSecretUnset(t *testing.T) {
+	spec := v1alpha1.BoilerhouseWorkloadSpec{
+		Version:   "1.0.0",
+		Image:     v1alpha1.WorkloadImage{Ref: "nginx:latest"},
+		Resources: v1alpha1.WorkloadResources{VCPUs: 1, MemoryMb: 256, DiskGb: 10},
+		Network:   &v1alpha1.WorkloadNetwork{Access: "none"},
+	}
+	opts := TranslateOpts{
+		InstanceId:   "inst-notok",
+		WorkloadName: "wl-notok",
+		Namespace:    "boilerhouse",
+	}
+
+	result, err := Translate(spec, opts)
+	require.NoError(t, err)
+
+	for _, e := range result.Pod.Spec.Containers[0].Env {
+		assert.NotEqual(t, "BOILERHOUSE_API_KEY", e.Name)
+		assert.NotEqual(t, "BOILERHOUSE_API_URL", e.Name)
+	}
+}

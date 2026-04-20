@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ type Server struct {
 	restConfig  *rest.Config
 	namespace   string
 	apiKey      string
+	tokens      *TokenStore
 	corsOrigins []string
 	router      chi.Router
 }
@@ -26,10 +28,12 @@ type Server struct {
 // NewServer creates a new API server backed by the given Kubernetes client.
 // The namespace determines where CRDs and Pods are managed.
 // If BOILERHOUSE_API_KEY is set, Bearer-token auth is required on all
-// routes except /health and /ws.
+// routes except /health and /ws. When tokens is non-nil, scoped per-Claim
+// tokens are also accepted — callers get an AuthContext that routes can
+// query with RequireScope / RequireOwnTenant.
 // The restConfig is optional; when provided it enables the /ws WebSocket
 // endpoint for live dashboard event streaming.
-func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace string) *Server {
+func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace string, tokens *TokenStore) *Server {
 	var corsOrigins []string
 	if v := os.Getenv("CORS_ORIGIN"); v != "" {
 		for _, o := range strings.Split(v, ",") {
@@ -44,6 +48,7 @@ func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace strin
 		restConfig:  restConfig,
 		namespace:   namespace,
 		apiKey:      os.Getenv("BOILERHOUSE_API_KEY"),
+		tokens:      tokens,
 		corsOrigins: corsOrigins,
 	}
 	s.router = s.buildRouter()
@@ -154,11 +159,14 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware enforces Bearer-token authentication when BOILERHOUSE_API_KEY
-// is configured. If no key is set, all requests are allowed through.
+// authMiddleware enforces Bearer-token authentication. When neither
+// BOILERHOUSE_API_KEY nor a TokenStore is configured, all requests pass
+// through (dev mode). Otherwise the bearer token is matched first against
+// the admin key (constant-time), then against the scoped token store.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKey == "" {
+		// Dev mode: no admin key and no token store → auth disabled.
+		if s.apiKey == "" && s.tokens == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -168,14 +176,28 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing Authorization header")
 			return
 		}
-
 		token := strings.TrimPrefix(auth, "Bearer ")
-		if token == auth || token != s.apiKey {
-			writeError(w, http.StatusUnauthorized, "invalid API key")
+		if token == auth {
+			writeError(w, http.StatusUnauthorized, "missing Authorization header")
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// Admin path: constant-time compare against the global key.
+		if s.apiKey != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) == 1 {
+			ctx := ContextWithAuth(r.Context(), AuthContext{Kind: AuthAdmin})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// Scoped path: look up the token in the per-Claim store.
+		if s.tokens != nil {
+			if ac, ok := s.tokens.Lookup(token); ok {
+				next.ServeHTTP(w, r.WithContext(ContextWithAuth(r.Context(), ac)))
+				return
+			}
+		}
+
+		writeError(w, http.StatusUnauthorized, "invalid API key")
 	})
 }
 

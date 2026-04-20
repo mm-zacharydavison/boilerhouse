@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -41,7 +44,22 @@ func main() {
 		namespace = "boilerhouse"
 	}
 
-	server := api.NewServer(k8sClient, cfg, namespace)
+	// Root context cancelled on SIGINT/SIGTERM; used to shut down the token
+	// store's informer when the process exits.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	tokens, err := api.NewTokenStore(cfg, namespace)
+	if err != nil {
+		slog.Error("failed to create token store", "error", err)
+		os.Exit(1)
+	}
+	if err := tokens.Start(ctx); err != nil {
+		slog.Error("failed to start token store", "error", err)
+		os.Exit(1)
+	}
+
+	server := api.NewServer(k8sClient, cfg, namespace, tokens)
 
 	port := os.Getenv("PORT")
 	if port == "" {
