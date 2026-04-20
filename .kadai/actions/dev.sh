@@ -109,9 +109,15 @@ kubectl -n boilerhouse rollout restart deployment/boilerhouse-trigger >/dev/null
 kubectl -n boilerhouse rollout status deployment/boilerhouse-trigger --timeout=60s
 
 echo "Streaming trigger gateway logs..."
-kubectl -n boilerhouse logs -f deployment/boilerhouse-trigger --prefix=false &
+# Pick the currently-Running pod by name. Using `deployment/...` can attach
+# to a pod that's still terminating from the rollout, which then dies and
+# leaves the tail silent.
+TRIGGER_POD="$(kubectl -n boilerhouse get pod -l app=boilerhouse-trigger \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].metadata.name}')"
+kubectl -n boilerhouse logs -f "$TRIGGER_POD" --prefix=false &
 TRIGGER_PID=$!
-echo "Trigger gateway log tail (PID $TRIGGER_PID)"
+echo "Trigger gateway log tail (PID $TRIGGER_PID, pod $TRIGGER_POD)"
 
 # ── Start dashboard in background ───────────────────────────────────────────
 
