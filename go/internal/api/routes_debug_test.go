@@ -115,25 +115,24 @@ func TestListDebugResources(t *testing.T) {
 	assert.Len(t, resp.Claims, 1)
 	assert.Len(t, resp.Triggers, 1)
 	assert.Len(t, resp.Pods, 1, "only labeled Pod should be included")
-	if len(resp.Pods) > 0 {
-		assert.Equal(t, "pod-managed", resp.Pods[0].Name)
-	}
 	assert.Len(t, resp.PersistentVolumeClaims, 1)
 	assert.Len(t, resp.Services, 1)
 	assert.Len(t, resp.NetworkPolicies, 1)
 
-	if len(resp.Workloads) > 0 {
-		assert.Equal(t, "busybox:latest", resp.Workloads[0].Summary["image"])
-		assert.True(t, len(resp.Workloads[0].Raw) > 2)
-	}
-	if len(resp.Claims) > 0 {
-		assert.Equal(t, "tenant-a", resp.Claims[0].Summary["tenant"])
-	}
-	if len(resp.Triggers) > 0 {
-		assert.Equal(t, "webhook", resp.Triggers[0].Summary["type"])
-		assert.Equal(t, "wl-1", resp.Triggers[0].Summary["workloadRef"])
-	}
-	if len(resp.Services) > 0 {
-		assert.Equal(t, "ClusterIP", resp.Services[0].Summary["type"])
-	}
+	require.Len(t, resp.Pods, 1)
+	assert.Equal(t, "pod-managed", resp.Pods[0].Name)
+
+	require.Len(t, resp.Workloads, 1)
+	assert.Equal(t, "busybox:latest", resp.Workloads[0].Summary["image"])
+	assert.True(t, len(resp.Workloads[0].Raw) > 2)
+
+	require.Len(t, resp.Claims, 1)
+	assert.Equal(t, "tenant-a", resp.Claims[0].Summary["tenant"])
+
+	require.Len(t, resp.Triggers, 1)
+	assert.Equal(t, "webhook", resp.Triggers[0].Summary["type"])
+	assert.Equal(t, "wl-1", resp.Triggers[0].Summary["workloadRef"])
+
+	require.Len(t, resp.Services, 1)
+	assert.Equal(t, "ClusterIP", resp.Services[0].Summary["type"])
 }
