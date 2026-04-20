@@ -2,7 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // resourceEntry is the JSON shape for a single object in the debug/resources
@@ -32,4 +36,33 @@ type debugResourcesResponse struct {
 
 func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, debugResourcesResponse{})
+}
+
+// formatAge returns a short human-friendly duration like "3m", "2h15m", "5d".
+// Returns "" if ts is zero.
+func formatAge(ts metav1.Time) string {
+	if ts.IsZero() {
+		return ""
+	}
+	d := time.Since(ts.Time)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) - h*60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	days := int(d.Hours()) / 24
+	h := int(d.Hours()) - days*24
+	if h == 0 {
+		return fmt.Sprintf("%dd", days)
+	}
+	return fmt.Sprintf("%dd%dh", days, h)
 }
