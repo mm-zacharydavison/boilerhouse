@@ -1,7 +1,7 @@
 # What is Boilerhouse?
 
-::: warning AI-generated placeholder
-These docs were drafted by an AI from the source and are a placeholder. They will be replaced with human-written documentation in future — expect gaps and inaccuracies until then.
+::: warning 🤖 AI-generated placeholder
+These docs are AI-generated to provide a basic reference for now until I have time to write a better full set of docs by hand.
 :::
 
 Boilerhouse is a Kubernetes-native, multi-tenant container orchestration platform. It lets you run isolated, on-demand containers for individual tenants — spinning them up when needed, hibernating them when idle, and restoring them with full state on the next request.
