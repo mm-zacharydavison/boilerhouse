@@ -59,11 +59,7 @@ sleep 0.5
 # ── Apply CRDs ───────────────────────────────────────────────────────────────
 
 echo "Applying CRDs..."
-if [ -d "$SCRIPT_DIR/config/crd/bases-go" ]; then
-  kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/" 2>/dev/null
-elif [ -d "$SCRIPT_DIR/config/crd/bases" ]; then
-  kubectl apply -f "$SCRIPT_DIR/config/crd/bases/" 2>/dev/null
-fi
+kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/" 2>/dev/null
 echo "CRDs applied"
 
 # ── Apply workloads ─────────────────────────────────────────────────────────

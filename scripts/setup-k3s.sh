@@ -18,7 +18,7 @@ echo "Creating boilerhouse namespace..."
 kubectl create namespace boilerhouse --dry-run=client -o yaml | kubectl apply -f -
 
 echo "Applying CRDs..."
-kubectl apply -f config/crd/bases/
+kubectl apply -f config/crd/bases-go/
 
 echo "k3s setup complete."
 echo "KUBECONFIG is at /etc/rancher/k3s/k3s.yaml"

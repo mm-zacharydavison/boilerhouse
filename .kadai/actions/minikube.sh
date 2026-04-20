@@ -37,11 +37,7 @@ echo "Namespace '$NAMESPACE' ready"
 # ── Apply CRDs ───────────────────────────────────────────────────────────────
 
 echo "Applying CRDs..."
-if [ -d "$SCRIPT_DIR/config/crd/bases-go" ]; then
-  kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/"
-elif [ -d "$SCRIPT_DIR/config/crd/bases" ]; then
-  kubectl apply -f "$SCRIPT_DIR/config/crd/bases/"
-fi
+kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/"
 
 # ── RBAC ─────────────────────────────────────────────────────────────────────
 

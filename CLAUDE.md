@@ -18,9 +18,7 @@ Three Go binaries share internal packages; all state lives in the Kubernetes API
 
 CRD Go types: `go/api/v1alpha1/` (kubebuilder-annotated). The four CRDs are **Workload** (template), **Pool** (pre-warmed instances), **Claim** (tenant ownership of an instance), **Trigger** (external event source).
 
-CRD YAML is tracked in two parallel directories:
-- `config/crd/bases/` — originals from the TS implementation.
-- `config/crd/bases-go/` — generated from Go types (the ones the Go operator consumes).
+CRD YAML is generated from the Go types into `config/crd/bases-go/` by `bunx kadai run codegen`. Never hand-edit — regenerate.
 
 Shared packages: `go/internal/o11y/` (OpenTelemetry + structured logging), `go/internal/envoy/` (Envoy config generation).
 
@@ -82,8 +80,7 @@ go/                   Go source (module github.com/zdavison/boilerhouse/go)
   cmd/                entry points: api, operator, trigger
   internal/           api, operator, trigger, o11y, envoy
   api/v1alpha1/       CRD types (kubebuilder)
-config/crd/bases-go/  CRDs generated from Go types (authoritative for Go operator)
-config/crd/bases/     original CRDs from the TS implementation
+config/crd/bases-go/  CRDs generated from Go types (run `bunx kadai run codegen`)
 config/deploy/        kustomize deployment manifests
 workloads/            example Workload YAML
 ts/                   legacy TypeScript implementation (apps + packages)
