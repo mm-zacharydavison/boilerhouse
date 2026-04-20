@@ -104,6 +104,9 @@ func (s *Server) buildRouter() chi.Router {
 			r.Get("/triggers", s.listTriggers)
 			r.Get("/triggers/{id}", s.getTrigger)
 			r.Delete("/triggers/{id}", s.deleteTrigger)
+
+			// Debug
+			r.Get("/debug/resources", s.listDebugResources)
 		})
 	})
 
