@@ -36,10 +36,26 @@ type ClaimReconciler struct {
 	Scheme    *runtime.Scheme
 	Snapshots Snapshotter
 	Namespace string
+	// APIServiceURL is the in-cluster URL injected into tenant Pods as
+	// BOILERHOUSE_API_URL. Defaults to http://boilerhouse-api.<Namespace>.svc:3000
+	// when empty.
+	APIServiceURL string
 	// ExtractRetryBackoff controls per-attempt sleep between snapshot extract
 	// retries on the release path. Length == attempt count. Defaults to
 	// defaultExtractRetryBackoff when nil/empty. Tests pass short delays.
 	ExtractRetryBackoff []time.Duration
+}
+
+// apiServiceURL returns the configured API URL or a namespace-aware default.
+func (r *ClaimReconciler) apiServiceURL() string {
+	if r.APIServiceURL != "" {
+		return r.APIServiceURL
+	}
+	ns := r.Namespace
+	if ns == "" {
+		ns = "boilerhouse"
+	}
+	return fmt.Sprintf("http://boilerhouse-api.%s.svc:3000", ns)
 }
 
 // Reconcile handles a single reconciliation loop for a BoilerhouseClaim.
@@ -209,7 +225,18 @@ func (r *ClaimReconciler) claimFromPool(ctx context.Context, claim *v1alpha1.Boi
 // Note: snapshot injection requires the Pod to be running, so for cold boots
 // the injection happens on a subsequent reconcile when the Pod is ready.
 func (r *ClaimReconciler) coldBoot(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (reconcile.Result, error) {
-	pod, err := r.createTenantPod(ctx, claim, wl)
+	// Provision the scoped API token *before* Pod creation so the Pod can
+	// reference the Secret via secretKeyRef. If APIAccess.Scopes is ["none"]
+	// this returns disabled=true and no Secret is created.
+	tokenSecret, disabled, err := r.ensureClaimToken(ctx, claim, wl)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("ensuring claim token: %w", err)
+	}
+	if disabled {
+		tokenSecret = ""
+	}
+
+	pod, err := r.createTenantPod(ctx, claim, wl, tokenSecret)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -220,16 +247,20 @@ func (r *ClaimReconciler) coldBoot(ctx context.Context, claim *v1alpha1.Boilerho
 // createTenantPod translates a workload spec and creates the Pod.
 // If the workload has network credentials, it resolves them, generates Envoy
 // config and TLS certs, creates a ConfigMap, and injects the sidecar.
-func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (*corev1.Pod, error) {
+// When tokenSecret is non-empty, the Pod receives BOILERHOUSE_API_KEY +
+// BOILERHOUSE_API_URL env vars sourced from that Secret.
+func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload, tokenSecret string) (*corev1.Pod, error) {
 	suffix := randomSuffix()
 	instanceId := fmt.Sprintf("%s-%s-%s", claim.Spec.WorkloadRef, claim.Spec.TenantId, suffix)
 
 	opts := TranslateOpts{
-		InstanceId:   instanceId,
-		WorkloadName: claim.Spec.WorkloadRef,
-		TenantId:     claim.Spec.TenantId,
-		Namespace:    claim.Namespace,
-		ImageRef:     ResolvedImageRef(wl),
+		InstanceId:       instanceId,
+		WorkloadName:     claim.Spec.WorkloadRef,
+		TenantId:         claim.Spec.TenantId,
+		Namespace:        claim.Namespace,
+		ImageRef:         ResolvedImageRef(wl),
+		ClaimTokenSecret: tokenSecret,
+		APIServiceURL:    r.apiServiceURL(),
 	}
 
 	// Resolve credentials and build proxy config if workload has credentials.
@@ -477,6 +508,13 @@ func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.Boil
 		}
 	}
 
+	// Revoke the scoped API token. OwnerReferences would cascade-delete on
+	// Claim deletion, but releasing (not deleting) the Claim needs explicit
+	// cleanup so a future resume gets a fresh token.
+	if err := r.deleteClaimToken(ctx, claim); err != nil {
+		return reconcile.Result{}, fmt.Errorf("revoking claim token: %w", err)
+	}
+
 	claim.Status.Phase = "Released"
 	claim.Status.Detail = fmt.Sprintf("idle timeout (%s)", action)
 	if err := r.Status().Update(ctx, claim); err != nil {
@@ -581,6 +619,13 @@ func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.Bo
 		if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, fmt.Errorf("deleting pod on claim deletion: %w", err)
 		}
+	}
+
+	// Revoke the scoped API token. Owner-reference GC would eventually clean
+	// this up, but we delete eagerly so the token cannot be used during the
+	// window between finalizer-clear and cascade-delete.
+	if err := r.deleteClaimToken(ctx, claim); err != nil {
+		return reconcile.Result{}, fmt.Errorf("revoking claim token on deletion: %w", err)
 	}
 
 	// Remove finalizer.

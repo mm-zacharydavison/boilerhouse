@@ -28,13 +28,15 @@ const (
 // TranslateOpts holds the metadata needed to translate a workload spec into
 // Kubernetes resources.
 type TranslateOpts struct {
-	InstanceId   string
-	WorkloadName string
-	TenantId     string // empty for pool pods
-	Namespace    string
-	PoolStatus   string // "warming", "ready", or "" for non-pool
-	ImageRef     string // resolved image reference (handles dockerfile builds)
-	ProxyConfig  *ProxyConfig // nil if no sidecar needed
+	InstanceId       string
+	WorkloadName     string
+	TenantId         string // empty for pool pods
+	Namespace        string
+	PoolStatus       string // "warming", "ready", or "" for non-pool
+	ImageRef         string // resolved image reference (handles dockerfile builds)
+	ProxyConfig      *ProxyConfig // nil if no sidecar needed
+	ClaimTokenSecret string // name of Secret holding the scoped API token; empty = no token injection
+	APIServiceURL    string // in-cluster URL of the Boilerhouse API; required when ClaimTokenSecret is set
 }
 
 // TranslateResult holds the Kubernetes resources produced by Translate.
@@ -213,6 +215,24 @@ func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (
 			}
 			container.Env = envVars
 		}
+	}
+
+	if opts.ClaimTokenSecret != "" {
+		container.Env = append(container.Env,
+			corev1.EnvVar{
+				Name: "BOILERHOUSE_API_KEY",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: opts.ClaimTokenSecret},
+						Key:                  "token",
+					},
+				},
+			},
+			corev1.EnvVar{
+				Name:  "BOILERHOUSE_API_URL",
+				Value: opts.APIServiceURL,
+			},
+		)
 	}
 
 	// Exposed ports

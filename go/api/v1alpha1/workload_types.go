@@ -189,6 +189,19 @@ type BoilerhouseWorkloadSpec struct {
 	// Entrypoint defines the workload entrypoint.
 	// +optional
 	Entrypoint *WorkloadEntrypoint `json:"entrypoint,omitempty"`
+	// APIAccess controls whether Claims derived from this workload receive
+	// an in-cluster Boilerhouse API token and which scopes it carries.
+	// +optional
+	APIAccess *WorkloadAPIAccess `json:"apiAccess,omitempty"`
+}
+
+// WorkloadAPIAccess configures agent-facing access to the Boilerhouse API.
+type WorkloadAPIAccess struct {
+	// Scopes overrides the default agent scope set granted to Claims of this
+	// workload. A single entry of "none" disables API access entirely — no
+	// token secret is provisioned and no env vars are injected.
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // BoilerhouseWorkloadStatus defines the observed state of a BoilerhouseWorkload.

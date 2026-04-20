@@ -55,6 +55,20 @@ spec:
           spec:
             description: BoilerhouseWorkloadSpec defines the desired state of a BoilerhouseWorkload.
             properties:
+              apiAccess:
+                description: |-
+                  APIAccess controls whether Claims derived from this workload receive
+                  an in-cluster Boilerhouse API token and which scopes it carries.
+                properties:
+                  scopes:
+                    description: |-
+                      Scopes overrides the default agent scope set granted to Claims of this
+                      workload. A single entry of "none" disables API access entirely — no
+                      token secret is provisioned and no env vars are injected.
+                    items:
+                      type: string
+                    type: array
+                type: object
               entrypoint:
                 description: Entrypoint defines the workload entrypoint.
                 properties:
