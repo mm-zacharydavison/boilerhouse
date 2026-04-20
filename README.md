@@ -27,34 +27,39 @@ Some use cases:
 
 ### Prerequisites
 
+macOS and Linux are supported.
+
 - [Go](https://go.dev/) 1.26+
 - [Docker](https://docs.docker.com/get-docker/) and [minikube](https://minikube.sigs.k8s.io/) (for local development)
 - [Bun](https://bun.sh/) >= 1.3 (only for the dashboard and the `kadai` task runner)
 
-### Set up a local cluster
+Presets check every tool before running and print an OS-appropriate install hint if anything is missing — you don't need to have every prerequisite installed upfront.
+
+### One-command demo
+
+The fastest way to try Boilerhouse is a preset — it installs dependencies, bootstraps minikube, applies a workload, and drops you into a running dev loop.
 
 ```sh
 git clone https://github.com/zdavison/boilerhouse.git
 cd boilerhouse
+bunx kadai run presets/claude-code   # or: presets/openclaw
+```
+
+You'll be prompted for a Telegram bot token ([@BotFather](https://t.me/BotFather)), an Anthropic API key, and a comma-separated Telegram allowlist. When the banner appears, DM the bot from an allowlisted account and you're running.
+
+Presets are for **local demos**, not production. For production deployments, build and deploy the operator/API as in-cluster workloads.
+
+### Manual setup
+
+If you'd rather wire it up yourself:
+
+```sh
 bunx kadai run setup      # install Go + TS deps and dev tools
 bunx kadai run minikube   # create and configure a local minikube cluster
+bunx kadai run dev        # start operator + API + dashboard
 ```
 
-### Run the operator and API
-
-```sh
-bunx kadai run dev
-```
-
-This starts the operator and API server against your minikube cluster. The API listens on `http://localhost:3000`. Ctrl+C stops both.
-
-To run the dashboard in another terminal:
-
-```sh
-cd ts && bun run dev
-```
-
-The dashboard is served on `http://localhost:3001` and proxies API calls to the Go server.
+The API listens on `http://localhost:3000` and the dashboard on `http://localhost:3001`. Ctrl+C stops both.
 
 ## Documentation
 
@@ -113,7 +118,7 @@ Controller tests in `go/internal/operator/` use `sigs.k8s.io/controller-runtime/
 bunx kadai run nuke
 ```
 
-Deletes all Boilerhouse resources from the cluster.
+Clean-slate teardown of the `boilerhouse` namespace: all Boilerhouse CRs, managed pods/services/PVCs, network policies, deployments, secrets, and configmaps. After this, a preset will re-prompt for tokens and the allowlist on its next run.
 
 ## License
 

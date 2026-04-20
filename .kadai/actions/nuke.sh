@@ -39,13 +39,22 @@ echo "Deleting PVCs..."
 kubectl -n "$NAMESPACE" delete pvc --all --timeout=15s 2>/dev/null || true
 
 echo "Deleting services..."
-kubectl -n "$NAMESPACE" delete svc -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+kubectl -n "$NAMESPACE" delete svc --all --timeout=10s 2>/dev/null || true
+
+echo "Deleting deployments..."
+kubectl -n "$NAMESPACE" delete deployment --all --timeout=15s 2>/dev/null || true
+
+echo "Deleting secrets..."
+kubectl -n "$NAMESPACE" delete secret --all --timeout=10s 2>/dev/null || true
 
 echo "Deleting configmaps..."
-kubectl -n "$NAMESPACE" delete configmap -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+# Exclude the auto-managed kube-root-ca.crt (kubernetes recreates it immediately).
+kubectl -n "$NAMESPACE" get configmap -o name 2>/dev/null \
+  | grep -v '^configmap/kube-root-ca.crt$' \
+  | xargs -r kubectl -n "$NAMESPACE" delete --timeout=10s 2>/dev/null || true
 
 echo "Deleting network policies..."
-kubectl -n "$NAMESPACE" delete networkpolicy -l boilerhouse.dev/managed=true --timeout=10s 2>/dev/null || true
+kubectl -n "$NAMESPACE" delete networkpolicy --all --timeout=10s 2>/dev/null || true
 
 echo ""
 echo "Done. Cluster is clean."

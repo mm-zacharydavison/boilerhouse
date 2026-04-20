@@ -8,21 +8,84 @@ PRESET_NS="boilerhouse"
 PRESET_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PRESET_STAGE_DIR="$PRESET_REPO/.boilerhouse-preset/workloads"
 
+case "$(uname -s)" in
+  Darwin) PRESET_OS="mac" ;;
+  Linux)  PRESET_OS="linux" ;;
+  *)      PRESET_OS="unknown" ;;
+esac
+
 # ── Prereq checks ────────────────────────────────────────────────────────────
 
+# ensure_cmd NAME MAC_HINT LINUX_HINT
+# Errors with the OS-appropriate install hint if NAME isn't on $PATH.
 ensure_cmd() {
-  local name="$1" hint="$2"
+  local name="$1" mac_hint="$2" linux_hint="$3"
   if ! command -v "$name" >/dev/null 2>&1; then
     echo "Error: $name not installed."
-    echo "  Install with: $hint"
+    case "$PRESET_OS" in
+      mac)   echo "  Install with: $mac_hint" ;;
+      linux) echo "  Install with: $linux_hint" ;;
+      *)     echo "  Install (macOS):  $mac_hint"
+             echo "  Install (Linux):  $linux_hint" ;;
+    esac
     exit 1
   fi
+}
+
+# Go 1.26+ is required (see go/go.mod).
+ensure_go_version() {
+  ensure_cmd go \
+    "brew install go" \
+    "download from https://go.dev/dl/ (distro packages are often too old)"
+  local ver major minor
+  ver="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
+  major="${ver%%.*}"
+  minor="${ver#*.}"; minor="${minor%%.*}"
+  if [ -z "$major" ] || [ -z "$minor" ]; then
+    echo "Error: could not parse Go version from 'go env GOVERSION' (got: $ver)"
+    exit 1
+  fi
+  if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 26 ]; }; then
+    echo "Error: Go 1.26+ required (found $ver)."
+    case "$PRESET_OS" in
+      mac)   echo "  Upgrade with: brew upgrade go" ;;
+      linux) echo "  Upgrade: download from https://go.dev/dl/" ;;
+      *)     echo "  Upgrade: see https://go.dev/dl/" ;;
+    esac
+    exit 1
+  fi
+}
+
+# Warn (don't fail) if the existing minikube profile has fewer resources than
+# the recommended minimum. minikube.sh starts fresh profiles with 4 CPU / 4Gi,
+# but a pre-existing profile may have been started with less.
+ensure_minikube_resources() {
+  local profile="boilerhouse"
+  local cpus mem_mb
+  cpus="$(minikube -p "$profile" config view 2>/dev/null | awk -F': ' '/^- cpus:/ {print $2}' | tr -d ' ')"
+  mem_mb="$(minikube -p "$profile" config view 2>/dev/null | awk -F': ' '/^- memory:/ {print $2}' | tr -d ' ')"
+  if [ -n "$cpus" ] && [ "$cpus" -lt 4 ]; then
+    echo "  warning: minikube profile '$profile' has $cpus CPU (recommended: 4+)"
+  fi
+  if [ -n "$mem_mb" ] && [ "$mem_mb" -lt 4096 ]; then
+    echo "  warning: minikube profile '$profile' has ${mem_mb}Mi memory (recommended: 4096+)"
+  fi
+}
+
+# Run the monorepo setup script (Go deps, envtest, controller-gen, bun install).
+# Idempotent; skips work that's already done.
+run_setup() {
+  bash "$PRESET_REPO/.kadai/actions/setup.sh"
 }
 
 ensure_docker_running() {
   if ! docker info >/dev/null 2>&1; then
     echo "Error: Docker daemon is not running."
-    echo "  Start Docker Desktop and retry."
+    case "$PRESET_OS" in
+      mac)   echo "  Start Docker Desktop (or OrbStack) and retry." ;;
+      linux) echo "  Start it with: sudo systemctl start docker" ;;
+      *)     echo "  Start your Docker daemon and retry." ;;
+    esac
     exit 1
   fi
 }
@@ -206,4 +269,29 @@ exec_dev() {
   # preset-selected workloads (not every YAML under workloads/).
   export WORKLOADS_APPLY_DIR="$PRESET_STAGE_DIR"
   exec bash "$PRESET_REPO/.kadai/actions/dev.sh"
+}
+
+# print_bot_banner TOKEN ALLOWLIST_JSON
+# Resolves the Telegram bot's @username from the token and prints a banner
+# telling the user who to DM. Falls back to a generic message on failure.
+print_bot_banner() {
+  local token="$1" allowlist_json="$2"
+  local username=""
+  if command -v curl >/dev/null 2>&1; then
+    username="$(curl -sS --max-time 5 "https://api.telegram.org/bot${token}/getMe" 2>/dev/null \
+      | grep -o '"username":"[^"]*"' | head -1 | cut -d'"' -f4)"
+  fi
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║                       Ready to chat                          ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  if [ -n "$username" ]; then
+    echo "  → Open Telegram and message @${username}"
+  else
+    echo "  → Open Telegram and message your bot"
+  fi
+  echo "  → Allowlisted users: ${allowlist_json}"
+  echo "  → Dashboard:         http://localhost:3001"
+  echo "  → API:               http://localhost:3000"
+  echo ""
 }

@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide gets you from zero to a running multi-tenant container in under 10 minutes using a local minikube cluster.
+This guide gets you from zero to a running multi-tenant container on a local minikube cluster. Supported on macOS and Linux.
 
 ## Prerequisites
 
@@ -9,7 +9,26 @@ This guide gets you from zero to a running multi-tenant container in under 10 mi
 - [Bun](https://bun.sh/) v1.3+ (for the `kadai` task runner)
 - The Boilerhouse repository cloned locally
 
-## 1. Install Dependencies
+Presets check every tool before running and print an OS-appropriate install hint if anything is missing, so you can safely skip ahead and fix things as they come up.
+
+## Option A — One-command demo (recommended)
+
+The quickest path to a working demo uses a preset. A preset runs `setup`, bootstraps minikube, prompts for a Telegram bot token + Anthropic key + allowlist, applies a demo workload, and starts the dev loop.
+
+```bash
+cd boilerhouse
+bunx kadai run presets/claude-code   # or: presets/openclaw
+```
+
+When the "Ready to chat" banner appears, DM the bot from an allowlisted Telegram account.
+
+Presets are intended for **local demos** only. Production deployments (in-cluster operator/API, ingress, etc.) are out of scope for this guide.
+
+If you only want to try Boilerhouse end-to-end, skip to step 10 (Tear Down) when you're done. The steps below walk through the lower-level building blocks.
+
+## Option B — Step-by-step
+
+### 1. Install Dependencies
 
 ```bash
 cd boilerhouse
@@ -18,7 +37,7 @@ bunx kadai run setup
 
 This installs Go and TypeScript dependencies plus `setup-envtest` for controller tests.
 
-## 2. Set Up a Local Cluster
+### 2. Set Up a Local Cluster
 
 ```bash
 bunx kadai run minikube
@@ -39,7 +58,7 @@ boilerhousetriggers.boilerhouse.dev
 boilerhouseworkloads.boilerhouse.dev
 ```
 
-## 3. Start the Operator and API
+### 3. Start the Operator and API
 
 ```bash
 bunx kadai run dev
@@ -47,7 +66,7 @@ bunx kadai run dev
 
 This runs the operator and API server locally against your minikube cluster. The API listens on `http://localhost:3000`. Ctrl+C stops both.
 
-## 4. Apply a Workload
+### 4. Apply a Workload
 
 Boilerhouse ships with an example `minimal` workload in `workloads/minimal.yaml`:
 
@@ -81,7 +100,7 @@ Apply it:
 kubectl apply -f workloads/minimal.yaml
 ```
 
-## 5. Wait for the Workload to be Ready
+### 5. Wait for the Workload to be Ready
 
 The operator transitions the workload through `Creating` to `Ready`:
 
@@ -94,7 +113,7 @@ NAME      PHASE   VERSION   IMAGE   AGE
 minimal   Ready   0.1.0             30s
 ```
 
-## 6. Claim an Instance
+### 6. Claim an Instance
 
 Claim a container for a tenant via the REST API:
 
@@ -122,7 +141,7 @@ kubectl get boilerhouseclaims -n boilerhouse
 kubectl get pods -n boilerhouse -l boilerhouse.dev/managed=true
 ```
 
-## 7. Interact with the Instance
+### 7. Interact with the Instance
 
 Run a command inside the container:
 
@@ -146,7 +165,7 @@ View container logs:
 curl http://localhost:3000/api/v1/instances/<instanceId>/logs
 ```
 
-## 8. Release the Tenant
+### 8. Release the Tenant
 
 When the tenant is done, release their claim. If the workload has `overlayDirs` configured, the operator extracts and saves the tenant's filesystem state before shutting down the Pod.
 
@@ -158,7 +177,7 @@ curl -X POST http://localhost:3000/api/v1/tenants/alice/release \
 
 Next time Alice claims the same workload, her filesystem state is restored automatically.
 
-## 9. Enable Pooling
+### 9. Enable Pooling
 
 For faster claim times, apply a `BoilerhousePool` resource:
 
@@ -187,13 +206,15 @@ The operator pre-warms 3 Pods. Claims now return in under a second from the pool
 }
 ```
 
-## 10. Tear Down
+## Tear Down
 
-Delete everything Boilerhouse created in the cluster:
+Clean-slate teardown of the `boilerhouse` namespace — all Boilerhouse CRs, managed pods, services, PVCs, network policies, deployments, secrets, and configmaps:
 
 ```bash
 bunx kadai run nuke
 ```
+
+After this, a preset will re-prompt for tokens and the allowlist on its next run.
 
 ## Next Steps
 
