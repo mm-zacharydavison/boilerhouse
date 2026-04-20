@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -18,6 +20,10 @@ import (
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	"github.com/zdavison/boilerhouse/go/internal/api"
 )
+
+// shutdownGrace bounds how long Server.Shutdown waits for in-flight
+// requests to drain on SIGTERM before the process exits anyway.
+const shutdownGrace = 15 * time.Second
 
 func main() {
 	// Build scheme: core K8s types + Boilerhouse CRDs.
@@ -71,9 +77,25 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%s", host, port)
+	srv := &http.Server{Addr: addr, Handler: server}
+
+	// On SIGINT/SIGTERM (ctx.Done), stop accepting new connections and drain
+	// in-flight requests for up to shutdownGrace. Prevents claim mutations
+	// from being killed mid-flight during a deploy.
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutting down API server", "timeout", shutdownGrace)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("server shutdown failed", "error", err)
+		}
+	}()
+
 	slog.Info("starting API server", "addr", addr)
-	if err := http.ListenAndServe(addr, server); err != nil {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("server stopped")
 }
