@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -111,10 +114,67 @@ func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	if resp.Triggers == nil {
 		resp.Triggers = []resourceEntry{}
 	}
-	resp.Pods = []resourceEntry{}
-	resp.PersistentVolumeClaims = []resourceEntry{}
-	resp.Services = []resourceEntry{}
-	resp.NetworkPolicies = []resourceEntry{}
+	managed := client.MatchingLabels{"boilerhouse.dev/managed": "true"}
+
+	var pods corev1.PodList
+	if err := s.client.List(ctx, &pods, ns, managed); err != nil {
+		writeError(w, http.StatusInternalServerError, "list pods: "+err.Error())
+		return
+	}
+	resp.Pods = make([]resourceEntry, 0, len(pods.Items))
+	for i := range pods.Items {
+		e, err := podToEntry(&pods.Items[i])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "marshal pod: "+err.Error())
+			return
+		}
+		resp.Pods = append(resp.Pods, e)
+	}
+
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := s.client.List(ctx, &pvcs, ns, managed); err != nil {
+		writeError(w, http.StatusInternalServerError, "list pvcs: "+err.Error())
+		return
+	}
+	resp.PersistentVolumeClaims = make([]resourceEntry, 0, len(pvcs.Items))
+	for i := range pvcs.Items {
+		e, err := pvcToEntry(&pvcs.Items[i])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "marshal pvc: "+err.Error())
+			return
+		}
+		resp.PersistentVolumeClaims = append(resp.PersistentVolumeClaims, e)
+	}
+
+	var svcs corev1.ServiceList
+	if err := s.client.List(ctx, &svcs, ns, managed); err != nil {
+		writeError(w, http.StatusInternalServerError, "list services: "+err.Error())
+		return
+	}
+	resp.Services = make([]resourceEntry, 0, len(svcs.Items))
+	for i := range svcs.Items {
+		e, err := serviceToEntry(&svcs.Items[i])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "marshal service: "+err.Error())
+			return
+		}
+		resp.Services = append(resp.Services, e)
+	}
+
+	var nps networkingv1.NetworkPolicyList
+	if err := s.client.List(ctx, &nps, ns, managed); err != nil {
+		writeError(w, http.StatusInternalServerError, "list networkpolicies: "+err.Error())
+		return
+	}
+	resp.NetworkPolicies = make([]resourceEntry, 0, len(nps.Items))
+	for i := range nps.Items {
+		e, err := networkPolicyToEntry(&nps.Items[i])
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "marshal networkpolicy: "+err.Error())
+			return
+		}
+		resp.NetworkPolicies = append(resp.NetworkPolicies, e)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -213,6 +273,99 @@ func triggerToEntry(t *v1alpha1.BoilerhouseTrigger) (resourceEntry, error) {
 		Summary: map[string]any{
 			"type":        t.Spec.Type,
 			"workloadRef": t.Spec.WorkloadRef,
+		},
+		Raw: raw,
+	}, nil
+}
+
+func podToEntry(p *corev1.Pod) (resourceEntry, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return resourceEntry{}, err
+	}
+	return resourceEntry{
+		Name:  p.Name,
+		Phase: string(p.Status.Phase),
+		Age:   formatAge(p.CreationTimestamp),
+		Summary: map[string]any{
+			"node":   p.Spec.NodeName,
+			"podIP":  p.Status.PodIP,
+			"tenant": p.Labels["boilerhouse.dev/tenant"],
+		},
+		Raw: raw,
+	}, nil
+}
+
+func pvcToEntry(p *corev1.PersistentVolumeClaim) (resourceEntry, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return resourceEntry{}, err
+	}
+	storageClass := ""
+	if p.Spec.StorageClassName != nil {
+		storageClass = *p.Spec.StorageClassName
+	}
+	capacity := ""
+	if q, ok := p.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+		capacity = q.String()
+	}
+	return resourceEntry{
+		Name:  p.Name,
+		Phase: string(p.Status.Phase),
+		Age:   formatAge(p.CreationTimestamp),
+		Summary: map[string]any{
+			"storageClass": storageClass,
+			"capacity":     capacity,
+		},
+		Raw: raw,
+	}, nil
+}
+
+func serviceToEntry(s *corev1.Service) (resourceEntry, error) {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return resourceEntry{}, err
+	}
+	ports := make([]string, 0, len(s.Spec.Ports))
+	for _, p := range s.Spec.Ports {
+		if p.Name != "" {
+			ports = append(ports, fmt.Sprintf("%s:%d", p.Name, p.Port))
+		} else {
+			ports = append(ports, fmt.Sprintf("%d", p.Port))
+		}
+	}
+	return resourceEntry{
+		Name:  s.Name,
+		Phase: "",
+		Age:   formatAge(s.CreationTimestamp),
+		Summary: map[string]any{
+			"type":      string(s.Spec.Type),
+			"clusterIP": s.Spec.ClusterIP,
+			"ports":     strings.Join(ports, ","),
+		},
+		Raw: raw,
+	}, nil
+}
+
+func networkPolicyToEntry(n *networkingv1.NetworkPolicy) (resourceEntry, error) {
+	raw, err := json.Marshal(n)
+	if err != nil {
+		return resourceEntry{}, err
+	}
+	selector := "<all>"
+	if m := n.Spec.PodSelector.MatchLabels; len(m) > 0 {
+		parts := make([]string, 0, len(m))
+		for k, v := range m {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+		}
+		selector = strings.Join(parts, ",")
+	}
+	return resourceEntry{
+		Name:  n.Name,
+		Phase: "",
+		Age:   formatAge(n.CreationTimestamp),
+		Summary: map[string]any{
+			"podSelector": selector,
 		},
 		Raw: raw,
 	}, nil
