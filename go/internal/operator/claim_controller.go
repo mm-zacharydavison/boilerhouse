@@ -234,7 +234,7 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 
 	// Resolve credentials and build proxy config if workload has credentials.
 	if wl.Spec.Network != nil && len(wl.Spec.Network.Credentials) > 0 {
-		proxyConfig, err := r.buildProxyConfig(ctx, claim, wl)
+		proxyConfig, err := BuildProxyConfig(ctx, r.Client, r.Namespace, wl)
 		if err != nil {
 			return nil, fmt.Errorf("building proxy config: %w", err)
 		}
@@ -260,9 +260,12 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 	return result.Pod, nil
 }
 
-// buildProxyConfig resolves credentials, generates Envoy YAML and TLS certs.
-func (r *ClaimReconciler) buildProxyConfig(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, wl *v1alpha1.BoilerhouseWorkload) (*ProxyConfig, error) {
-	resolved, err := ResolveCredentials(ctx, r.Client, r.Namespace, wl.Spec.Network.Credentials)
+// BuildProxyConfig resolves a workload's credentials, generates TLS material
+// and Envoy YAML. All credentials are resolved from global Secrets in the
+// operator's namespace, so the resulting ProxyConfig is tenant-agnostic —
+// the same config is valid for pool pods and tenant-specific pods alike.
+func BuildProxyConfig(ctx context.Context, c client.Client, namespace string, wl *v1alpha1.BoilerhouseWorkload) (*ProxyConfig, error) {
+	resolved, err := ResolveCredentials(ctx, c, namespace, wl.Spec.Network.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("resolving credentials: %w", err)
 	}

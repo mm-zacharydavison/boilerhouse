@@ -113,6 +113,17 @@ func (r *PoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		if canCreate > gap {
 			canCreate = gap
 		}
+		// Build a tenant-agnostic ProxyConfig once per reconcile pass if the
+		// workload has credentials — pool pods need the Envoy sidecar too.
+		var proxyConfig *ProxyConfig
+		if wl.Spec.Network != nil && len(wl.Spec.Network.Credentials) > 0 {
+			pc, err := BuildProxyConfig(ctx, r.Client, pool.Namespace, &wl)
+			if err != nil {
+				return reconcile.Result{}, fmt.Errorf("building proxy config for pool: %w", err)
+			}
+			proxyConfig = pc
+		}
+
 		for i := 0; i < canCreate; i++ {
 			suffix := randomSuffix()
 			instanceId := fmt.Sprintf("%s-pool-%s", pool.Spec.WorkloadRef, suffix)
@@ -123,9 +134,16 @@ func (r *PoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 				Namespace:    pool.Namespace,
 				PoolStatus:   "warming",
 				ImageRef:     ResolvedImageRef(&wl),
+				ProxyConfig:  proxyConfig,
 			})
 			if err != nil {
 				return reconcile.Result{}, fmt.Errorf("translating pool pod: %w", err)
+			}
+
+			if result.ConfigMap != nil {
+				if err := r.Create(ctx, result.ConfigMap); err != nil && !apierrors.IsAlreadyExists(err) {
+					return reconcile.Result{}, fmt.Errorf("creating proxy configmap: %w", err)
+				}
 			}
 
 			if err := r.Create(ctx, result.Pod); err != nil {
