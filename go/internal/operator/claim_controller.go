@@ -22,14 +22,24 @@ import (
 const (
 	annotationLastActivity = "boilerhouse.dev/last-activity"
 	idleCheckInterval      = 30 * time.Second
+	releaseFailedRequeue   = 5 * time.Minute
 )
+
+// defaultExtractRetryBackoff is the per-attempt sleep schedule used when the
+// reconciler's ExtractRetryBackoff is unset. The slice length is the attempt
+// count; the last entry is unused (we never sleep after the final attempt).
+var defaultExtractRetryBackoff = []time.Duration{1 * time.Second, 4 * time.Second, 16 * time.Second}
 
 // ClaimReconciler reconciles BoilerhouseClaim objects.
 type ClaimReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
-	Snapshots *SnapshotManager
+	Snapshots Snapshotter
 	Namespace string
+	// ExtractRetryBackoff controls per-attempt sleep between snapshot extract
+	// retries on the release path. Length == attempt count. Defaults to
+	// defaultExtractRetryBackoff when nil/empty. Tests pass short delays.
+	ExtractRetryBackoff []time.Duration
 }
 
 // Reconcile handles a single reconciliation loop for a BoilerhouseClaim.
@@ -56,6 +66,10 @@ func (r *ClaimReconciler) Reconcile(ctx context.Context, req reconcile.Request) 
 		// Terminal state — do not reconcile further.
 		// The claim persists so the snapshot is discoverable.
 		// To revive, delete this claim and create a new one.
+		return reconcile.Result{}, nil
+	case "ReleaseFailed":
+		// Held until manual remediation (force-destroy or retry endpoint).
+		// The Pod is deliberately still alive; do not re-enter handleNewClaim.
 		return reconcile.Result{}, nil
 	default:
 		// Empty, Pending, or any other non-active phase: handle as new claim.
@@ -287,8 +301,13 @@ func (r *ClaimReconciler) buildProxyConfig(ctx context.Context, claim *v1alpha1.
 }
 
 // activateClaim sets the claim to Active with the given Pod info and source.
+// Refuses to activate if the Pod hasn't been assigned an IP yet — returns a
+// requeue so the next reconcile sees the populated PodIP.
 func (r *ClaimReconciler) activateClaim(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, pod *corev1.Pod, source string) (reconcile.Result, error) {
 	podIP := pod.Status.PodIP
+	if podIP == "" {
+		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
+	}
 	port := 0
 	if len(pod.Spec.Containers) > 0 && len(pod.Spec.Containers[0].Ports) > 0 {
 		port = int(pod.Spec.Containers[0].Ports[0].ContainerPort)
@@ -378,6 +397,8 @@ func (r *ClaimReconciler) handleActive(ctx context.Context, claim *v1alpha1.Boil
 }
 
 // releaseClaim extracts a snapshot (if applicable), deletes the Pod, and sets phase=Released.
+// If snapshot extraction fails after all retries, the Pod is preserved and the claim
+// transitions to ReleaseFailed so overlay data is not destroyed.
 func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, action string) (reconcile.Result, error) {
 	tenantId := claim.Spec.TenantId
 	workloadRef := claim.Spec.WorkloadRef
@@ -395,8 +416,9 @@ func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.Boil
 			wlKey := types.NamespacedName{Name: workloadRef, Namespace: ns}
 			if err := r.Get(ctx, wlKey, &wl); err == nil {
 				if wl.Spec.Filesystem != nil && len(wl.Spec.Filesystem.OverlayDirs) > 0 {
-					if err := r.Snapshots.ExtractAndStore(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
-						ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on release", "tenant", tenantId, "workload", workloadRef)
+					if err := r.extractWithRetry(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
+						ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on release after retries — keeping pod alive", "tenant", tenantId, "workload", workloadRef)
+						return r.markReleaseFailed(ctx, claim, fmt.Sprintf("snapshot extract failed: %v", err))
 					}
 				}
 			}
@@ -422,6 +444,48 @@ func (r *ClaimReconciler) releaseClaim(ctx context.Context, claim *v1alpha1.Boil
 	}
 
 	return reconcile.Result{}, nil
+}
+
+// extractWithRetry calls Snapshots.ExtractAndStore with bounded retries. It
+// honours r.ExtractRetryBackoff (per-attempt sleep schedule); when nil/empty
+// the production defaults apply. Returns the last error if all attempts fail.
+func (r *ClaimReconciler) extractWithRetry(ctx context.Context, podName, tenantId, workloadRef string, overlayDirs []string) error {
+	backoff := r.ExtractRetryBackoff
+	if len(backoff) == 0 {
+		backoff = defaultExtractRetryBackoff
+	}
+
+	var lastErr error
+	for i, d := range backoff {
+		err := r.Snapshots.ExtractAndStore(ctx, podName, tenantId, workloadRef, overlayDirs)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Don't sleep after the final attempt.
+		if i == len(backoff)-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d):
+		}
+	}
+	return lastErr
+}
+
+// markReleaseFailed transitions the claim to ReleaseFailed with the given
+// detail. The Pod is intentionally not touched — it stays alive so the
+// overlay can still be extracted by a retry or operator intervention.
+func (r *ClaimReconciler) markReleaseFailed(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, detail string) (reconcile.Result, error) {
+	claim.Status.Phase = "ReleaseFailed"
+	claim.Status.Detail = detail
+	if err := r.Status().Update(ctx, claim); err != nil {
+		return reconcile.Result{}, err
+	}
+	return reconcile.Result{RequeueAfter: releaseFailedRequeue}, nil
 }
 
 // handleDeletion handles the cleanup when a claim is being deleted.
@@ -453,10 +517,15 @@ func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.Bo
 
 	if pod != nil {
 		// Extract snapshot before deletion if action is hibernate.
+		// On failure: keep the Pod, hold the finalizer, requeue. The Claim
+		// stays in DeletionTimestamp-set / finalizer-held state until a
+		// future reconcile succeeds or an operator force-removes the
+		// finalizer.
 		if idleAction == "hibernate" && r.Snapshots != nil {
 			if wl.Spec.Filesystem != nil && len(wl.Spec.Filesystem.OverlayDirs) > 0 {
-				if err := r.Snapshots.ExtractAndStore(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
-					ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on deletion", "tenant", tenantId, "workload", workloadRef)
+				if err := r.extractWithRetry(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
+					ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on deletion after retries — holding finalizer", "tenant", tenantId, "workload", workloadRef)
+					return reconcile.Result{RequeueAfter: releaseFailedRequeue}, nil
 				}
 			}
 		}

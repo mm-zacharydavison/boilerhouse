@@ -264,10 +264,10 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 	var existing v1alpha1.BoilerhouseClaim
 	err := g.client.Get(ctx, claimKey, &existing)
 	if err == nil {
-		if existing.Status.Phase == "Active" && existing.Status.Endpoint != nil {
+		if existing.Status.Phase == "Active" && existing.Status.Endpoint != nil && existing.Status.Endpoint.Host != "" {
 			return formatEndpoint(existing.Status.Endpoint), nil
 		}
-		// Claim exists but not active yet; fall through to poll.
+		// Claim exists but not active yet (or endpoint not populated); fall through to poll.
 	} else if !apierrors.IsNotFound(err) {
 		return "", fmt.Errorf("get claim: %w", err)
 	} else {
@@ -312,7 +312,7 @@ func (g *Gateway) waitForClaim(ctx context.Context, key types.NamespacedName) (s
 			if err := g.client.Get(ctx, key, &claim); err != nil {
 				continue
 			}
-			if claim.Status.Phase == "Active" && claim.Status.Endpoint != nil {
+			if claim.Status.Phase == "Active" && claim.Status.Endpoint != nil && claim.Status.Endpoint.Host != "" {
 				return formatEndpoint(claim.Status.Endpoint), nil
 			}
 			if claim.Status.Phase == "Error" {
