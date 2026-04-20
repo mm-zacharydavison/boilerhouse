@@ -365,6 +365,24 @@ func (r *ClaimReconciler) setClaimError(ctx context.Context, claim *v1alpha1.Boi
 
 // handleActive implements idle monitoring for active claims.
 func (r *ClaimReconciler) handleActive(ctx context.Context, claim *v1alpha1.BoilerhouseClaim) (reconcile.Result, error) {
+	// Check that the backing pod still exists. If it was deleted out from
+	// under us (manual kubectl delete, node drain, crash), the claim is
+	// pointing at a dead endpoint — transition to Released so the next
+	// trigger event can create a fresh claim from scratch.
+	if claim.Status.InstanceId != "" {
+		var pod corev1.Pod
+		err := r.Get(ctx, types.NamespacedName{Name: claim.Status.InstanceId, Namespace: claim.Namespace}, &pod)
+		if apierrors.IsNotFound(err) {
+			claim.Status.Phase = "Released"
+			claim.Status.Detail = "backing pod no longer exists"
+			claim.Status.Endpoint = nil
+			if updateErr := r.Status().Update(ctx, claim); updateErr != nil {
+				return reconcile.Result{}, updateErr
+			}
+			return reconcile.Result{}, nil
+		}
+	}
+
 	// Look up the workload idle config.
 	var wl v1alpha1.BoilerhouseWorkload
 	wlKey := types.NamespacedName{Name: claim.Spec.WorkloadRef, Namespace: claim.Namespace}
