@@ -75,6 +75,8 @@ static_resources:
                             prefix: "/"
                           route:
                             cluster: upstream_{{safeDomain .Domain}}
+                            # LLM streaming responses can take minutes.
+                            timeout: 600s
                           request_headers_to_add:
 {{- range $key, $val := .Headers}}
                             - header:
@@ -137,6 +139,8 @@ static_resources:
                             prefix: "/"
                           route:
                             cluster: upstream_{{safeDomain .Domain}}
+                            # LLM streaming responses can take minutes.
+                            timeout: 600s
                           request_headers_to_add:
 {{- range $key, $val := .Headers}}
                             - header:
@@ -156,6 +160,15 @@ static_resources:
     - name: upstream_{{safeDomain .Domain}}
       type: STRICT_DNS
       dns_lookup_family: V4_ONLY
+      # Defaults (1024 per priority) are too tight when a single tenant
+      # opens many concurrent / long-lived streaming requests.
+      circuit_breakers:
+        thresholds:
+          - priority: DEFAULT
+            max_connections: 65536
+            max_pending_requests: 65536
+            max_requests: 65536
+            max_retries: 8
       load_assignment:
         cluster_name: upstream_{{safeDomain .Domain}}
         endpoints:
