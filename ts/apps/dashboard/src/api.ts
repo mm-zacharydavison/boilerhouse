@@ -140,6 +140,26 @@ export interface SnapshotEntry {
 	path: string;
 }
 
+// Debug resources
+export interface DebugResourceEntry {
+	name: string;
+	phase: string;
+	age: string;
+	summary: Record<string, unknown>;
+	raw: unknown;
+}
+
+export interface DebugResourcesResponse {
+	workloads: DebugResourceEntry[];
+	pools: DebugResourceEntry[];
+	claims: DebugResourceEntry[];
+	triggers: DebugResourceEntry[];
+	pods: DebugResourceEntry[];
+	persistentVolumeClaims: DebugResourceEntry[];
+	services: DebugResourceEntry[];
+	networkPolicies: DebugResourceEntry[];
+}
+
 // --- API methods ---
 
 export const api = {
@@ -185,6 +205,9 @@ export const api = {
 
 	// Triggers
 	fetchTriggers: () => get<TriggerResponse[]>("/triggers"),
+
+	// Debug resources
+	fetchDebugResources: () => get<DebugResourcesResponse>("/debug/resources"),
 
 	deleteTrigger: (id: string) =>
 		del<{ status: string }>(`/triggers/${encodeURIComponent(id)}`),
