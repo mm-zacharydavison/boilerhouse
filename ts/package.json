@@ -6,5 +6,6 @@
     "dashboard": "cd apps/dashboard && bun --hot src/server.ts",
     "docs:dev": "cd apps/docs && bun run dev",
     "docs:build": "cd apps/docs && bun run build"
-  }
+  },
+  "trustedDependencies": ["vitepress-theme-boilerhouse"]
 }

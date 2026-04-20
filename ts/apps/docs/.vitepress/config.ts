@@ -1,16 +1,19 @@
 import { defineConfig } from "vitepress";
+import { markdown } from "vitepress-theme-boilerhouse/markdown";
 
 export default defineConfig({
   title: "Boilerhouse",
   description: "Multi-tenant container orchestration platform",
   base: "/boilerhouse/",
   cleanUrls: true,
+  appearance: "force-dark",
   head: [
     ["link", { rel: "icon", type: "image/svg+xml", href: "/boilerhouse/logo.svg" }],
   ],
+  markdown,
   vite: {
     ssr: {
-      noExternal: ["vitepress-theme-zac"],
+      noExternal: ["vitepress-theme-boilerhouse"],
     },
   },
   themeConfig: {
