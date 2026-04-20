@@ -153,6 +153,7 @@ static_resources:
 {{- range .Credentials}}
     - name: upstream_{{safeDomain .Domain}}
       type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
       load_assignment:
         cluster_name: upstream_{{safeDomain .Domain}}
         endpoints:
