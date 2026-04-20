@@ -33,7 +33,7 @@ ensure_minikube_up() {
     return 0
   fi
   echo "minikube profile '$profile' not running — bootstrapping..."
-  exec bash "$PRESET_REPO/.kadai/actions/minikube.sh"
+  bash "$PRESET_REPO/.kadai/actions/minikube.sh"
 }
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
