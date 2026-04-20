@@ -144,7 +144,11 @@ prompt_allowlist() {
 stage_manifests() {
   local src="$1" dst="$2"
   shift 2
+  # Always start from a clean dst. Prevents stale files from a previous run
+  # (including broken symlinks from the old TS preset layout) leaking into
+  # the kubectl apply.
   mkdir -p "$dst"
+  find "$dst" -mindepth 1 -delete
   local f
   for f in "$@"; do
     # Scan the template for ${VAR} references. Uniquify.
