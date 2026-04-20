@@ -117,9 +117,9 @@ static_resources:
               common_tls_context:
                 tls_certificates:
                   - certificate_chain:
-                      filename: /etc/envoy/certs/{{safeDomain .Domain}}.crt
+                      filename: /etc/envoy/{{safeDomain .Domain}}.crt
                     private_key:
-                      filename: /etc/envoy/certs/{{safeDomain .Domain}}.key
+                      filename: /etc/envoy/{{safeDomain .Domain}}.key
           filters:
             - name: envoy.filters.network.http_connection_manager
               typed_config:

@@ -403,8 +403,8 @@ func buildProxyConfigMap(opts TranslateOpts, labels map[string]string, name stri
 	if opts.ProxyConfig.TLS != nil {
 		for _, dc := range opts.ProxyConfig.TLS.Certs {
 			safe := envoy.SafeDomain(dc.Domain)
-			data["certs/"+safe+".crt"] = string(dc.Cert)
-			data["certs/"+safe+".key"] = string(dc.Key)
+			data[safe+".crt"] = string(dc.Cert)
+			data[safe+".key"] = string(dc.Key)
 		}
 	}
 

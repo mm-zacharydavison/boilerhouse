@@ -113,8 +113,8 @@ func TestGenerateEnvoyYAML_WithTLS(t *testing.T) {
 	assert.Contains(t, yaml, "tls_inspector")
 
 	// Verify per-domain cert references.
-	assert.Contains(t, yaml, "/etc/envoy/certs/api_example_com.crt")
-	assert.Contains(t, yaml, "/etc/envoy/certs/api_example_com.key")
+	assert.Contains(t, yaml, "/etc/envoy/api_example_com.crt")
+	assert.Contains(t, yaml, "/etc/envoy/api_example_com.key")
 
 	// Verify SNI matching.
 	assert.Contains(t, yaml, "server_names")
