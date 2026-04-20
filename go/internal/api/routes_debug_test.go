@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -110,36 +111,102 @@ func TestListDebugResources(t *testing.T) {
 	var resp debugResourcesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 
-	// CRDs we created ourselves; the namespace is otherwise empty for them.
-	assert.Len(t, resp.Workloads, 1)
-	assert.Len(t, resp.Pools, 1)
-	assert.Len(t, resp.Claims, 1)
-	assert.Len(t, resp.Triggers, 1)
+	workloadGroup := findGroup(resp.Groups, "BoilerhouseWorkload")
+	require.NotNil(t, workloadGroup, "BoilerhouseWorkload group should be present")
+	require.Len(t, workloadGroup.Resources, 1)
+	assert.Equal(t, "busybox:latest", workloadGroup.Resources[0].Summary["image"])
+	assert.True(t, len(workloadGroup.Resources[0].Raw) > 2)
+
+	poolGroup := findGroup(resp.Groups, "BoilerhousePool")
+	require.NotNil(t, poolGroup)
+	assert.Len(t, poolGroup.Resources, 1)
+
+	claimGroup := findGroup(resp.Groups, "BoilerhouseClaim")
+	require.NotNil(t, claimGroup)
+	require.Len(t, claimGroup.Resources, 1)
+	assert.Equal(t, "tenant-a", claimGroup.Resources[0].Summary["tenant"])
+
+	triggerGroup := findGroup(resp.Groups, "BoilerhouseTrigger")
+	require.NotNil(t, triggerGroup)
+	require.Len(t, triggerGroup.Resources, 1)
+	assert.Equal(t, "webhook", triggerGroup.Resources[0].Summary["type"])
+	assert.Equal(t, "wl-1", triggerGroup.Resources[0].Summary["workloadRef"])
 
 	// Native kinds: the namespace may contain apiserver-managed objects
 	// (e.g. the built-in "kubernetes" Service in the default namespace),
 	// so we assert the fixtures are present by name rather than by exact
-	// count. Both managed and unmanaged pods should now appear since the
+	// count. Both managed and unmanaged pods should appear since the
 	// handler no longer filters by label.
-	assert.NotNil(t, findEntry(resp.Pods, "pod-managed"))
-	assert.NotNil(t, findEntry(resp.Pods, "pod-unmanaged"))
-	assert.NotNil(t, findEntry(resp.PersistentVolumeClaims, "pvc-1"))
-	assert.NotNil(t, findEntry(resp.NetworkPolicies, "np-1"))
+	podGroup := findGroup(resp.Groups, "Pod")
+	require.NotNil(t, podGroup)
+	assert.NotNil(t, findEntry(podGroup.Resources, "pod-managed"))
+	assert.NotNil(t, findEntry(podGroup.Resources, "pod-unmanaged"))
 
-	require.Len(t, resp.Workloads, 1)
-	assert.Equal(t, "busybox:latest", resp.Workloads[0].Summary["image"])
-	assert.True(t, len(resp.Workloads[0].Raw) > 2)
+	pvcGroup := findGroup(resp.Groups, "PersistentVolumeClaim")
+	require.NotNil(t, pvcGroup)
+	assert.NotNil(t, findEntry(pvcGroup.Resources, "pvc-1"))
 
-	require.Len(t, resp.Claims, 1)
-	assert.Equal(t, "tenant-a", resp.Claims[0].Summary["tenant"])
+	npGroup := findGroup(resp.Groups, "NetworkPolicy")
+	require.NotNil(t, npGroup)
+	assert.NotNil(t, findEntry(npGroup.Resources, "np-1"))
 
-	require.Len(t, resp.Triggers, 1)
-	assert.Equal(t, "webhook", resp.Triggers[0].Summary["type"])
-	assert.Equal(t, "wl-1", resp.Triggers[0].Summary["workloadRef"])
-
-	svc := findEntry(resp.Services, "svc-1")
+	svcGroup := findGroup(resp.Groups, "Service")
+	require.NotNil(t, svcGroup)
+	svc := findEntry(svcGroup.Resources, "svc-1")
 	require.NotNil(t, svc)
 	assert.Equal(t, "ClusterIP", svc.Summary["type"])
+}
+
+func TestListDebugResources_RedactsSecretValues(t *testing.T) {
+	srv, cleanup := newTestServer(t)
+	defer cleanup()
+
+	ns := srv.namespace
+	ctx := t.Context()
+
+	require.NoError(t, srv.client.Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sec-1", Namespace: ns},
+		Type:       corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"api-key": []byte("super-secret-value"),
+			"token":   []byte("another-secret"),
+		},
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/debug/resources", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp debugResourcesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	group := findGroup(resp.Groups, "Secret")
+	require.NotNil(t, group)
+	entry := findEntry(group.Resources, "sec-1")
+	require.NotNil(t, entry)
+
+	// Summary exposes key names (sorted) and type, but not values.
+	assert.Equal(t, "api-key,token", entry.Summary["keys"])
+	assert.Equal(t, "Opaque", entry.Summary["type"])
+
+	// Raw JSON must not contain the original values. Secret.data is
+	// base64-encoded in the apiserver-returned representation, so check
+	// both the plain and base64-encoded forms.
+	rawStr := string(entry.Raw)
+	assert.NotContains(t, rawStr, "super-secret-value")
+	assert.NotContains(t, rawStr, base64.StdEncoding.EncodeToString([]byte("super-secret-value")))
+	assert.NotContains(t, rawStr, base64.StdEncoding.EncodeToString([]byte("another-secret")))
+	assert.Contains(t, rawStr, "redacted")
+}
+
+func findGroup(groups []kindGroup, kind string) *kindGroup {
+	for i := range groups {
+		if groups[i].Kind == kind {
+			return &groups[i]
+		}
+	}
+	return nil
 }
 
 func findEntry(entries []resourceEntry, name string) *resourceEntry {

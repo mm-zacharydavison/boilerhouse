@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,14 +12,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 )
 
 // resourceEntry is the JSON shape for a single object in the debug/resources
-// response. Phase is empty for kinds that don't have one (Service,
-// NetworkPolicy). Summary holds a small per-kind set of fields used by the
-// dashboard to populate row columns. Raw is the full K8s object as returned
-// by the controller-runtime client, marshaled back to JSON.
+// response. Phase is empty for kinds that don't have one. Summary holds a
+// small per-kind set of fields used by the dashboard to populate row columns.
+// Raw is the full K8s object marshaled back to JSON.
 type resourceEntry struct {
 	Name    string          `json:"name"`
 	Phase   string          `json:"phase"`
@@ -27,154 +31,260 @@ type resourceEntry struct {
 	Raw     json.RawMessage `json:"raw"`
 }
 
+// kindGroup is one row-group in the debug/resources response — a single
+// Kubernetes resource type and its instances in the namespace.
+type kindGroup struct {
+	Kind       string          `json:"kind"`
+	APIVersion string          `json:"apiVersion"`
+	Resources  []resourceEntry `json:"resources"`
+}
+
 // debugResourcesResponse is the JSON shape returned by GET /debug/resources.
 type debugResourcesResponse struct {
-	Workloads              []resourceEntry `json:"workloads"`
-	Pools                  []resourceEntry `json:"pools"`
-	Claims                 []resourceEntry `json:"claims"`
-	Triggers               []resourceEntry `json:"triggers"`
-	Pods                   []resourceEntry `json:"pods"`
-	PersistentVolumeClaims []resourceEntry `json:"persistentVolumeClaims"`
-	Services               []resourceEntry `json:"services"`
-	NetworkPolicies        []resourceEntry `json:"networkPolicies"`
+	Groups []kindGroup `json:"groups"`
+}
+
+// kindOrder controls the display order of groups. Kinds listed here are
+// rendered first, in the given order; unlisted kinds come after, alphabetical.
+var kindOrder = []string{
+	"BoilerhouseWorkload",
+	"BoilerhousePool",
+	"BoilerhouseClaim",
+	"BoilerhouseTrigger",
+	"Pod",
+	"Deployment",
+	"ReplicaSet",
+	"Service",
+	"Endpoints",
+	"PersistentVolumeClaim",
+	"NetworkPolicy",
+	"ConfigMap",
+	"Secret",
+	"ServiceAccount",
+	"Event",
 }
 
 func (s *Server) listDebugResources(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	ns := client.InNamespace(s.namespace)
 
-	var resp debugResourcesResponse
-
-	var wls v1alpha1.BoilerhouseWorkloadList
-	if err := s.client.List(ctx, &wls, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list workloads: "+err.Error())
+	if s.restConfig == nil {
+		writeError(w, http.StatusInternalServerError, "rest config unavailable")
 		return
 	}
-	for i := range wls.Items {
-		e, err := workloadToEntry(&wls.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal workload: "+err.Error())
-			return
-		}
-		resp.Workloads = append(resp.Workloads, e)
-	}
 
-	var pools v1alpha1.BoilerhousePoolList
-	if err := s.client.List(ctx, &pools, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list pools: "+err.Error())
+	disco, err := discovery.NewDiscoveryClientForConfig(s.restConfig)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "discovery client: "+err.Error())
 		return
 	}
-	for i := range pools.Items {
-		e, err := poolToEntry(&pools.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal pool: "+err.Error())
-			return
-		}
-		resp.Pools = append(resp.Pools, e)
-	}
-
-	var claims v1alpha1.BoilerhouseClaimList
-	if err := s.client.List(ctx, &claims, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list claims: "+err.Error())
+	dyn, err := dynamic.NewForConfig(s.restConfig)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "dynamic client: "+err.Error())
 		return
 	}
-	for i := range claims.Items {
-		e, err := claimToEntry(&claims.Items[i])
+
+	// Discovery returns the preferred API version per group. Partial-result
+	// errors are normal (e.g. metrics.k8s.io may be unreachable); accept the
+	// partial list.
+	apiLists, _ := disco.ServerPreferredNamespacedResources()
+
+	var groups []kindGroup
+	for _, apiList := range apiLists {
+		gv, err := schema.ParseGroupVersion(apiList.GroupVersion)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal claim: "+err.Error())
-			return
+			continue
 		}
-		resp.Claims = append(resp.Claims, e)
+		for _, res := range apiList.APIResources {
+			if strings.Contains(res.Name, "/") {
+				continue // subresource
+			}
+			if !hasVerb(res.Verbs, "list") {
+				continue
+			}
+			gvr := schema.GroupVersionResource{
+				Group:    gv.Group,
+				Version:  gv.Version,
+				Resource: res.Name,
+			}
+			ul, err := dyn.Resource(gvr).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				continue // skip kinds we can't list (RBAC, missing, etc.)
+			}
+			if len(ul.Items) == 0 {
+				continue // hide empty groups to reduce noise
+			}
+			group := kindGroup{
+				Kind:       res.Kind,
+				APIVersion: apiList.GroupVersion,
+				Resources:  make([]resourceEntry, 0, len(ul.Items)),
+			}
+			for i := range ul.Items {
+				entry, err := unstructuredToEntry(&ul.Items[i], res.Kind)
+				if err != nil {
+					continue
+				}
+				group.Resources = append(group.Resources, entry)
+			}
+			if len(group.Resources) > 0 {
+				groups = append(groups, group)
+			}
+		}
 	}
 
-	var triggers v1alpha1.BoilerhouseTriggerList
-	if err := s.client.List(ctx, &triggers, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list triggers: "+err.Error())
-		return
-	}
-	for i := range triggers.Items {
-		e, err := triggerToEntry(&triggers.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal trigger: "+err.Error())
-			return
-		}
-		resp.Triggers = append(resp.Triggers, e)
-	}
+	sortGroups(groups)
 
-	// Ensure non-nil slices so the JSON output always has 8 keys.
-	if resp.Workloads == nil {
-		resp.Workloads = []resourceEntry{}
+	if groups == nil {
+		groups = []kindGroup{}
 	}
-	if resp.Pools == nil {
-		resp.Pools = []resourceEntry{}
-	}
-	if resp.Claims == nil {
-		resp.Claims = []resourceEntry{}
-	}
-	if resp.Triggers == nil {
-		resp.Triggers = []resourceEntry{}
-	}
-	var pods corev1.PodList
-	if err := s.client.List(ctx, &pods, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list pods: "+err.Error())
-		return
-	}
-	resp.Pods = make([]resourceEntry, 0, len(pods.Items))
-	for i := range pods.Items {
-		e, err := podToEntry(&pods.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal pod: "+err.Error())
-			return
-		}
-		resp.Pods = append(resp.Pods, e)
-	}
+	writeJSON(w, http.StatusOK, debugResourcesResponse{Groups: groups})
+}
 
-	var pvcs corev1.PersistentVolumeClaimList
-	if err := s.client.List(ctx, &pvcs, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list pvcs: "+err.Error())
-		return
-	}
-	resp.PersistentVolumeClaims = make([]resourceEntry, 0, len(pvcs.Items))
-	for i := range pvcs.Items {
-		e, err := pvcToEntry(&pvcs.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal pvc: "+err.Error())
-			return
+func hasVerb(verbs metav1.Verbs, v string) bool {
+	for _, x := range verbs {
+		if x == v {
+			return true
 		}
-		resp.PersistentVolumeClaims = append(resp.PersistentVolumeClaims, e)
 	}
+	return false
+}
 
-	var svcs corev1.ServiceList
-	if err := s.client.List(ctx, &svcs, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list services: "+err.Error())
-		return
+func sortGroups(groups []kindGroup) {
+	priority := make(map[string]int, len(kindOrder))
+	for i, k := range kindOrder {
+		priority[k] = i
 	}
-	resp.Services = make([]resourceEntry, 0, len(svcs.Items))
-	for i := range svcs.Items {
-		e, err := serviceToEntry(&svcs.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal service: "+err.Error())
-			return
+	sort.SliceStable(groups, func(i, j int) bool {
+		pi, pok := priority[groups[i].Kind]
+		pj, pjok := priority[groups[j].Kind]
+		if pok && pjok {
+			return pi < pj
 		}
-		resp.Services = append(resp.Services, e)
-	}
-
-	var nps networkingv1.NetworkPolicyList
-	if err := s.client.List(ctx, &nps, ns); err != nil {
-		writeError(w, http.StatusInternalServerError, "list networkpolicies: "+err.Error())
-		return
-	}
-	resp.NetworkPolicies = make([]resourceEntry, 0, len(nps.Items))
-	for i := range nps.Items {
-		e, err := networkPolicyToEntry(&nps.Items[i])
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal networkpolicy: "+err.Error())
-			return
+		if pok {
+			return true
 		}
-		resp.NetworkPolicies = append(resp.NetworkPolicies, e)
-	}
+		if pjok {
+			return false
+		}
+		return groups[i].Kind < groups[j].Kind
+	})
+}
 
-	writeJSON(w, http.StatusOK, resp)
+// unstructuredToEntry dispatches to a typed helper for known kinds, or falls
+// back to a generic entry otherwise. Secrets are special-cased to redact
+// data values.
+func unstructuredToEntry(u *unstructured.Unstructured, kind string) (resourceEntry, error) {
+	switch kind {
+	case "BoilerhouseWorkload":
+		var w v1alpha1.BoilerhouseWorkload
+		if err := fromUnstructured(u, &w); err != nil {
+			return genericEntry(u), nil
+		}
+		return workloadToEntry(&w)
+	case "BoilerhousePool":
+		var p v1alpha1.BoilerhousePool
+		if err := fromUnstructured(u, &p); err != nil {
+			return genericEntry(u), nil
+		}
+		return poolToEntry(&p)
+	case "BoilerhouseClaim":
+		var c v1alpha1.BoilerhouseClaim
+		if err := fromUnstructured(u, &c); err != nil {
+			return genericEntry(u), nil
+		}
+		return claimToEntry(&c)
+	case "BoilerhouseTrigger":
+		var t v1alpha1.BoilerhouseTrigger
+		if err := fromUnstructured(u, &t); err != nil {
+			return genericEntry(u), nil
+		}
+		return triggerToEntry(&t)
+	case "Pod":
+		var p corev1.Pod
+		if err := fromUnstructured(u, &p); err != nil {
+			return genericEntry(u), nil
+		}
+		return podToEntry(&p)
+	case "PersistentVolumeClaim":
+		var p corev1.PersistentVolumeClaim
+		if err := fromUnstructured(u, &p); err != nil {
+			return genericEntry(u), nil
+		}
+		return pvcToEntry(&p)
+	case "Service":
+		var svc corev1.Service
+		if err := fromUnstructured(u, &svc); err != nil {
+			return genericEntry(u), nil
+		}
+		return serviceToEntry(&svc)
+	case "NetworkPolicy":
+		var np networkingv1.NetworkPolicy
+		if err := fromUnstructured(u, &np); err != nil {
+			return genericEntry(u), nil
+		}
+		return networkPolicyToEntry(&np)
+	case "Secret":
+		return secretToEntry(u)
+	default:
+		return genericEntry(u), nil
+	}
+}
+
+func fromUnstructured(u *unstructured.Unstructured, out any) error {
+	return runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, out)
+}
+
+// genericEntry is the fallback for kinds without a typed helper. It exposes
+// name, age, and raw JSON — no summary columns.
+func genericEntry(u *unstructured.Unstructured) resourceEntry {
+	raw, _ := json.Marshal(u)
+	return resourceEntry{
+		Name:    u.GetName(),
+		Age:     formatAge(u.GetCreationTimestamp()),
+		Summary: map[string]any{},
+		Raw:     raw,
+	}
+}
+
+// secretToEntry redacts data and stringData values before marshaling, so
+// the dashboard can show which keys exist without exposing the values.
+// The endpoint is behind API-key auth, but value redaction still reduces
+// the blast radius of an accidental console-log or screenshot.
+func secretToEntry(u *unstructured.Unstructured) (resourceEntry, error) {
+	copy := u.DeepCopy()
+	keys := redactSecretValues(copy)
+	raw, err := json.Marshal(copy)
+	if err != nil {
+		return resourceEntry{}, err
+	}
+	secretType, _, _ := unstructured.NestedString(copy.Object, "type")
+	return resourceEntry{
+		Name:    u.GetName(),
+		Age:     formatAge(u.GetCreationTimestamp()),
+		Summary: map[string]any{"type": secretType, "keys": strings.Join(keys, ",")},
+		Raw:     raw,
+	}, nil
+}
+
+func redactSecretValues(u *unstructured.Unstructured) []string {
+	keySet := map[string]struct{}{}
+	for _, field := range []string{"data", "stringData"} {
+		m, ok := u.Object[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		redacted := make(map[string]any, len(m))
+		for k := range m {
+			redacted[k] = "<redacted>"
+			keySet[k] = struct{}{}
+		}
+		u.Object[field] = redacted
+	}
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // formatAge returns a short human-friendly duration like "3m", "2h15m", "5d".

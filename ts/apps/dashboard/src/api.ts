@@ -149,15 +149,14 @@ export interface DebugResourceEntry {
 	raw: unknown;
 }
 
+export interface DebugKindGroup {
+	kind: string;
+	apiVersion: string;
+	resources: DebugResourceEntry[];
+}
+
 export interface DebugResourcesResponse {
-	workloads: DebugResourceEntry[];
-	pools: DebugResourceEntry[];
-	claims: DebugResourceEntry[];
-	triggers: DebugResourceEntry[];
-	pods: DebugResourceEntry[];
-	persistentVolumeClaims: DebugResourceEntry[];
-	services: DebugResourceEntry[];
-	networkPolicies: DebugResourceEntry[];
+	groups: DebugKindGroup[];
 }
 
 // --- API methods ---

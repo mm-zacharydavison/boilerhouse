@@ -1,123 +1,103 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { api, type DebugResourceEntry, type DebugResourcesResponse } from "../api";
+import {
+	api,
+	type DebugKindGroup,
+	type DebugResourceEntry,
+	type DebugResourcesResponse,
+} from "../api";
 import { PageHeader } from "../components";
 import { useApi, useAutoRefresh } from "../hooks";
 import { JsonSyntax } from "../json-syntax";
 
-type KindKey =
-	| "workloads"
-	| "pools"
-	| "claims"
-	| "triggers"
-	| "pods"
-	| "persistentVolumeClaims"
-	| "services"
-	| "networkPolicies";
-
-interface KindDef {
-	key: KindKey;
-	label: string;
-	columns: { title: string; render: (e: DebugResourceEntry) => React.ReactNode }[];
-}
+type ColumnDef = {
+	title: string;
+	render: (e: DebugResourceEntry) => React.ReactNode;
+};
 
 function cell(value: unknown): string {
 	if (value === null || value === undefined || value === "") return "-";
 	return String(value);
 }
 
-const KINDS: KindDef[] = [
-	{
-		key: "workloads",
-		label: "Workloads",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{ title: "image", render: (e) => cell(e.summary.image) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "pools",
-		label: "Pools",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{
-				title: "size",
-				render: (e) => `${cell(e.summary.ready)}/${cell(e.summary.desired)}`,
-			},
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "claims",
-		label: "Claims",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{ title: "tenant", render: (e) => cell(e.summary.tenant) },
-			{ title: "instance", render: (e) => cell(e.summary.instance) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "triggers",
-		label: "Triggers",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{ title: "type", render: (e) => cell(e.summary.type) },
-			{ title: "workload", render: (e) => cell(e.summary.workloadRef) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "pods",
-		label: "Pods",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{ title: "node", render: (e) => cell(e.summary.node) },
-			{ title: "podIP", render: (e) => cell(e.summary.podIP) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "persistentVolumeClaims",
-		label: "PersistentVolumeClaims",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "phase", render: (e) => cell(e.phase) },
-			{ title: "storageClass", render: (e) => cell(e.summary.storageClass) },
-			{ title: "capacity", render: (e) => cell(e.summary.capacity) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "services",
-		label: "Services",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "type", render: (e) => cell(e.summary.type) },
-			{ title: "clusterIP", render: (e) => cell(e.summary.clusterIP) },
-			{ title: "ports", render: (e) => cell(e.summary.ports) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
-	{
-		key: "networkPolicies",
-		label: "NetworkPolicies",
-		columns: [
-			{ title: "name", render: (e) => e.name },
-			{ title: "podSelector", render: (e) => cell(e.summary.podSelector) },
-			{ title: "age", render: (e) => cell(e.age) },
-		],
-	},
+// Default columns for any kind without a specific layout.
+const DEFAULT_COLUMNS: ColumnDef[] = [
+	{ title: "name", render: (e) => e.name },
+	{ title: "age", render: (e) => cell(e.age) },
 ];
 
-function Section({ def, entries }: { def: KindDef; entries: DebugResourceEntry[] }) {
+// Known kinds get tailored columns. Keys are K8s `kind` values.
+const KIND_COLUMNS: Record<string, ColumnDef[]> = {
+	BoilerhouseWorkload: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{ title: "image", render: (e) => cell(e.summary.image) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	BoilerhousePool: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{
+			title: "size",
+			render: (e) => `${cell(e.summary.ready)}/${cell(e.summary.desired)}`,
+		},
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	BoilerhouseClaim: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{ title: "tenant", render: (e) => cell(e.summary.tenant) },
+		{ title: "instance", render: (e) => cell(e.summary.instance) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	BoilerhouseTrigger: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{ title: "type", render: (e) => cell(e.summary.type) },
+		{ title: "workload", render: (e) => cell(e.summary.workloadRef) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	Pod: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{ title: "node", render: (e) => cell(e.summary.node) },
+		{ title: "podIP", render: (e) => cell(e.summary.podIP) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	PersistentVolumeClaim: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "phase", render: (e) => cell(e.phase) },
+		{ title: "storageClass", render: (e) => cell(e.summary.storageClass) },
+		{ title: "capacity", render: (e) => cell(e.summary.capacity) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	Service: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "type", render: (e) => cell(e.summary.type) },
+		{ title: "clusterIP", render: (e) => cell(e.summary.clusterIP) },
+		{ title: "ports", render: (e) => cell(e.summary.ports) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	NetworkPolicy: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "podSelector", render: (e) => cell(e.summary.podSelector) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+	Secret: [
+		{ title: "name", render: (e) => e.name },
+		{ title: "type", render: (e) => cell(e.summary.type) },
+		{ title: "keys", render: (e) => cell(e.summary.keys) },
+		{ title: "age", render: (e) => cell(e.age) },
+	],
+};
+
+function columnsFor(kind: string): ColumnDef[] {
+	return KIND_COLUMNS[kind] ?? DEFAULT_COLUMNS;
+}
+
+function Section({ group }: { group: DebugKindGroup }) {
 	const [collapsed, setCollapsed] = useState(false);
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const columns = columnsFor(group.kind);
 
 	function toggleRow(name: string) {
 		setExpanded((prev) => {
@@ -137,61 +117,58 @@ function Section({ def, entries }: { def: KindDef; entries: DebugResourceEntry[]
 				className="flex items-center gap-2 px-2 py-1 font-tight font-semibold text-white hover:bg-surface-3/50 rounded w-full text-left"
 			>
 				<span className="text-muted font-mono text-sm">{collapsed ? "▸" : "▾"}</span>
-				<span>{def.label}</span>
-				<span className="text-muted font-mono text-sm">({entries.length})</span>
+				<span>{group.kind}</span>
+				<span className="text-muted font-mono text-sm">({group.resources.length})</span>
+				<span className="text-muted font-mono text-xs ml-2">{group.apiVersion}</span>
 			</button>
 			{!collapsed && (
 				<div className="mt-1 border border-border/20 rounded overflow-hidden">
-					{entries.length === 0 ? (
-						<div className="px-3 py-2 text-muted font-mono text-sm">no resources</div>
-					) : (
-						<table className="w-full text-sm font-mono">
-							<thead className="bg-surface-2 text-muted-light">
-								<tr>
-									{def.columns.map((c) => (
-										<th key={c.title} className="px-2 py-1 text-left font-normal">
-											{c.title}
-										</th>
-									))}
-								</tr>
-							</thead>
-							<tbody>
-								{entries.map((e) => {
-									const isOpen = expanded.has(e.name);
-									return (
-										<Fragment key={e.name}>
-											<tr
-												onClick={() => toggleRow(e.name)}
-												onKeyDown={(ev) => {
-													if (ev.key === "Enter" || ev.key === " ") {
-														ev.preventDefault();
-														toggleRow(e.name);
-													}
-												}}
-												role="button"
-												tabIndex={0}
-												aria-expanded={isOpen}
-												className="border-t border-border/10 cursor-pointer hover:bg-surface-2 focus:outline focus:outline-1 focus:outline-accent"
-											>
-												{def.columns.map((c) => (
-													<td key={c.title} className="px-2 py-1">
-														{c.render(e)}
-													</td>
-												))}
+					<table className="w-full text-sm font-mono">
+						<thead className="bg-surface-2 text-muted-light">
+							<tr>
+								{columns.map((c) => (
+									<th key={c.title} className="px-2 py-1 text-left font-normal">
+										{c.title}
+									</th>
+								))}
+							</tr>
+						</thead>
+						<tbody>
+							{group.resources.map((e) => {
+								const isOpen = expanded.has(e.name);
+								return (
+									<Fragment key={e.name}>
+										<tr
+											onClick={() => toggleRow(e.name)}
+											onKeyDown={(ev) => {
+												if (ev.key === "Enter" || ev.key === " ") {
+													ev.preventDefault();
+													toggleRow(e.name);
+												}
+											}}
+											role="button"
+											tabIndex={0}
+											aria-expanded={isOpen}
+											className="border-t border-border/10 cursor-pointer hover:bg-surface-2 focus:outline focus:outline-1 focus:outline-accent"
+										>
+											{columns.map((c) => (
+												<td key={c.title} className="px-2 py-1">
+													{c.render(e)}
+												</td>
+											))}
+										</tr>
+										{isOpen && (
+											<tr className="bg-surface-1">
+												<td colSpan={columns.length} className="p-2">
+													<JsonSyntax data={e.raw} />
+												</td>
 											</tr>
-											{isOpen && (
-												<tr className="bg-surface-1">
-													<td colSpan={def.columns.length} className="p-2">
-														<JsonSyntax data={e.raw} />
-													</td>
-												</tr>
-											)}
-										</Fragment>
-									);
-								})}
-							</tbody>
-						</table>
-					)}
+										)}
+									</Fragment>
+								);
+							})}
+						</tbody>
+					</table>
 				</div>
 			)}
 		</section>
@@ -202,7 +179,6 @@ export function Kubernetes() {
 	const { data, loading, error, refetch } = useApi<DebugResourcesResponse>(api.fetchDebugResources);
 	const { setPaused } = useAutoRefresh(refetch, 3000);
 
-	// Pause polling while the tab is hidden.
 	useEffect(() => {
 		const onVis = () => setPaused(document.visibilityState !== "visible");
 		onVis();
@@ -224,9 +200,7 @@ export function Kubernetes() {
 
 	const sections = useMemo(() => {
 		if (!data) return null;
-		return KINDS.map((def) => (
-			<Section key={def.key} def={def} entries={data[def.key]} />
-		));
+		return data.groups.map((g) => <Section key={`${g.apiVersion}/${g.kind}`} group={g} />);
 	}, [data]);
 
 	return (
