@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DebugResourceEntry, type DebugResourcesResponse } from "../api";
+import { PageHeader } from "../components";
 import { useApi, useAutoRefresh } from "../hooks";
 import { JsonSyntax } from "../json-syntax";
 
@@ -132,6 +133,7 @@ function Section({ def, entries }: { def: KindDef; entries: DebugResourceEntry[]
 			<button
 				type="button"
 				onClick={() => setCollapsed((c) => !c)}
+				aria-expanded={!collapsed}
 				className="flex items-center gap-2 px-2 py-1 font-tight font-semibold text-white hover:bg-surface-3/50 rounded w-full text-left"
 			>
 				<span className="text-muted font-mono text-sm">{collapsed ? "▸" : "▾"}</span>
@@ -160,7 +162,16 @@ function Section({ def, entries }: { def: KindDef; entries: DebugResourceEntry[]
 										<Fragment key={e.name}>
 											<tr
 												onClick={() => toggleRow(e.name)}
-												className="border-t border-border/10 cursor-pointer hover:bg-surface-2"
+												onKeyDown={(ev) => {
+													if (ev.key === "Enter" || ev.key === " ") {
+														ev.preventDefault();
+														toggleRow(e.name);
+													}
+												}}
+												role="button"
+												tabIndex={0}
+												aria-expanded={isOpen}
+												className="border-t border-border/10 cursor-pointer hover:bg-surface-2 focus:outline focus:outline-1 focus:outline-accent"
 											>
 												{def.columns.map((c) => (
 													<td key={c.title} className="px-2 py-1">
@@ -220,18 +231,16 @@ export function Kubernetes() {
 
 	return (
 		<div>
-			<div className="flex items-baseline justify-between mb-4">
-				<h1 className="text-xl font-tight font-bold text-white">kubernetes</h1>
-				<div className="flex items-center gap-3 text-sm font-mono text-muted">
-					<span>{loading && !data ? "loading…" : `refreshed ${secondsAgo}s ago`}</span>
-					<button
-						type="button"
-						onClick={() => refetch()}
-						className="px-2 py-0.5 border border-border/30 rounded hover:bg-surface-2 text-muted-light"
-					>
-						refresh
-					</button>
-				</div>
+			<PageHeader>kubernetes</PageHeader>
+			<div className="flex items-center gap-3 text-sm font-mono text-muted mb-4">
+				<span>{loading && !data ? "loading…" : `refreshed ${secondsAgo}s ago`}</span>
+				<button
+					type="button"
+					onClick={() => refetch()}
+					className="px-2 py-0.5 border border-border/30 rounded hover:bg-surface-2 text-muted-light"
+				>
+					refresh
+				</button>
 			</div>
 
 			{error && (
