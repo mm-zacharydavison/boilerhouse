@@ -4,9 +4,9 @@
 
 **Goal:** Add a `/kubernetes` page to the dashboard that shows every Boilerhouse-managed K8s resource in the operator's namespace, grouped by kind, with raw JSON on click, auto-refreshing every 3s.
 
-**Architecture:** One new Go API endpoint `GET /api/v1/debug/resources` using the existing controller-runtime client + `errgroup` to list eight resource kinds in parallel (4 CRDs + Pod/PVC/Service/NetworkPolicy filtered by `boilerhouse.dev/managed=true`). Dashboard adds a new nav item and page that polls the endpoint via the existing `useApi` + `useAutoRefresh` hooks and renders each kind as a collapsible table with per-row expand-to-JSON.
+**Architecture:** One new Go API endpoint `GET /api/v1/debug/resources` using the existing controller-runtime client to list eight resource kinds (4 CRDs + Pod/PVC/Service/NetworkPolicy filtered by `boilerhouse.dev/managed=true`). Reads go through the informer cache so sequential listing is fast; revisit only if profiling shows it matters. Dashboard adds a new nav item and page that polls the endpoint via the existing `useApi` + `useAutoRefresh` hooks and renders each kind as a collapsible table with per-row expand-to-JSON.
 
-**Tech Stack:** Go 1.26, go-chi, controller-runtime, `sigs.k8s.io/controller-runtime/pkg/envtest`, `golang.org/x/sync/errgroup` (already in go.sum), React + TypeScript, existing `json-syntax.tsx` pretty-printer.
+**Tech Stack:** Go 1.26, go-chi, controller-runtime, `sigs.k8s.io/controller-runtime/pkg/envtest`, React + TypeScript, existing `json-syntax.tsx` pretty-printer.
 
 ---
 

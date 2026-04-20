@@ -81,7 +81,7 @@ Per-kind `summary` fields (used to render row columns on the frontend):
 - Wire the route in the existing chi router under `/debug/resources`.
 - Use the same controller-runtime client already injected into other handlers.
 - Namespace comes from `K8S_NAMESPACE` env (the value already used elsewhere).
-- Fetch all eight kinds in parallel with `errgroup`. If one kind fails, the whole request fails with a 500 and the first error — this is a debug endpoint and partial results would be misleading.
+- Fetch all eight kinds sequentially. Reads are served from the controller-runtime informer cache, so eight in-memory list calls are fast enough. If one kind fails, the whole request fails with a 500 and the error — this is a debug endpoint and partial results would be misleading.
 - Filter native kinds with `client.MatchingLabels{operator.LabelManaged: "true"}` (i.e. `boilerhouse.dev/managed=true`).
 - `Raw` is populated by marshaling the typed object back to JSON; no masking of Secrets is needed because Secrets are not included.
 
