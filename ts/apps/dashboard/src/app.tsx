@@ -1,16 +1,18 @@
 import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Flame, Package, Zap } from "lucide-react";
+import { Boxes, Flame, Package, Zap } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { useHashRoute, matchRoute } from "./hooks";
 import { WorkloadList } from "./pages/WorkloadList";
 import { WorkloadDetail } from "./pages/WorkloadDetail";
 import { InstanceDetail } from "./pages/InstanceDetail";
 import { TriggerList } from "./pages/TriggerList";
+import { Kubernetes } from "./pages/Kubernetes";
 
 const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
 	{ path: "/workloads", label: "workloads", icon: Package },
 	{ path: "/triggers", label: "triggers", icon: Zap },
+	{ path: "/kubernetes", label: "kubernetes", icon: Boxes },
 ];
 
 function App() {
@@ -27,6 +29,8 @@ function App() {
 		content = <InstanceDetail key={params.id} instanceId={params.id!} navigate={navigate} />;
 	} else if (path === "/triggers") {
 		content = <TriggerList />;
+	} else if (path === "/kubernetes") {
+		content = <Kubernetes />;
 	} else {
 		content = (
 			<div className="text-center py-20 text-muted">
