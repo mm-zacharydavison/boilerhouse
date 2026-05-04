@@ -124,6 +124,21 @@ function startPi() {
 	console.log(`[bridge] Pi subprocess started`);
 }
 
+// findErrorMessage walks the most common Pi event shapes looking for an
+// upstream error string. Pi puts errorMessage on the assistant's message_end
+// when the LLM provider returns a 4xx/5xx; agent_end carries the same
+// message inside `messages[]`.
+function findErrorMessage(msg) {
+	if (msg?.errorMessage) return msg.errorMessage;
+	if (msg?.message?.errorMessage) return msg.message.errorMessage;
+	if (Array.isArray(msg?.messages)) {
+		for (const m of msg.messages) {
+			if (m?.errorMessage) return m.errorMessage;
+		}
+	}
+	return null;
+}
+
 function handlePiEvent(msg) {
 	// Pi RPC protocol:
 	//   "response" — ack for a command (prompt, abort, etc.)
@@ -144,14 +159,26 @@ function handlePiEvent(msg) {
 
 	if (msg.type === "message_update") {
 		const evt = msg.assistantMessageEvent;
-		if (evt?.type === "text_delta" && evt.delta) {
-			broadcast({ type: "output", text: evt.delta });
+		// Accept multiple event shapes: text_delta with delta, text with text,
+		// or any event with a `text` field.
+		const text = evt?.delta ?? evt?.text ?? "";
+		if (text) {
+			broadcast({ type: "output", text });
+		} else {
+			console.log(`[bridge] message_update no text: ${JSON.stringify(evt)}`);
 		}
 		return;
 	}
 
 	if (msg.type === "agent_end" || msg.type === "turn_end") {
-		broadcast({ type: "idle" });
+		// Surface upstream errors (e.g. Anthropic 4xx, network failures) so
+		// the driver returns a real error instead of an empty success.
+		const errMsg = findErrorMessage(msg);
+		if (errMsg) {
+			broadcast({ type: "error", message: errMsg });
+		} else {
+			broadcast({ type: "idle" });
+		}
 		pendingPrompt = null;
 		return;
 	}

@@ -18,6 +18,11 @@ const (
 	defaultTelegramPollTimeout   = 30
 	telegramErrorBackoff         = 5 * time.Second
 	telegramHTTPClientTimeoutSec = 60
+
+	// telegramGenericErrorReply is what users see whenever the workload
+	// fails or returns no text. The real error goes to the operator log,
+	// not the chat — internal details aren't safe to leak to end users.
+	telegramGenericErrorReply = "Sorry, something went wrong. Please try again later."
 )
 
 // TelegramAdapter long-polls the Telegram Bot API for updates and dispatches
@@ -237,19 +242,26 @@ func (t *TelegramAdapter) pollLoop(ctx context.Context, cfg telegramConfig, tgAP
 			payload := telegramUpdateToPayload(parsed, update)
 
 			result, err := t.handler(ctx, payload)
+
+			// Determine the reply text. On any failure (handler error, or
+			// empty/missing text from the workload) send a generic message
+			// to the user; the real diagnostic stays in the operator log.
+			var reply string
 			if err != nil {
 				t.log.Error("telegram handler error", "error", err)
-				continue
+				reply = telegramGenericErrorReply
+			} else {
+				reply = extractResponseText(result)
+				if reply == "" {
+					t.log.Warn("telegram handler returned empty text",
+						"result_type", fmt.Sprintf("%T", result))
+					reply = telegramGenericErrorReply
+				}
 			}
 
-			// If the handler response contains text and we have a chat id,
-			// send it back to the Telegram chat.
 			if parsed.ChatID != nil {
-				text := extractResponseText(result)
-				if text != "" {
-					if err := t.sendMessage(ctx, tgAPI, *parsed.ChatID, text); err != nil {
-						t.log.Error("telegram sendMessage failed", "error", err, "chat_id", *parsed.ChatID)
-					}
+				if err := t.sendMessage(ctx, tgAPI, *parsed.ChatID, reply); err != nil {
+					t.log.Error("telegram sendMessage failed", "error", err, "chat_id", *parsed.ChatID)
 				}
 			}
 		}
@@ -590,7 +602,9 @@ func containsString(list []string, s string) bool {
 }
 
 // extractResponseText attempts to pull a response string out of a handler
-// result. Accepts strings, or maps/objects with a "text" field.
+// result. Accepts strings, or maps/objects with a "text" field. Returns ""
+// if no usable text is present — never falls back to JSON-encoding the
+// result, since that would leak internal structure to end users.
 func extractResponseText(result any) string {
 	if result == nil {
 		return ""
@@ -599,21 +613,9 @@ func extractResponseText(result any) string {
 	case string:
 		return v
 	case map[string]any:
-		if s, ok := v["text"].(string); ok && s != "" {
+		if s, ok := v["text"].(string); ok {
 			return s
 		}
-		// Fall back to JSON encoding of the whole object.
-		if b, err := json.Marshal(v); err == nil {
-			return string(b)
-		}
-	}
-	// Last resort: JSON-encode anything else.
-	if b, err := json.Marshal(result); err == nil {
-		s := string(b)
-		if s == "null" {
-			return ""
-		}
-		return s
 	}
 	return ""
 }
