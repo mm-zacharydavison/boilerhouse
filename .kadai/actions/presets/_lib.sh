@@ -279,7 +279,7 @@ print_bot_banner() {
   local username=""
   if command -v curl >/dev/null 2>&1; then
     username="$(curl -sS --max-time 5 "https://api.telegram.org/bot${token}/getMe" 2>/dev/null \
-      | grep -o '"username":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      | grep -o '"username":"[^"]*"' | head -1 | cut -d'"' -f4)" || true
   fi
   echo ""
   echo "╔══════════════════════════════════════════════════════════════╗"
