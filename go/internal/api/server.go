@@ -169,14 +169,16 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware enforces Bearer-token authentication. When neither
-// BOILERHOUSE_API_KEY nor a TokenStore is configured, all requests pass
-// through (dev mode). Otherwise the bearer token is matched first against
-// the admin key (constant-time), then against the scoped token store.
+// authMiddleware enforces Bearer-token authentication. When no admin key
+// is configured (BOILERHOUSE_API_KEY unset), auth is disabled — this is the
+// dev-mode default. With an admin key set, the bearer token is matched
+// first against it (constant-time), then against the scoped token store.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Dev mode: no admin key and no token store → auth disabled.
-		if s.apiKey == "" && s.tokens == nil {
+		// Dev mode: no admin key configured → auth disabled. The token
+		// store may still be running for scoped tokens, but without an
+		// admin key the API is intended for local development.
+		if s.apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}

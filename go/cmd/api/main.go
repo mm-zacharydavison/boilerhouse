@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	"github.com/zdavison/boilerhouse/go/internal/api"
@@ -26,6 +27,10 @@ import (
 const shutdownGrace = 15 * time.Second
 
 func main() {
+	// Configure controller-runtime's logger so client-go informers stop
+	// emitting "log.SetLogger was never called" stack traces.
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+
 	// Build scheme: core K8s types + Boilerhouse CRDs.
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
