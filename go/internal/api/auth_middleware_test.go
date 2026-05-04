@@ -28,7 +28,15 @@ func newAuthTestServer(t *testing.T) (*Server, *TokenStore, envtestResult) {
 	ts, err := NewTokenStore(env.restConfig, "default")
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(env.ctx)
-	t.Cleanup(cancel)
+	// cancel must run before env.Stop(): the TokenStore cache goroutine holds
+	// HTTP/2 connections open; stopping the context closes them so the API
+	// server can exit promptly. Wrap cleanup so the order is correct regardless
+	// of whether callers use defer or t.Cleanup.
+	origCleanup := env.cleanup
+	env.cleanup = func() {
+		cancel()
+		origCleanup()
+	}
 	require.NoError(t, ts.Start(ctx))
 
 	srv := &Server{
