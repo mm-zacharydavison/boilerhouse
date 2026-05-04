@@ -442,6 +442,8 @@ func (g *Gateway) buildDriver(ctx context.Context, trigger *v1alpha1.Boilerhouse
 		return NewDefaultDriver(nil)
 	case "claude-code":
 		return NewClaudeCodeDriver()
+	case "pi":
+		return NewPiDriver()
 	case "openclaw":
 		token, err := g.resolveOpenclawToken(ctx, trigger)
 		if err != nil {

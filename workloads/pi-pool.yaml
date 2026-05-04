@@ -1,0 +1,9 @@
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhousePool
+metadata:
+  name: pi-pool
+  namespace: boilerhouse
+spec:
+  workloadRef: pi
+  size: 1
+  maxFillConcurrency: 1

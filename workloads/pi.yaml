@@ -1,0 +1,59 @@
+# Prereq: create this Secret in the boilerhouse namespace before applying:
+#
+#   kubectl -n boilerhouse create secret generic anthropic-api \
+#     --from-literal=key="<your Anthropic API key>"
+#
+apiVersion: boilerhouse.dev/v1alpha1
+kind: BoilerhouseWorkload
+metadata:
+  name: pi
+  namespace: boilerhouse
+spec:
+  version: "2026.5.3"
+  image:
+    dockerfile: pi/Dockerfile
+  resources:
+    vcpus: 1
+    memoryMb: 2048
+    diskGb: 10
+  network:
+    access: restricted
+    allowlist:
+      - api.anthropic.com
+      - statsig.anthropic.com
+      - registry.npmjs.org
+    expose:
+      - guest: 7880
+    websocket: /ws
+    credentials:
+      - domain: api.anthropic.com
+        headers:
+          - name: x-api-key
+            valueFrom:
+              secretKeyRef:
+                name: anthropic-api
+                key: key
+  filesystem:
+    overlayDirs:
+      - /workspace
+      - /home/pi
+  idle:
+    timeoutSeconds: 300
+    action: hibernate
+  health:
+    intervalSeconds: 2
+    unhealthyThreshold: 30
+    httpGet:
+      path: /health
+      port: 7880
+  entrypoint:
+    cmd: node
+    args: ["bridge.mjs"]
+    workdir: /app
+    env:
+      ANTHROPIC_API_KEY: sk-ant-proxy-managed
+      ANTHROPIC_BASE_URL: http://api.anthropic.com
+      PI_MODEL: sonnet
+      PI_PROVIDER: anthropic
+      BRIDGE_PORT: "7880"
+      SKILLS_DIR: /skills
