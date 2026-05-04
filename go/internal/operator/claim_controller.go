@@ -132,8 +132,19 @@ func (r *ClaimReconciler) handleNewClaim(ctx context.Context, req reconcile.Requ
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	if existingPod != nil && existingPod.Status.Phase == corev1.PodRunning {
-		return r.activateClaim(ctx, claim, existingPod, "existing")
+	if existingPod != nil {
+		switch existingPod.Status.Phase {
+		case corev1.PodRunning:
+			return r.activateClaim(ctx, claim, existingPod, "existing")
+		case corev1.PodFailed, corev1.PodSucceeded:
+			// Pod is terminal — delete it and fall through to cold boot.
+			if err := r.Delete(ctx, existingPod); err != nil && !apierrors.IsNotFound(err) {
+				return reconcile.Result{}, err
+			}
+		default:
+			// Pod is Pending or Unknown — wait for it rather than creating another.
+			return reconcile.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 	}
 
 	// Check for a pool Pod.
