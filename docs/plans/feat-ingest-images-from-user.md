@@ -1,5 +1,23 @@
 # Feature Plan: Ingest Images from User (Go)
 
+## Status
+
+### Already Implemented
+- None. No image-related code exists in `go/internal/trigger/` yet.
+
+### Outstanding
+1. Add `ImageAttachment` struct and `Images []ImageAttachment` field to `TriggerPayload` in `go/internal/trigger/adapter.go`.
+2. Extend `parsedTelegramUpdate` struct in `adapter_telegram.go` with `PhotoFileID`, `Caption`, `DocumentFileID`, `DocumentMimeType` fields.
+3. Extract photo/document fields in `parseTelegramUpdate()` around `adapter_telegram.go:431`.
+4. Add `downloadTelegramFile()` helper to `adapter_telegram.go` — two-step getFile then download, returns base64 + MIME.
+5. Add `mimeFromPath()` helper for extension-to-MIME mapping.
+6. Update `telegramUpdateToPayload` to accept adapter receiver (for httpClient/apiBaseURL/botToken), call download helper, build `Images` slice; set `Text = caption` when caption present.
+7. Wire updated `telegramUpdateToPayload` into `pollLoop` at `adapter_telegram.go:198`.
+8. Confirm `driver.go` JSON marshal forwards the `Images` field without stripping (likely no change needed).
+9. Add tests to `adapter_telegram_test.go` — photo parse, document parse, text-only parse, download mock, payload assembly with caption, end-to-end via httptest mock.
+
+---
+
 Goal: allow users to send photos/images through Telegram (and future Slack), have the trigger gateway download and normalise them, and forward image data to the running workload Pod so vision-capable agents can process the image alongside text.
 
 The TS plan's design (base64-on-payload, per-adapter download helpers, optional auto-description for non-vision drivers) carries over verbatim. Only file paths, language, and the driver protocol change.

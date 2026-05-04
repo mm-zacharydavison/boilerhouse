@@ -1,5 +1,25 @@
 # Processing Progress Feedback (Go)
 
+## Status
+
+### Already Implemented
+- **Telegram adapter poll loop and parsing** (`go/internal/trigger/adapter_telegram.go:186-257`): full lifecycle for receiving and dispatching messages.
+- **`parseTelegramUpdate()`** (`adapter_telegram.go:415`): extracts chat ID, user ID, text, sender name — ready for MessageID extension.
+- **`getNumber()` helper** (`adapter_telegram.go:563`): parses numeric fields from JSON; will be used to extract `message_id`.
+- **Claim activation** (`go/internal/operator/claim_activate.go:48`): sets `Phase=Active`; gateway polls for this at `gateway.go:350`.
+- **Gateway handler pipeline** (`go/internal/trigger/gateway.go:205-237`): `buildHandler()` orchestrates guards → `ensureClaim` → `driver.Send`.
+
+### Outstanding
+1. Create `go/internal/trigger/progress.go` — `ProcessingStage` const type, `ProgressReporter` interface, `NoopProgressReporter`.
+2. Add `Progress ProgressReporter` field (with `json:"-"`) to `TriggerPayload` in `go/internal/trigger/adapter.go`.
+3. In `gateway.buildHandler()` (`gateway.go:205`): call `payload.Progress.Update(ctx, StageRunning)` after `ensureClaim` returns, before `driver.Send`.
+4. Create `go/internal/trigger/telegram_progress.go` — `TelegramProgressReporter` with typing keepalive (4.5s interval), emoji reactions (👀 received, 🧠 running, ❌ error, clear on done), goroutine-safe `finished` flag.
+5. Modify `adapter_telegram.go`: extract `MessageID` from `msg["message_id"]` using `getNumber()`; create reporter per-update; emit `StageReceived` before handler, `StageDone`/`StageError` after.
+6. Create `go/internal/trigger/telegram_progress_test.go` — mock HTTP server, assert reactions/typing per stage, keepalive ticker, safe double-Dispose, no-ops after finished.
+7. Add gateway integration test in `gateway_test.go` verifying `StageRunning` is emitted between guards and dispatch.
+
+---
+
 **Goal:** Show real-time progress to users while a message is being processed. The trigger gateway emits platform-agnostic stage transitions; each adapter translates them into platform-native actions (Telegram typing + emoji; future: Slack reactions, Discord typing, web UI progress).
 
 **Key design principle:** the gateway only knows about `ProcessingStage`. It never calls platform-specific APIs. Each adapter implements one `ProgressReporter` interface to opt in.

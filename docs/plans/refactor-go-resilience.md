@@ -1,5 +1,20 @@
 # Go Operator/API Resilience Refactor
 
+## Status
+
+### R1 — Snapshot extraction failure: COMPLETE (controller behavior + envtest)
+- `ReleaseFailed` phase, `extractWithRetry`, `markReleaseFailed`, finalizer block on failure: all shipped.
+- Outstanding follow-ups: `/release/retry` and `/release/force` API endpoints; attempt-count annotation + backoff cap; minikube e2e test.
+
+### R2 — Graceful shutdown on SIGTERM: NOT STARTED
+- Context decoupling in `ExtractAndStore` (use background context with timeout, not reconcile context).
+- `terminationGracePeriodSeconds: 120` in `config/deploy/operator-deployment.yaml`.
+- `sync.WaitGroup` in `SnapshotManager` to drain in-flight extractions.
+- Handler WaitGroup in `gateway.go stopAll()` to drain in-flight dispatches.
+- `http.Server.Shutdown()` in `cmd/api/main.go` (partially done: API server already has 15s shutdown).
+
+---
+
 Two items extracted from the deleted `refactor-01_04_2026.md` (TS-era). R1 is partially shipped; R2 is outstanding.
 
 ---

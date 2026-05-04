@@ -1,5 +1,33 @@
 # Wake-Up Tasks — Agent-Created Triggers (Go/K8s)
 
+## Status
+
+### Already Implemented
+- **Scoped API token framework**: `go/internal/scope/scope.go` — `AgentTriggersRead` and `AgentTriggersWrite` scopes defined, included in `DefaultAgentScopes`.
+- **Auth middleware + token store**: `go/internal/api/server.go:176-212` — `authMiddleware` validates Bearer tokens via `TokenStore.Lookup()`.
+- **Trigger routes with scope enforcement**: `go/internal/api/server.go:121-124` — `/triggers` endpoints mount with `requireScope`.
+- **Trigger CRUD handlers**: `go/internal/api/routes_trigger.go` — `createTrigger`, `listTriggers`, `getTrigger`, `deleteTrigger` with tenant/workload isolation.
+- **Scoped callers restricted to cron**: `go/internal/api/routes_trigger.go:64-77` — scoped callers already restricted to `cron` type; foundation for agent-triggers whitelist.
+- **Gateway trigger sync + adapter dispatch**: `go/internal/trigger/gateway.go:55-76` — Sync method and `buildAdapter` switch handle webhook/cron/telegram types.
+
+### Outstanding
+1. Add `one-shot` to trigger type enum — `go/api/v1alpha1/trigger_types.go:35`.
+2. Create `go/internal/trigger/adapter_one_shot.go` — `OneShotAdapter` struct with `runAt`, `payload`, context cancel; `Start()` sleeps until runAt then fires handler exactly once.
+3. Create `go/internal/trigger/adapter_one_shot_test.go` — fire-on-time, late-fire, context cancellation.
+4. Extend `gateway.buildAdapter` switch with `case "one-shot":` — `go/internal/trigger/gateway.go` around line 184.
+5. Create `parseOneShotConfig` helper in `gateway.go` — parse `Spec.Config` for `{runAt: RFC3339, payload: object}`.
+6. Create `go/internal/trigger/reply.go` — `ReplyContext` struct and `SendReply()` function; wire into `buildHandler` after `driver.Send`.
+7. Set `boilerhouse.io/originating-trigger` annotation on Claims — modify `ensureClaim` in `gateway.go:291-302`.
+8. Create `go/internal/api/agent_trigger_policy.go` — `AgentTriggerPolicy` struct and `DefaultAgentTriggerPolicy`.
+9. Create `go/internal/api/routes_agent_triggers.go` — POST/GET/DELETE handlers with type whitelist, cron interval validation, one-shot time validation, count cap, tenant isolation, bot-token resolution from originating trigger.
+10. Create `go/internal/api/routes_agent_triggers_test.go` — scope enforcement, tenant isolation, count cap, type whitelist, cron interval, one-shot time, originating-trigger resolution.
+11. Mount new routes in `go/internal/api/server.go`.
+12. Regenerate CRD manifests via `controller-gen` after enum change.
+
+**Dependency:** Container-scoped API keys (feat-container-scoped-api-keys.md) is **complete** — `AuthContext` and `TokenStore` are available.
+
+---
+
 **Goal:** Allow agents (tenants) to create their own triggers from within a running session — e.g. "remind me in 2 hours", "check deployment status every 5 minutes", "run a daily summary at 9am".
 
 **Dependency:** [Container-Scoped API Keys](feat-container-scoped-api-keys.md) — agents need an authenticated, scoped key to call the Boilerhouse API. That plan provisions per-Claim Secrets with RBAC scopes. This plan requires the `agent-triggers:read` and `agent-triggers:write` scopes.

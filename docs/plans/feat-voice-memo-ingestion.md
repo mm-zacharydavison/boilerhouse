@@ -6,6 +6,89 @@ The TS-era design carries over: shared transcription helper, base64-on-payload, 
 
 ---
 
+## Status
+
+### Implemented
+- **Telegram parsing infrastructure** (✓ `go/internal/trigger/adapter_telegram.go:415-512`): `parseTelegramUpdate()` and `parsedTelegramUpdate` struct already extract message metadata (chat ID, user ID, text, sender name). Ready for voice field extension.
+- **Telegram adapter lifecycle** (✓ `go/internal/trigger/adapter_telegram.go:27-183`): `TelegramAdapter`, `Start()`, `Stop()`, poll loop, error handling, secret refs all in place.
+- **Telegram HTTP helpers** (✓ `go/internal/trigger/adapter_telegram.go:270-396`): `getMe()`, `deleteWebhook()`, `getUpdates()`, `sendMessage()` — download helpers can follow the same pattern.
+- **TriggerPayload base type** (✓ `go/internal/trigger/adapter.go:6-10`): Exists with `Text`, `Source`, `Raw` fields. Ready for `Images` and `Audio` extensions.
+
+### Outstanding (numbered, actionable steps)
+
+1. **Extend `TriggerPayload` in `go/internal/trigger/adapter.go`** (lines 6-10)
+   - Add `ImageAttachment` struct (as defined in feat-ingest-images plan) if not already present
+   - Add `AudioAttachment` struct with fields: `MimeType`, `Data` (base64), `Duration` (int, seconds), `SourceRef` (string)
+   - Add `Audio []AudioAttachment` field to `TriggerPayload`
+
+2. **Create `go/internal/trigger/stt.go`** with:
+   - `STTConfig` struct with `URL`, `Model`, `Language`, `Timeout`, `HTTPClient`
+   - `DefaultSTTConfig()` function reading `WHISPER_URL`, `WHISPER_MODEL`, `WHISPER_LANGUAGE` env vars
+   - `TranscribeAudio(ctx, audioB64, mimeType, cfg STTConfig)` function using OpenAI-compatible `/v1/audio/transcriptions` endpoint
+   - `extForMime(mimeType string)` helper returning file extension for multipart form
+
+3. **Create `go/internal/trigger/stt_test.go`** with test coverage:
+   - Mock Whisper server via `httptest.NewServer` returning `{"text": "..."}`
+   - Verify multipart body contains `file` and `model` fields
+   - Error case: Whisper returns 500 → error message includes status code
+   - Context cancellation mid-call → returns context error
+   - Table-driven test for `extForMime()` with common MIME types
+
+4. **Extend Telegram parsing in `go/internal/trigger/adapter_telegram.go`**:
+   - Add `VoiceFileID` and `VoiceDuration` fields to `parsedTelegramUpdate` struct (after line 410)
+   - In `parseTelegramUpdate()` (around line 415), after text extraction, add:
+     ```go
+     if voice, ok := msg["voice"].(map[string]any); ok {
+         if id, ok := voice["file_id"].(string); ok { voiceFileID = id }
+         if d, ok := getNumber(voice["duration"]); ok { voiceDuration = int(d) }
+     }
+     ```
+   - Return both fields in the struct
+
+5. **Add voice download helper in `go/internal/trigger/adapter_telegram.go`**:
+   - Implement `downloadTelegramVoice(ctx, httpClient, apiBaseURL, botToken, fileID)` function
+   - Reuse existing `downloadTelegramFile` pattern (or create shared helper if images already implemented)
+   - Returns `(data string, mimeType string, error)` where data is base64, mimeType is "audio/ogg"
+
+6. **Wire transcription into `telegramUpdateToPayload()` in `go/internal/trigger/adapter_telegram.go`**:
+   - Change function signature to accept adapter context (add `*TelegramAdapter` receiver or pass needed fields)
+   - If `parsed.VoiceFileID != ""`, call `downloadTelegramVoice()` and then `TranscribeAudio()`
+   - Log warnings (non-fatal) if download or transcription fails
+   - If transcription succeeds: prepend transcript to `payload.Text` with caption via "\n\n" separator
+   - Append `AudioAttachment` to `payload.Audio` with base64 data, MIME type, duration, file_id as source ref
+
+7. **Add STT config to TelegramAdapter**:
+   - Add `sttCfg STTConfig` field to `TelegramAdapter` struct (line 27)
+   - In `NewTelegramAdapter()` (line 37), initialize via `DefaultSTTConfig()` with optional override from adapter config
+   - Pass to `telegramUpdateToPayload()` for use in transcription
+
+8. **Create Whisper Deployment in `config/deploy/whisper.yaml`**:
+   - `Deployment` named `whisper` in `boilerhouse` namespace, replicas: 1
+   - Container: `fedirz/faster-whisper-server:latest`, port 8000
+   - Env: `WHISPER__MODEL=Systran/faster-whisper-base.en` (CPU baseline)
+   - Resources: limits 4Gi memory, 2 CPU
+   - `Service` (ClusterIP) named `whisper`, selector `app: whisper`, port 8000→8000
+
+9. **Update `config/deploy/kustomization.yaml`**:
+   - Add `whisper.yaml` to resources list (or mark optional per deployment strategy)
+
+10. **Wire Whisper config in `go/cmd/trigger/main.go`**:
+    - After creating Gateway (around line 51), optionally pass Whisper env vars to adapters
+    - If images plan is implemented first: ensure both image and STT configs flow through adapter construction
+
+11. **Update `go/internal/trigger/adapter_telegram_test.go`**:
+    - Add test for voice update parsing (extract `VoiceFileID` and `VoiceDuration`)
+    - Add end-to-end test: mock Telegram `getFile` + voice bytes + Whisper transcription → verify `payload.Text` is transcript and `payload.Audio` is populated
+    - Verify error handling: voice download fails → log warn, dispatch with original caption (or empty text)
+    - Verify: Whisper unreachable → skip update
+
+12. **Add observability counter in existing o11y package**:
+    - Reference `go/internal/o11y/` for counter definitions
+    - Add `boilerhouse_stt_transcribe_errors_total{reason}` metric with labels for error type (download, unreachable, timeout, transcription_error)
+    - Increment in error paths (step 6, handle gracefully)
+
+---
+
 ## Architecture
 
 ```

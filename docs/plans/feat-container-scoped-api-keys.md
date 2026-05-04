@@ -1,5 +1,28 @@
 # Container-Scoped API Keys (Go/K8s)
 
+## Status: COMPLETE
+
+All items are implemented and merged. See addendum (A1–A6) at the bottom for execution notes.
+
+### Implemented
+- **CRD types**: `go/api/v1alpha1/workload_types.go:192-205` — `WorkloadAPIAccess` and `APIAccess` field on spec.
+- **Token generation + Secret management**: `go/internal/operator/claim_token.go` — `ensureClaimToken()` (idempotent, 32-byte entropy, TTL annotation, owner refs), `deleteClaimToken()`, `resolveScopes()`, `generateToken()`.
+- **Claim controller integration**: `go/internal/operator/claim_pods.go:92` — token provisioned before Pod creation; `claim_release.go:65,178` — token deleted on release and finalizer cleanup.
+- **Pod env injection**: `go/internal/operator/translator.go:215-231` — `BOILERHOUSE_API_KEY` and `BOILERHOUSE_API_URL` injected via `SecretKeyRef` when `opts.ClaimTokenSecret` is set.
+- **Scope model**: `go/internal/scope/scope.go` — all scope constants and `DefaultAgentScopes`.
+- **AuthContext + auth middleware**: `go/internal/api/auth.go:1-129` — `AuthContext`, `HasScope()`, middleware factories.
+- **Token store**: `go/internal/api/token_store.go:1-235` — informer-backed cache, hot-path SHA-256 lookup, cold fallback List scan, expiry check.
+- **Server integration**: `go/internal/api/server.go:176-212` — `authMiddleware` with admin and scoped paths; trigger routes scoped.
+- **API main wiring**: `go/cmd/api/main.go:58-66` — `TokenStore` created and started before server.
+- **Test coverage**: `token_store_test.go`, `auth_test.go`, `auth_middleware_test.go`, `claim_token_test.go`.
+
+### Still outstanding (known v1 deferrals)
+- Token rotation for Claims exceeding 24h TTL.
+- Per-tenant scope overrides (workload-wide only for now).
+- Scope checks on existing admin routes (helpers exist; first use is wake-up-tasks).
+
+---
+
 **Goal:** Provision short-lived, scoped API keys for agent containers so they can call the Boilerhouse API with limited permissions. Keys are created when a Claim becomes Active and automatically revoked when the Claim is Released or destroyed. This is the infrastructure layer that wake-up tasks, GitHub Issues skill, and any future agent-facing API access depend on.
 
 The current API (`go/internal/api/server.go:46,161`) accepts a single global `BOILERHOUSE_API_KEY` from env — admin-grade access only. This plan adds a second auth path scoped to a single Claim.
