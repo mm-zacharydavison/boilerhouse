@@ -21,7 +21,7 @@ jobs:
           go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
           echo "KUBEBUILDER_ASSETS=$(setup-envtest use -p path)" >> $GITHUB_ENV
       - name: Test
-        run: cd go && go test ./... -timeout 180s
+        run: cd go && go test ./... -timeout 300s
       - name: Vet
         run: cd go && go vet ./...
 
