@@ -364,7 +364,7 @@ func TestAuthMiddleware_AttachesAuthContextForScopedToken(t *testing.T) {
 	srv := &Server{
 		client:    env.client,
 		namespace: "default",
-		apiKey:    "",
+		apiKey:    "admin-secret",
 		tokens:    ts,
 	}
 
