@@ -26,6 +26,8 @@
 
 **Dependency:** Container-scoped API keys (feat-container-scoped-api-keys.md) is **complete** — `AuthContext` and `TokenStore` are available.
 
+**Cross-reference:** The `ReplyContext` and `SendReply` introduced by this plan are generalized by `feat-workload-channel-output.md` into the canonical reply primitive (`SendChannelMessage` + `ResolveReplyContextForClaim`). Both plans can land in either order; if workload-channel-output lands first, this plan reuses its helpers and the `replyContext` field on agent triggers is no longer stored — instead the firing handler resolves the originating channel from the Claim's annotation at fire time. If this plan lands first, the workload-channel-output plan's task #2 absorbs and renames `SendReply`.
+
 ---
 
 **Goal:** Allow agents (tenants) to create their own triggers from within a running session — e.g. "remind me in 2 hours", "check deployment status every 5 minutes", "run a daily summary at 9am".

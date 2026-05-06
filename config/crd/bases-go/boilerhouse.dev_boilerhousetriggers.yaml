@@ -97,6 +97,7 @@ spec:
                 - slack
                 - telegram
                 - cron
+                - one-shot
                 type: string
               workloadRef:
                 description: WorkloadRef is the name of the BoilerhouseWorkload this
@@ -119,6 +120,7 @@ spec:
                 enum:
                 - Active
                 - Error
+                - Fired
                 type: string
             type: object
         type: object

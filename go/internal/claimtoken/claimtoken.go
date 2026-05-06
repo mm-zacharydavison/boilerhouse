@@ -22,3 +22,22 @@ const (
 
 // DataKey is the Secret.Data entry holding the hex-encoded token bytes.
 const DataKey = "token"
+
+// Trigger-related labels and annotations used by the agent-triggers feature.
+// Origin distinguishes admin-created triggers ("admin") from agent-created
+// ones ("agent"). CreatedByTenant tags an agent-created trigger with the
+// tenant whose Claim provisioned it.
+const (
+	LabelOrigin          = "boilerhouse.dev/origin"
+	LabelCreatedByTenant = "boilerhouse.dev/created-by-tenant"
+
+	OriginAdmin = "admin"
+	OriginAgent = "agent"
+
+	// AnnotationOriginatingTrigger is set on a Claim when the trigger
+	// gateway's ensureClaim creates the Claim in response to a trigger
+	// firing. It records the name of the BoilerhouseTrigger that started
+	// the session so agent-created follow-up triggers can copy reply
+	// configuration from it.
+	AnnotationOriginatingTrigger = "boilerhouse.dev/originating-trigger"
+)
