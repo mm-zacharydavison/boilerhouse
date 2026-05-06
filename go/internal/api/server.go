@@ -22,6 +22,7 @@ type Server struct {
 	namespace   string
 	apiKey      string
 	tokens      *TokenStore
+	agentPolicy AgentTriggerPolicy
 	corsOrigins []string
 	router      chi.Router
 }
@@ -50,6 +51,7 @@ func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace strin
 		namespace:   namespace,
 		apiKey:      os.Getenv("BOILERHOUSE_API_KEY"),
 		tokens:      tokens,
+		agentPolicy: DefaultAgentTriggerPolicy,
 		corsOrigins: corsOrigins,
 	}
 	s.router = s.buildRouter()
@@ -122,6 +124,13 @@ func (s *Server) buildRouter() chi.Router {
 			r.With(requireScope(scope.AgentTriggersRead)).Get("/triggers/{id}", s.getTrigger)
 			r.With(requireScope(scope.AgentTriggersWrite)).Post("/triggers", s.createTrigger)
 			r.With(requireScope(scope.AgentTriggersWrite)).Delete("/triggers/{id}", s.deleteTrigger)
+
+			// Agent-facing trigger surface — bounded by AgentTriggerPolicy.
+			// Tenant + workload + reply channel come from the AuthContext
+			// and the originating Claim, never from the request body.
+			r.With(requireScope(scope.AgentTriggersRead)).Get("/agent-triggers", s.listAgentTriggers)
+			r.With(requireScope(scope.AgentTriggersWrite)).Post("/agent-triggers", s.createAgentTrigger)
+			r.With(requireScope(scope.AgentTriggersWrite)).Delete("/agent-triggers/{name}", s.deleteAgentTrigger)
 		})
 	})
 

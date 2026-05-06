@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	"github.com/zdavison/boilerhouse/go/internal/claimtoken"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -161,6 +162,22 @@ func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.Boilerhous
 			return nil, fmt.Errorf("invalid cron interval %q: %w", cfg.Interval, err)
 		}
 		return NewCronAdapter(interval, cfg.Payload), nil
+	case "one-shot":
+		cfg, err := parseOneShotConfig(trigger)
+		if err != nil {
+			return nil, err
+		}
+		runAt, err := time.Parse(time.RFC3339, cfg.RunAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid runAt %q: %w", cfg.RunAt, err)
+		}
+		payloadBytes, _ := json.Marshal(cfg.Payload)
+		name := trigger.Name
+		ns := trigger.Namespace
+		onFired := func(ctx context.Context) error {
+			return g.markTriggerFired(ctx, ns, name)
+		}
+		return NewOneShotAdapter(runAt, string(payloadBytes), onFired), nil
 	case "telegram":
 		rawMap := parseTelegramAdapterConfig(trigger)
 
@@ -186,6 +203,25 @@ func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.Boilerhous
 	}
 }
 
+// markTriggerFired flips Status.Phase to "Fired" so the gateway's next sync
+// stops the adapter and a restart does not re-arm the one-shot. The trigger
+// CR is left in place; a separate cleanup reconciler GCs Fired triggers.
+func (g *Gateway) markTriggerFired(ctx context.Context, namespace, name string) error {
+	var trigger v1alpha1.BoilerhouseTrigger
+	key := types.NamespacedName{Name: name, Namespace: namespace}
+	if err := g.client.Get(ctx, key, &trigger); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get trigger %s for fired-update: %w", name, err)
+	}
+	trigger.Status.Phase = "Fired"
+	if err := g.client.Status().Update(ctx, &trigger); err != nil {
+		return fmt.Errorf("mark trigger %s fired: %w", name, err)
+	}
+	return nil
+}
+
 // resolveSecret fetches a value from a Kubernetes Secret in the gateway's
 // namespace. Returns a clear error if the Secret or key is missing.
 func (g *Gateway) resolveSecret(ctx context.Context, name, key string) (string, error) {
@@ -206,6 +242,12 @@ func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.Boilerhous
 	guards := g.buildGuards(ctx, trigger)
 	driver := g.buildDriver(ctx, trigger)
 
+	var replyCtx *ReplyContext
+	if trigger.Spec.Config != nil {
+		replyCtx = parseReplyContext(trigger.Spec.Config.Raw)
+	}
+	triggerName := trigger.Name
+
 	return func(ctx context.Context, payload TriggerPayload) (any, error) {
 		// 1. Resolve tenant ID.
 		tenantId, err := ResolveTenantId(trigger.Spec.Tenant, payload)
@@ -221,7 +263,7 @@ func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.Boilerhous
 		}
 
 		// 3. Ensure a BoilerhouseClaim exists and is Active.
-		endpoint, err := g.ensureClaim(ctx, tenantId, trigger.Spec.WorkloadRef)
+		endpoint, err := g.ensureClaim(ctx, tenantId, trigger.Spec.WorkloadRef, triggerName)
 		if err != nil {
 			return nil, fmt.Errorf("ensure claim: %w", err)
 		}
@@ -230,6 +272,14 @@ func (g *Gateway) buildHandler(ctx context.Context, trigger *v1alpha1.Boilerhous
 		result, err := driver.Send(ctx, endpoint, tenantId, payload)
 		if err != nil {
 			return nil, fmt.Errorf("driver send: %w", err)
+		}
+
+		// 5. If the trigger configured a replyContext (cron / one-shot
+		// agent triggers), fan the driver's response back to the
+		// originating channel. Failure is logged but not fatal — the
+		// driver result is still returned to the adapter.
+		if err := SendReply(ctx, replyCtx, result); err != nil {
+			g.log.Error("reply send failed", "trigger", triggerName, "error", err)
 		}
 
 		return result, nil
@@ -255,8 +305,11 @@ func (g *Gateway) buildGuards(ctx context.Context, trigger *v1alpha1.Boilerhouse
 }
 
 // ensureClaim creates or finds a BoilerhouseClaim for the given tenant and
-// workload, then waits for it to become Active.
-func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef string) (string, error) {
+// workload, then waits for it to become Active. originatingTrigger names the
+// trigger that's calling ensureClaim — it's stored as an annotation on the
+// Claim so agent-triggers created later by code running in the resulting Pod
+// can resolve their reply channel back to the originating trigger.
+func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef string, originatingTrigger string) (string, error) {
 	// Match the naming used by routes_tenant.go's POST/DELETE handlers so
 	// the dashboard's hibernate/release buttons find the same claim the
 	// trigger gateway created.
@@ -268,6 +321,12 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 	err := g.client.Get(ctx, claimKey, &existing)
 	if err == nil {
 		if existing.Status.Phase == "Active" && existing.Status.Endpoint != nil && existing.Status.Endpoint.Host != "" {
+			// Refresh originating-trigger annotation so the most recent
+			// trigger that activated this Claim is the one agent code
+			// inside the Pod will replay through.
+			if err := g.setOriginatingTriggerAnnotation(ctx, &existing, originatingTrigger); err != nil {
+				g.log.Warn("set originating-trigger annotation", "claim", claimName, "error", err)
+			}
 			return formatEndpoint(existing.Status.Endpoint), nil
 		}
 		// If the claim is in a terminal non-Active state, delete it so we
@@ -289,10 +348,15 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 	if apierrors.IsNotFound(err) {
 		// Create the claim.
 		resume := true
+		annotations := map[string]string{}
+		if originatingTrigger != "" {
+			annotations[claimtoken.AnnotationOriginatingTrigger] = originatingTrigger
+		}
 		claim := &v1alpha1.BoilerhouseClaim{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      claimName,
-				Namespace: g.namespace,
+				Name:        claimName,
+				Namespace:   g.namespace,
+				Annotations: annotations,
 			},
 			Spec: v1alpha1.BoilerhouseClaimSpec{
 				TenantId:    tenantId,
@@ -308,7 +372,39 @@ func (g *Gateway) ensureClaim(ctx context.Context, tenantId string, workloadRef 
 	}
 
 	// Poll until claim is Active.
-	return g.waitForClaim(ctx, claimKey)
+	endpoint, err := g.waitForClaim(ctx, claimKey)
+	if err != nil {
+		return "", err
+	}
+
+	// Stamp annotation on the now-Active claim. Doing this after activation
+	// avoids racing with the operator's own metadata updates during cold
+	// start.
+	var active v1alpha1.BoilerhouseClaim
+	if getErr := g.client.Get(ctx, claimKey, &active); getErr == nil {
+		if err := g.setOriginatingTriggerAnnotation(ctx, &active, originatingTrigger); err != nil {
+			g.log.Warn("set originating-trigger annotation", "claim", claimName, "error", err)
+		}
+	}
+	return endpoint, nil
+}
+
+// setOriginatingTriggerAnnotation patches the Claim's
+// boilerhouse.dev/originating-trigger annotation if missing or stale. No-op
+// when triggerName is empty.
+func (g *Gateway) setOriginatingTriggerAnnotation(ctx context.Context, claim *v1alpha1.BoilerhouseClaim, triggerName string) error {
+	if triggerName == "" {
+		return nil
+	}
+	if claim.Annotations[claimtoken.AnnotationOriginatingTrigger] == triggerName {
+		return nil
+	}
+	updated := claim.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	updated.Annotations[claimtoken.AnnotationOriginatingTrigger] = triggerName
+	return g.client.Patch(ctx, updated, client.MergeFrom(claim))
 }
 
 // waitForClaimDeleted polls until the claim no longer exists or a short
@@ -404,6 +500,25 @@ func parseCronConfig(trigger *v1alpha1.BoilerhouseTrigger) cronConfig {
 		_ = json.Unmarshal(trigger.Spec.Config.Raw, &cfg)
 	}
 	return cfg
+}
+
+type oneShotConfig struct {
+	RunAt   string         `json:"runAt"`
+	Payload map[string]any `json:"payload,omitempty"`
+}
+
+func parseOneShotConfig(trigger *v1alpha1.BoilerhouseTrigger) (oneShotConfig, error) {
+	cfg := oneShotConfig{}
+	if trigger.Spec.Config == nil || trigger.Spec.Config.Raw == nil {
+		return cfg, fmt.Errorf("one-shot trigger %q: spec.config is required", trigger.Name)
+	}
+	if err := json.Unmarshal(trigger.Spec.Config.Raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("one-shot trigger %q: parse config: %w", trigger.Name, err)
+	}
+	if cfg.RunAt == "" {
+		return cfg, fmt.Errorf("one-shot trigger %q: spec.config.runAt is required", trigger.Name)
+	}
+	return cfg, nil
 }
 
 // parseTelegramAdapterConfig extracts the telegram adapter config from a
