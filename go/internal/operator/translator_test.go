@@ -383,6 +383,43 @@ func TestTranslate_Entrypoint(t *testing.T) {
 	assert.Equal(t, "8080", envMap["PORT"])
 }
 
+func TestTranslate_ClaimEnvOverridesAndReservedWins(t *testing.T) {
+	spec := v1alpha1.BoilerhouseWorkloadSpec{
+		Version:   "1.0.0",
+		Image:     v1alpha1.WorkloadImage{Ref: "myapp:v1"},
+		Resources: v1alpha1.WorkloadResources{VCPUs: 1, MemoryMb: 256, DiskGb: 5},
+		Network:   &v1alpha1.WorkloadNetwork{Access: "restricted"},
+		Entrypoint: &v1alpha1.WorkloadEntrypoint{
+			Env: envRaw(map[string]string{"SHARED": "workload", "KEEP": "yes"}),
+		},
+	}
+	opts := TranslateOpts{
+		InstanceId:       "inst-claimenv",
+		WorkloadName:     "claimenv-wl",
+		Namespace:        "default",
+		ClaimTokenSecret: "claim-key-x",
+		APIServiceURL:    "http://boilerhouse-api.svc:8080",
+		ClaimEnv: map[string]string{
+			"SHARED":               "claim",       // overrides the workload value
+			"CORDLESS_AGENT_TOKEN": "tok-123",     // new per-claim var
+			"BOILERHOUSE_API_URL":  "http://evil", // reserved — must be dropped
+		},
+	}
+
+	result, err := Translate(spec, opts)
+	require.NoError(t, err)
+
+	env := map[string]string{}
+	for _, e := range result.Pod.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	assert.Equal(t, "claim", env["SHARED"], "claim env overrides workload env on a key clash")
+	assert.Equal(t, "yes", env["KEEP"], "untouched workload env is preserved")
+	assert.Equal(t, "tok-123", env["CORDLESS_AGENT_TOKEN"], "new per-claim var is injected")
+	assert.Equal(t, "http://boilerhouse-api.svc:8080", env["BOILERHOUSE_API_URL"],
+		"reserved bootstrap var wins over a claim-supplied BOILERHOUSE_* key")
+}
+
 func TestTranslate_PoolPod(t *testing.T) {
 	spec := v1alpha1.BoilerhouseWorkloadSpec{
 		Version: "1.0.0",

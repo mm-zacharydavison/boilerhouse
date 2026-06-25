@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/zdavison/boilerhouse/go/internal/envoy"
 
@@ -32,11 +33,12 @@ type TranslateOpts struct {
 	WorkloadName     string
 	TenantId         string // empty for pool pods
 	Namespace        string
-	PoolStatus       string // "warming", "ready", or "" for non-pool
-	ImageRef         string // resolved image reference (handles dockerfile builds)
-	ProxyConfig      *ProxyConfig // nil if no sidecar needed
-	ClaimTokenSecret string // name of Secret holding the scoped API token; empty = no token injection
-	APIServiceURL    string // in-cluster URL of the Boilerhouse API; required when ClaimTokenSecret is set
+	PoolStatus       string            // "warming", "ready", or "" for non-pool
+	ImageRef         string            // resolved image reference (handles dockerfile builds)
+	ProxyConfig      *ProxyConfig      // nil if no sidecar needed
+	ClaimTokenSecret string            // name of Secret holding the scoped API token; empty = no token injection
+	APIServiceURL    string            // in-cluster URL of the Boilerhouse API; required when ClaimTokenSecret is set
+	ClaimEnv         map[string]string // optional per-claim env, merged over workload env (reserved BOILERHOUSE_* always win)
 }
 
 // TranslateResult holds the Kubernetes resources produced by Translate.
@@ -212,6 +214,12 @@ func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (
 		}
 	}
 
+	// Per-claim env overrides workload entrypoint env on a key clash. The
+	// reserved BOILERHOUSE_* bootstrap vars are appended afterwards and always win.
+	if len(opts.ClaimEnv) > 0 {
+		container.Env = mergeEnv(container.Env, opts.ClaimEnv)
+	}
+
 	if opts.ClaimTokenSecret != "" {
 		container.Env = append(container.Env,
 			corev1.EnvVar{
@@ -243,7 +251,7 @@ func buildContainer(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts) (
 	// Health probe
 	if spec.Health != nil {
 		probe := &corev1.Probe{
-			PeriodSeconds:  int32(spec.Health.IntervalSeconds),
+			PeriodSeconds:    int32(spec.Health.IntervalSeconds),
 			FailureThreshold: int32(spec.Health.UnhealthyThreshold),
 		}
 		if spec.Health.HTTPGet != nil {
@@ -289,6 +297,37 @@ func parseEnvVars(raw []byte) ([]corev1.EnvVar, error) {
 		})
 	}
 	return envVars, nil
+}
+
+// mergeEnv overlays overlay onto base (overriding any EnvVar with the same
+// name), dropping any reserved BOILERHOUSE_* keys from the overlay, and returns
+// a deterministically name-sorted slice. base entries that are not overridden
+// are preserved verbatim (including any ValueFrom sources).
+func mergeEnv(base []corev1.EnvVar, overlay map[string]string) []corev1.EnvVar {
+	merged := make(map[string]corev1.EnvVar, len(base)+len(overlay))
+	names := make([]string, 0, len(base)+len(overlay))
+	add := func(name string) {
+		if _, seen := merged[name]; !seen {
+			names = append(names, name)
+		}
+	}
+	for _, e := range base {
+		add(e.Name)
+		merged[e.Name] = e
+	}
+	for k, v := range overlay {
+		if strings.HasPrefix(k, "BOILERHOUSE_") {
+			continue // reserved bootstrap namespace — never overridable by a claim
+		}
+		add(k)
+		merged[k] = corev1.EnvVar{Name: k, Value: v}
+	}
+	sort.Strings(names)
+	out := make([]corev1.EnvVar, 0, len(names))
+	for _, name := range names {
+		out = append(out, merged[name])
+	}
+	return out
 }
 
 func buildService(spec v1alpha1.BoilerhouseWorkloadSpec, opts TranslateOpts, labels map[string]string) *corev1.Service {
@@ -402,7 +441,6 @@ func networkPolicyPort(protocol corev1.Protocol, port int) networkingv1.NetworkP
 		Port:     &p,
 	}
 }
-
 
 // buildProxyConfigMap creates a ConfigMap with the Envoy YAML config and CA cert
 // for the sidecar proxy.

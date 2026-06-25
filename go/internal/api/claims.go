@@ -32,7 +32,7 @@ const (
 //
 // It returns the outcome plus the current claim object (which for
 // outcomeCreated has only spec/metadata populated — the caller polls status).
-func (s *Server) acquireClaim(ctx context.Context, tenantID, wlName string, resume *bool) (*v1alpha1.BoilerhouseClaim, acquireOutcome, error) {
+func (s *Server) acquireClaim(ctx context.Context, tenantID, wlName string, resume *bool, env map[string]string) (*v1alpha1.BoilerhouseClaim, acquireOutcome, error) {
 	claimName := fmt.Sprintf("claim-%s-%s", tenantID, wlName)
 	key := types.NamespacedName{Name: claimName, Namespace: s.namespace}
 
@@ -73,6 +73,7 @@ func (s *Server) acquireClaim(ctx context.Context, tenantID, wlName string, resu
 			TenantId:    tenantID,
 			WorkloadRef: wlName,
 			Resume:      resume,
+			Env:         env,
 		},
 	}
 
