@@ -37,7 +37,7 @@ echo "Namespace '$NAMESPACE' ready"
 # ── Apply CRDs ───────────────────────────────────────────────────────────────
 
 echo "Applying CRDs..."
-kubectl apply -f "$SCRIPT_DIR/config/crd/bases-go/"
+kubectl apply -k "$SCRIPT_DIR/config/crd/bases-go/"
 
 # ── RBAC ─────────────────────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -57,7 +58,13 @@ func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace strin
 	if restConfig != nil {
 		// Typed clientset for pod-log reads + SPDY exec (instances/{id}/logs,
 		// /exec) — kubectl isn't in the api image.
-		s.clientset, _ = kubernetes.NewForConfig(restConfig)
+		cs, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			// Don't fail the whole server over the two subresource routes —
+			// but say why they'll 500 instead of degrading silently.
+			slog.Error("clientset unavailable — instance logs/exec routes will fail", "error", err)
+		}
+		s.clientset = cs
 	}
 	s.router = s.buildRouter()
 	return s

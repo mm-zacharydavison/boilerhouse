@@ -67,17 +67,24 @@ type SnapshotManager struct {
 	namespace  string
 	k8s        client.Client
 	restConfig *rest.Config
+	clientset  *kubernetes.Clientset
 }
 
 // NewSnapshotManager creates a new SnapshotManager for the given namespace.
 // restConfig is the in-cluster config used to exec into pods via client-go
 // remotecommand — the operator image ships no kubectl binary.
 func NewSnapshotManager(namespace string, k8s client.Client, restConfig *rest.Config) *SnapshotManager {
-	return &SnapshotManager{
+	s := &SnapshotManager{
 		namespace:  namespace,
 		k8s:        k8s,
 		restConfig: restConfig,
 	}
+	if restConfig != nil {
+		// Built once here rather than per exec; podExec reports the error if
+		// this failed (or restConfig was nil).
+		s.clientset, _ = kubernetes.NewForConfig(restConfig)
+	}
+	return s
 }
 
 // podExec runs a command inside a pod over the in-cluster API using client-go's
@@ -85,11 +92,10 @@ func NewSnapshotManager(namespace string, k8s client.Client, restConfig *rest.Co
 // needing no external binary or kubeconfig. stdin/stdout/stderr are attached
 // only when non-nil; a non-zero command exit returns an error.
 func (s *SnapshotManager) podExec(ctx context.Context, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	cs, err := kubernetes.NewForConfig(s.restConfig)
-	if err != nil {
-		return fmt.Errorf("build clientset: %w", err)
+	if s.clientset == nil {
+		return fmt.Errorf("pod exec unavailable: no rest config")
 	}
-	req := cs.CoreV1().RESTClient().Post().
+	req := s.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").Name(podName).Namespace(s.namespace).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Command: command,
@@ -351,10 +357,9 @@ func (s *SnapshotManager) writeToSnapshotsPVC(ctx context.Context, tenantId, wor
 	dir := fmt.Sprintf("/snapshots/%s", tenantId)
 	sum := hashArchive(data)
 
-	// tenantId/workloadName are controller-originated (not user input) so
-	// shell-interpolating them into the one-liner below is safe. The
-	// checksum is hex, also safe. If any of these gain user-controlled
-	// sources in the future, switch this to a stdin-fed shell script.
+	// tenantId/workloadName are CRD-validated to DNS-safe characters (no
+	// quotes or shell metacharacters), so shell-interpolating them into the
+	// one-liner below is safe. The checksum is hex, also safe.
 	script := fmt.Sprintf(
 		"set -e; mkdir -p %s; cat > %s.tmp; printf '%%s' %s > %s.tmp; mv %s.tmp %s; mv %s.tmp %s",
 		dir,
@@ -391,8 +396,9 @@ func (s *SnapshotManager) readFromSnapshotsPVC(ctx context.Context, path string)
 func (s *SnapshotManager) fileExistsInPVC(ctx context.Context, path string) (bool, error) {
 	// Resolve existence via stdout ("yes"/"no") rather than the command's exit
 	// code — remotecommand surfaces a non-zero exit as a typed error, but echoing
-	// keeps this a plain success path. path is controller-originated (safe to
-	// interpolate). Single-quote to be safe against spaces.
+	// keeps this a plain success path. path is built from CRD-validated
+	// DNS-safe names (safe to interpolate). Single-quote to be safe against
+	// spaces.
 	var out bytes.Buffer
 	if err := s.podExec(ctx, snapshotHelperPodName,
 		[]string{"sh", "-c", fmt.Sprintf("test -f '%s' && echo yes || echo no", path)},
