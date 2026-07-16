@@ -31,8 +31,9 @@ func TestInjectSidecar(t *testing.T) {
 
 	InjectSidecar(pod, "my-proxy-config")
 
-	// Verify init container installs iptables rules.
-	require.Len(t, pod.Spec.InitContainers, 1)
+	// Verify init containers: iptables-init (runs to completion) then the envoy
+	// native sidecar (restartPolicy=Always, gated by a startup probe).
+	require.Len(t, pod.Spec.InitContainers, 2)
 	initC := pod.Spec.InitContainers[0]
 	assert.Equal(t, "iptables-init", initC.Name)
 	assert.Equal(t, IPTablesImage, initC.Image)
@@ -50,11 +51,22 @@ func TestInjectSidecar(t *testing.T) {
 	assert.Contains(t, script, "--dport 443 -j REDIRECT --to-port 18443")
 	assert.Contains(t, script, "169.254.0.0/16 -j DROP")
 
-	// Verify envoy container was added.
-	require.Len(t, pod.Spec.Containers, 2)
-	envoyContainer := pod.Spec.Containers[1]
+	// Verify envoy was added as a NATIVE SIDECAR (init container with
+	// restartPolicy=Always + a startup probe), NOT a plain container — so it is
+	// ready before the main container's first egress.
+	require.Len(t, pod.Spec.Containers, 1, "envoy moved to InitContainers; only the main container remains")
+	envoyContainer := pod.Spec.InitContainers[1]
 	assert.Equal(t, "envoy", envoyContainer.Name)
 	assert.Equal(t, EnvoyImage, envoyContainer.Image)
+	require.NotNil(t, envoyContainer.RestartPolicy)
+	assert.Equal(t, corev1.ContainerRestartPolicyAlways, *envoyContainer.RestartPolicy)
+	require.NotNil(t, envoyContainer.StartupProbe, "native sidecar needs a startup probe so main waits for it")
+	// Must be an exec probe (runs in the container netns): envoy binds
+	// 127.0.0.1 only, so a kubelet TCPSocket probe against the pod IP would
+	// never succeed and the pod would wedge in Init.
+	assert.Nil(t, envoyContainer.StartupProbe.TCPSocket)
+	require.NotNil(t, envoyContainer.StartupProbe.Exec)
+	assert.Equal(t, []string{"bash", "-c", "</dev/tcp/127.0.0.1/18443"}, envoyContainer.StartupProbe.Exec.Command)
 	assert.Equal(t, []string{"envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"}, envoyContainer.Command)
 
 	// Non-privileged ports — no NET_BIND_SERVICE needed.

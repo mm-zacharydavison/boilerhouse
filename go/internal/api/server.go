@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/zdavison/boilerhouse/go/internal/scope"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -19,6 +21,7 @@ import (
 type Server struct {
 	client      client.Client
 	restConfig  *rest.Config
+	clientset   *kubernetes.Clientset // pods/log + pod exec (subresources the CRT client can't do)
 	namespace   string
 	apiKey      string
 	tokens      *TokenStore
@@ -51,6 +54,17 @@ func NewServer(k8sClient client.Client, restConfig *rest.Config, namespace strin
 		apiKey:      os.Getenv("BOILERHOUSE_API_KEY"),
 		tokens:      tokens,
 		corsOrigins: corsOrigins,
+	}
+	if restConfig != nil {
+		// Typed clientset for pod-log reads + SPDY exec (instances/{id}/logs,
+		// /exec) — kubectl isn't in the api image.
+		cs, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			// Don't fail the whole server over the two subresource routes —
+			// but say why they'll 500 instead of degrading silently.
+			slog.Error("clientset unavailable — instance logs/exec routes will fail", "error", err)
+		}
+		s.clientset = cs
 	}
 	s.router = s.buildRouter()
 	return s

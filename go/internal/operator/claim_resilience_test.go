@@ -276,3 +276,98 @@ func TestClaimController_DeletionExtractionFailureBlocksFinalizer(t *testing.T) 
 	assert.Contains(t, afterDelete.Finalizers, finalizerName,
 		"finalizer must remain so a future reconcile can retry extraction")
 }
+
+// flakyPodListClient wraps a real client and fails the Nth Pod List call with
+// a transient error, to simulate an apiserver hiccup at a precise moment.
+type flakyPodListClient struct {
+	client.Client
+	podListCalls int
+	failOnCall   int
+}
+
+func (c *flakyPodListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := list.(*corev1.PodList); ok {
+		c.podListCalls++
+		if c.podListCalls == c.failOnCall {
+			return errors.New("simulated transient apiserver error")
+		}
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+// TestClaimController_DeletionExtractPodLookupErrorHoldsFinalizer: when the
+// extract fails AND the "is the pod actually gone?" recheck errors (transient
+// apiserver failure), the reconciler must NOT treat the error as pod-gone and
+// proceed with cleanup — that would silently skip the snapshot and destroy
+// the only copy of the tenant's overlay data. It must hold the finalizer and
+// retry.
+func TestClaimController_DeletionExtractPodLookupErrorHoldsFinalizer(t *testing.T) {
+	ctx, k8sClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	wlReconciler := &WorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	wl := hibernateOverlayWorkload("del-lookup-err-wl", 60)
+	require.NoError(t, k8sClient.Create(ctx, wl))
+	wlKey := types.NamespacedName{Name: wl.Name, Namespace: "default"}
+	for i := 0; i < 3; i++ {
+		_, err := wlReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: wlKey})
+		require.NoError(t, err)
+	}
+
+	snap := &failingSnapshotter{}
+	claim := &v1alpha1.BoilerhouseClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "del-lookup-err-claim", Namespace: "default"},
+		Spec: v1alpha1.BoilerhouseClaimSpec{
+			TenantId:    "dora",
+			WorkloadRef: wl.Name,
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, claim))
+
+	setup := &ClaimReconciler{
+		Client:              k8sClient,
+		Scheme:              k8sClient.Scheme(),
+		Snapshots:           snap,
+		ExtractRetryBackoff: []time.Duration{0, 0, 0},
+	}
+	claimKey := types.NamespacedName{Name: claim.Name, Namespace: "default"}
+	for i := 0; i < 5; i++ {
+		_, err := setup.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+		require.NoError(t, err)
+		populateEmptyPodIPs(t, ctx, k8sClient, "default")
+	}
+
+	var active v1alpha1.BoilerhouseClaim
+	require.NoError(t, k8sClient.Get(ctx, claimKey, &active))
+	require.Equal(t, "Active", active.Status.Phase, "precondition: claim must reach Active")
+
+	require.NoError(t, k8sClient.Delete(ctx, &active))
+
+	// During the deletion reconcile, Pod List call #1 (find the pod) succeeds;
+	// call #2 (the recheck inside the extract-failure branch) errors.
+	flaky := &flakyPodListClient{Client: k8sClient, failOnCall: 2}
+	cr := &ClaimReconciler{
+		Client:              flaky,
+		Scheme:              k8sClient.Scheme(),
+		Snapshots:           snap,
+		ExtractRetryBackoff: []time.Duration{0, 0, 0},
+	}
+	_, err := cr.Reconcile(ctx, reconcile.Request{NamespacedName: claimKey})
+	require.NoError(t, err)
+	require.Equal(t, 2, flaky.podListCalls, "recheck List should have been hit and failed")
+
+	// CRITICAL: Pod must still exist — the lookup error told us nothing about it.
+	var podList corev1.PodList
+	require.NoError(t, k8sClient.List(ctx, &podList,
+		client.InNamespace("default"),
+		client.MatchingLabels{LabelTenant: "dora", LabelWorkload: wl.Name}))
+	assert.Len(t, podList.Items, 1,
+		"Pod must remain alive when the pod-gone recheck errors")
+
+	// CRITICAL: finalizer must be held so a future reconcile retries.
+	var afterDelete v1alpha1.BoilerhouseClaim
+	err = k8sClient.Get(ctx, claimKey, &afterDelete)
+	require.NoError(t, err, "Claim should still exist while finalizer is held back")
+	assert.Contains(t, afterDelete.Finalizers, finalizerName,
+		"finalizer must remain so a future reconcile can retry extraction")
+}

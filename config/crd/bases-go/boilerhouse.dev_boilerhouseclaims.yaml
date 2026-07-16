@@ -71,11 +71,18 @@ spec:
                 description: Resume controls whether to resume an existing instance.
                 type: boolean
               tenantId:
-                description: TenantId is the unique identifier for the tenant.
+                description: |-
+                  TenantId is the unique identifier for the tenant. Restricted to
+                  DNS-safe characters: it is embedded in pod labels, claim/instance
+                  names, and snapshot paths passed to shell commands.
+                maxLength: 63
+                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                 type: string
               workloadRef:
                 description: WorkloadRef is the name of the BoilerhouseWorkload to
                   claim.
+                maxLength: 63
+                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                 type: string
             required:
             - tenantId

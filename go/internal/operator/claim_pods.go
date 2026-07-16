@@ -25,10 +25,17 @@ func (r *ClaimReconciler) findTenantPod(ctx context.Context, ns, tenantId, workl
 	); err != nil {
 		return nil, err
 	}
-	if len(podList.Items) == 0 {
-		return nil, nil
+	// Skip pods that are already terminating (DeletionTimestamp set). A claim
+	// recreated under the SAME name (delete + recreate) must not latch onto the
+	// previous incarnation's dying pod: handleNewClaim would wait on it forever
+	// (it never becomes Running) so the new instance never cold-boots — a
+	// phantom (claim Active, no pod). Treat a terminating pod as absent → cold boot.
+	for i := range podList.Items {
+		if podList.Items[i].DeletionTimestamp.IsZero() {
+			return &podList.Items[i], nil
+		}
 	}
-	return &podList.Items[0], nil
+	return nil, nil
 }
 
 // findPoolPod finds a ready pool Pod for the given workload.
@@ -125,8 +132,15 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 		ClaimEnv:         claim.Spec.Env,
 	}
 
-	// Resolve credentials and build proxy config if workload has credentials.
-	if wl.Spec.Network != nil && len(wl.Spec.Network.Credentials) > 0 {
+	// Build the egress proxy when the workload injects credentials OR restricts
+	// egress (restricted access / a non-empty allowlist). Previously this only
+	// fired for credentials, so an allowlist-only "restricted" workload got no
+	// sidecar and therefore NO egress enforcement at all. The proxy sidecar +
+	// iptables redirect then deny everything except the allowlist (SNI
+	// passthrough) and the credential domains (MITM).
+	if wl.Spec.Network != nil && (len(wl.Spec.Network.Credentials) > 0 ||
+		wl.Spec.Network.Access == "restricted" ||
+		len(wl.Spec.Network.Allowlist) > 0) {
 		proxyConfig, err := BuildProxyConfig(ctx, r.Client, r.Namespace, wl)
 		if err != nil {
 			return nil, fmt.Errorf("building proxy config: %w", err)
