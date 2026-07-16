@@ -1,29 +1,38 @@
 package trigger
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
 
-// ReplyContext describes how to deliver a trigger's response back to the
-// channel that originated the session. Cron and one-shot adapters can fire
-// without an inbound channel of their own — the firing handler reads this
-// context off the trigger's spec.config.replyContext and uses it to fan the
-// driver's response back to (e.g.) Telegram.
+// ReplyContext names the outbound channel provider that should receive a
+// trigger's reply, plus that provider's own config block. Cron and one-shot
+// adapters can fire without an inbound channel of their own — the firing
+// handler reads this context off the trigger's spec.config.replyContext and
+// uses it to fan the driver's response back to the named provider.
 type ReplyContext struct {
-	Adapter    string `json:"adapter"`
-	ChatID     *int64 `json:"chatId,omitempty"`
-	BotToken   string `json:"botToken,omitempty"`
-	APIBaseURL string `json:"apiBaseUrl,omitempty"`
+	Adapter string          `json:"adapter"`
+	Config  json.RawMessage `json:"config,omitempty"`
+}
+
+// ReplySender delivers reply text to one outbound channel.
+type ReplySender interface {
+	Send(ctx context.Context, text string) error
+}
+
+// replySenderFactories maps an adapter name to the factory that builds its
+// ReplySender from the provider-specific config block. Adding a channel
+// provider means adding one entry here plus a reply_<provider>.go file.
+var replySenderFactories = map[string]func(config json.RawMessage) (ReplySender, error){
+	"telegram": newTelegramReplySender,
 }
 
 // replyHTTPClient is package-private so tests can override timeouts. Defaults
-// to a generous 30s — Telegram occasionally takes seconds to respond.
+// to a generous 30s — outbound channel providers occasionally take seconds to
+// respond.
 var replyHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // SendReply delivers the driver's response back to the originating channel,
@@ -38,52 +47,15 @@ func SendReply(ctx context.Context, rc *ReplyContext, response any) error {
 	if text == "" {
 		return nil
 	}
-	switch rc.Adapter {
-	case "telegram":
-		if rc.ChatID == nil {
-			return fmt.Errorf("reply: telegram requires chatId")
-		}
-		if rc.BotToken == "" {
-			return fmt.Errorf("reply: telegram requires botToken")
-		}
-		base := rc.APIBaseURL
-		if base == "" {
-			base = defaultTelegramAPIBaseURL
-		}
-		return sendTelegramMessageRaw(ctx, base, rc.BotToken, *rc.ChatID, text)
-	default:
+	factory, ok := replySenderFactories[rc.Adapter]
+	if !ok {
 		return fmt.Errorf("reply: unsupported adapter %q", rc.Adapter)
 	}
-}
-
-// sendTelegramMessageRaw posts a message to Telegram without holding any
-// adapter state. Mirrors TelegramAdapter.sendMessage but is callable from the
-// reply path which has no live adapter.
-func sendTelegramMessageRaw(ctx context.Context, apiBaseURL, botToken string, chatID int64, text string) error {
-	body, err := json.Marshal(map[string]any{
-		"chat_id": chatID,
-		"text":    text,
-	})
+	sender, err := factory(rc.Config)
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/bot%s/sendMessage", apiBaseURL, botToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := replyHTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("reply: telegram sendMessage status %d", resp.StatusCode)
-	}
-	return nil
+	return sender.Send(ctx, text)
 }
 
 // parseReplyContext extracts a ReplyContext out of a trigger's spec.config
