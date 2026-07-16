@@ -61,8 +61,12 @@ func TestInjectSidecar(t *testing.T) {
 	require.NotNil(t, envoyContainer.RestartPolicy)
 	assert.Equal(t, corev1.ContainerRestartPolicyAlways, *envoyContainer.RestartPolicy)
 	require.NotNil(t, envoyContainer.StartupProbe, "native sidecar needs a startup probe so main waits for it")
-	require.NotNil(t, envoyContainer.StartupProbe.TCPSocket)
-	assert.Equal(t, int32(EnvoyTLSPort), envoyContainer.StartupProbe.TCPSocket.Port.IntVal)
+	// Must be an exec probe (runs in the container netns): envoy binds
+	// 127.0.0.1 only, so a kubelet TCPSocket probe against the pod IP would
+	// never succeed and the pod would wedge in Init.
+	assert.Nil(t, envoyContainer.StartupProbe.TCPSocket)
+	require.NotNil(t, envoyContainer.StartupProbe.Exec)
+	assert.Equal(t, []string{"bash", "-c", "</dev/tcp/127.0.0.1/18443"}, envoyContainer.StartupProbe.Exec.Command)
 	assert.Equal(t, []string{"envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"}, envoyContainer.Command)
 
 	// Non-privileged ports — no NET_BIND_SERVICE needed.

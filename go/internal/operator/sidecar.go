@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
@@ -98,7 +97,14 @@ func InjectSidecar(pod *corev1.Pod, configMapName string) {
 		RestartPolicy: &alwaysRestart,
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(EnvoyTLSPort)},
+				// Exec, not TCPSocket: envoy binds its listeners to 127.0.0.1
+				// only, and kubelet TCP probes dial the pod IP — they'd never
+				// succeed. The exec runs inside the container's netns where
+				// loopback is reachable (bash /dev/tcp; the envoy image ships
+				// no nc/curl).
+				Exec: &corev1.ExecAction{
+					Command: []string{"bash", "-c", fmt.Sprintf("</dev/tcp/127.0.0.1/%d", EnvoyTLSPort)},
+				},
 			},
 			PeriodSeconds:    1,
 			FailureThreshold: 30, // up to ~30s for envoy to bind its listeners
