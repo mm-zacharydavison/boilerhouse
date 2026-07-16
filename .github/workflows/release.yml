@@ -36,10 +36,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+      # Render a single-file manifest with images pinned to this release, so
+      # install is `kubectl apply -f install.yaml`.
+      - run: |
+          cd config/deploy
+          kustomize edit set image \
+            boilerhouse-operator=ghcr.io/${{ github.repository }}/operator:${{ github.ref_name }} \
+            boilerhouse-api=ghcr.io/${{ github.repository }}/api:${{ github.ref_name }} \
+            boilerhouse-trigger=ghcr.io/${{ github.repository }}/trigger:${{ github.ref_name }}
+          kustomize build . > "$GITHUB_WORKSPACE/install.yaml"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             boilerhouse-linux-amd64/boilerhouse-linux-amd64
             boilerhouse-linux-arm64/boilerhouse-linux-arm64
+            install.yaml
           generate_release_notes: true
