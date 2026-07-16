@@ -153,8 +153,16 @@ func (r *ClaimReconciler) handleDeletion(ctx context.Context, claim *v1alpha1.Bo
 		if idleAction == "hibernate" && r.Snapshots != nil {
 			if wl.Spec.Filesystem != nil && len(wl.Spec.Filesystem.OverlayDirs) > 0 {
 				if err := r.extractWithRetry(ctx, pod.Name, tenantId, workloadRef, wl.Spec.Filesystem.OverlayDirs); err != nil {
-					ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on deletion after retries — holding finalizer", "tenant", tenantId, "workload", workloadRef)
-					return reconcile.Result{RequeueAfter: releaseFailedRequeue}, nil
+					// If the pod vanished mid-extract a snapshot is impossible, so
+					// proceed with deletion rather than holding the finalizer forever:
+					// retrying can never succeed and wedges the claim (Active with no
+					// pod — a phantom that also blocks any same-name recreate). Only a
+					// still-present pod is a transient failure worth requeuing.
+					if p, _ := r.findTenantPod(ctx, ns, tenantId, workloadRef); p != nil {
+						ctrl.LoggerFrom(ctx).Error(err, "extracting snapshot on deletion after retries — holding finalizer", "tenant", tenantId, "workload", workloadRef)
+						return reconcile.Result{RequeueAfter: releaseFailedRequeue}, nil
+					}
+					ctrl.LoggerFrom(ctx).Info("snapshot skipped on deletion — pod gone; proceeding with cleanup", "tenant", tenantId, "workload", workloadRef)
 				}
 			}
 		}
