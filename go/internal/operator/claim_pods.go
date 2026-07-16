@@ -122,6 +122,7 @@ func (r *ClaimReconciler) createTenantPod(ctx context.Context, claim *v1alpha1.B
 		ImageRef:         ResolvedImageRef(wl),
 		ClaimTokenSecret: tokenSecret,
 		APIServiceURL:    r.apiServiceURL(),
+		ClaimEnv:         claim.Spec.Env,
 	}
 
 	// Resolve credentials and build proxy config if workload has credentials.

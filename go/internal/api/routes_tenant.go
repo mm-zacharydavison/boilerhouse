@@ -14,9 +14,10 @@ import (
 
 // claimRequest is the JSON body for claiming an instance.
 type claimRequest struct {
-	Workload    string `json:"workload"`
-	WorkloadRef string `json:"workloadRef"`
-	Resume      *bool  `json:"resume,omitempty"`
+	Workload    string            `json:"workload"`
+	WorkloadRef string            `json:"workloadRef"`
+	Resume      *bool             `json:"resume,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 func (c *claimRequest) workloadName() string {
@@ -28,13 +29,13 @@ func (c *claimRequest) workloadName() string {
 
 // claimResponse is the JSON representation of a claim returned by the API.
 type claimResponse struct {
-	TenantId   string                          `json:"tenantId"`
-	Phase      string                          `json:"phase"`
-	InstanceId string                          `json:"instanceId,omitempty"`
-	Endpoint   *v1alpha1.ClaimEndpoint         `json:"endpoint,omitempty"`
-	Source     string                          `json:"source,omitempty"`
-	ClaimedAt  string                          `json:"claimedAt,omitempty"`
-	Detail     string                          `json:"detail,omitempty"`
+	TenantId   string                  `json:"tenantId"`
+	Phase      string                  `json:"phase"`
+	InstanceId string                  `json:"instanceId,omitempty"`
+	Endpoint   *v1alpha1.ClaimEndpoint `json:"endpoint,omitempty"`
+	Source     string                  `json:"source,omitempty"`
+	ClaimedAt  string                  `json:"claimedAt,omitempty"`
+	Detail     string                  `json:"detail,omitempty"`
 }
 
 func toClaimResponse(c *v1alpha1.BoilerhouseClaim) claimResponse {
@@ -73,7 +74,7 @@ func (s *Server) claimInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claim, outcome, err := s.acquireClaim(r.Context(), tenantID, wlName, req.Resume)
+	claim, outcome, err := s.acquireClaim(r.Context(), tenantID, wlName, req.Resume, req.Env)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -23,6 +23,13 @@ type BoilerhouseClaimSpec struct {
 	// Resume controls whether to resume an existing instance.
 	// +optional
 	Resume *bool `json:"resume,omitempty"`
+	// Env is an optional set of environment variables injected into the
+	// claimed instance's container. They override workload-level entrypoint
+	// env on a key clash, but the reserved BOILERHOUSE_* bootstrap vars always
+	// win. This lets a caller pass per-claim configuration or a scoped
+	// callback token without baking it into the shared workload definition.
+	// +optional
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // BoilerhouseClaimStatus defines the observed state of a BoilerhouseClaim.
