@@ -25,10 +25,12 @@ const (
 
 // acquireClaim orchestrates the claim-instance flow:
 //
-//  1. If a Released claim exists, clear its finalizer, delete it, and wait
-//     briefly for deletion to propagate so the subsequent Create succeeds.
-//  2. If an Active claim already exists, return it unchanged (no re-create).
-//  3. Otherwise create a fresh BoilerhouseClaim.
+//  1. If an Active claim already exists, return it unchanged (no re-create).
+//  2. If a Pending (or not-yet-phased) claim exists, a concurrent request is
+//     mid-provision — return it for polling instead of clobbering it.
+//  3. If a stale claim exists (Released / Error), clear its finalizer, delete
+//     it, and wait for deletion to propagate so the subsequent Create succeeds.
+//  4. Otherwise create a fresh BoilerhouseClaim.
 //
 // It returns the outcome plus the current claim object (which for
 // outcomeCreated has only spec/metadata populated — the caller polls status).
@@ -47,9 +49,15 @@ func (s *Server) acquireClaim(ctx context.Context, tenantID, wlName string, resu
 			s.waitClaimGone(ctx, key)
 		case existing.Status.Phase == "Active":
 			return &existing, outcomeExistingActive, nil
+		case existing.Status.Phase == "Pending" || existing.Status.Phase == "":
+			// Mid-provision (a concurrent request created it moments ago; empty
+			// phase means the operator hasn't even stamped Pending yet). Join it —
+			// the caller polls it to Active — instead of deleting it, which would
+			// kill the in-flight provision.
+			return &existing, outcomeCreated, nil
 		default:
-			// ANY other existing claim (Released / Error / Pending / empty /
-			// unknown) is stale for a fresh claim. Strip its finalizer, delete it,
+			// ANY other existing claim (Released / Error / unknown) is stale for
+			// a fresh claim. Strip its finalizer, delete it,
 			// and wait for the operator's cascade before recreating — otherwise the
 			// Create below collides with AlreadyExists (the resume-500 bug).
 			if len(existing.Finalizers) > 0 {
