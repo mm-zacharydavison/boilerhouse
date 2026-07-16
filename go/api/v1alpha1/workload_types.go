@@ -81,8 +81,13 @@ type WorkloadNetwork struct {
 	// Expose lists ports to expose from the workload.
 	// +optional
 	Expose []NetworkExposePort `json:"expose,omitempty"`
-	// Allowlist defines allowed network destinations.
+	// Allowlist defines allowed network destinations. Entries must be
+	// concrete DNS names — no wildcards: the envoy passthrough dials the
+	// allowlisted hostname itself (STRICT_DNS), and *.example.com can never
+	// resolve.
 	// +optional
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	Allowlist []string `json:"allowlist,omitempty"`
 	// Credentials defines per-domain credentials.
 	// +optional

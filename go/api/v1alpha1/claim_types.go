@@ -16,9 +16,15 @@ type ClaimEndpoint struct {
 
 // BoilerhouseClaimSpec defines the desired state of a BoilerhouseClaim.
 type BoilerhouseClaimSpec struct {
-	// TenantId is the unique identifier for the tenant.
+	// TenantId is the unique identifier for the tenant. Restricted to
+	// DNS-safe characters: it is embedded in pod labels, claim/instance
+	// names, and snapshot paths passed to shell commands.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	TenantId string `json:"tenantId"`
 	// WorkloadRef is the name of the BoilerhouseWorkload to claim.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`
 	WorkloadRef string `json:"workloadRef"`
 	// Resume controls whether to resume an existing instance.
 	// +optional

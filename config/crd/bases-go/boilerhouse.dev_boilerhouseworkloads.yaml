@@ -172,8 +172,14 @@ spec:
                     - unrestricted
                     type: string
                   allowlist:
-                    description: Allowlist defines allowed network destinations.
+                    description: |-
+                      Allowlist defines allowed network destinations. Entries must be
+                      concrete DNS names — no wildcards: the envoy passthrough dials the
+                      allowlisted hostname itself (STRICT_DNS), and *.example.com can never
+                      resolve.
                     items:
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                       type: string
                     type: array
                   credentials:
