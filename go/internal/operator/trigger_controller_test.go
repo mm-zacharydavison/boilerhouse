@@ -1,13 +1,16 @@
 package operator
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -113,6 +116,164 @@ func TestTriggerController_InvalidTypeBecomesError(t *testing.T) {
 		})
 		assert.Empty(t, errs, "expected no errors for valid type %q", validType)
 	}
+}
+
+func TestTriggerController_OneShotTriggerBecomesActive(t *testing.T) {
+	ctx, k8sClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	// First create a workload and reconcile it to Ready so the trigger can reference it.
+	wlReconciler := &WorkloadReconciler{
+		Client: k8sClient,
+		Scheme: k8sClient.Scheme(),
+	}
+
+	wl := &v1alpha1.BoilerhouseWorkload{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "one-shot-target",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BoilerhouseWorkloadSpec{
+			Version: "1.0.0",
+			Image:   v1alpha1.WorkloadImage{Ref: "nginx:latest"},
+			Resources: v1alpha1.WorkloadResources{
+				VCPUs:    1,
+				MemoryMb: 256,
+				DiskGb:   5,
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, wl))
+
+	wlReq := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "one-shot-target",
+			Namespace: "default",
+		},
+	}
+	for i := 0; i < 5; i++ {
+		_, err := wlReconciler.Reconcile(ctx, wlReq)
+		require.NoError(t, err)
+	}
+
+	r := &TriggerReconciler{
+		Client: k8sClient,
+		Scheme: k8sClient.Scheme(),
+	}
+
+	runAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	trigger := &v1alpha1.BoilerhouseTrigger{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "one-shot-trigger",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BoilerhouseTriggerSpec{
+			Type:        "one-shot",
+			WorkloadRef: "one-shot-target",
+			Config:      &runtime.RawExtension{Raw: []byte(fmt.Sprintf(`{"runAt":%q}`, runAt))},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, trigger))
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "one-shot-trigger",
+			Namespace: "default",
+		},
+	}
+
+	// First reconcile adds finalizer.
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	var updated v1alpha1.BoilerhouseTrigger
+	require.NoError(t, k8sClient.Get(ctx, req.NamespacedName, &updated))
+
+	assert.Equal(t, "Active", updated.Status.Phase)
+	assert.Empty(t, updated.Status.Detail)
+}
+
+func TestTriggerController_FiredOneShotStaysFired(t *testing.T) {
+	ctx, k8sClient, cleanup := setupEnvtest(t)
+	defer cleanup()
+
+	wlReconciler := &WorkloadReconciler{
+		Client: k8sClient,
+		Scheme: k8sClient.Scheme(),
+	}
+
+	wl := &v1alpha1.BoilerhouseWorkload{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "fired-target",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BoilerhouseWorkloadSpec{
+			Version: "1.0.0",
+			Image:   v1alpha1.WorkloadImage{Ref: "nginx:latest"},
+			Resources: v1alpha1.WorkloadResources{
+				VCPUs:    1,
+				MemoryMb: 256,
+				DiskGb:   5,
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, wl))
+
+	wlReq := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "fired-target",
+			Namespace: "default",
+		},
+	}
+	for i := 0; i < 5; i++ {
+		_, err := wlReconciler.Reconcile(ctx, wlReq)
+		require.NoError(t, err)
+	}
+
+	r := &TriggerReconciler{
+		Client: k8sClient,
+		Scheme: k8sClient.Scheme(),
+	}
+
+	runAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	trigger := &v1alpha1.BoilerhouseTrigger{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "fired-trigger",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.BoilerhouseTriggerSpec{
+			Type:        "one-shot",
+			WorkloadRef: "fired-target",
+			Config:      &runtime.RawExtension{Raw: []byte(fmt.Sprintf(`{"runAt":%q}`, runAt))},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, trigger))
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "fired-trigger",
+			Namespace: "default",
+		},
+	}
+
+	// First reconcile adds finalizer and sets Active.
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	// Simulate the gateway marking the trigger Fired after it fires.
+	var toMark v1alpha1.BoilerhouseTrigger
+	require.NoError(t, k8sClient.Get(ctx, req.NamespacedName, &toMark))
+	toMark.Status.Phase = "Fired"
+	require.NoError(t, k8sClient.Status().Update(ctx, &toMark))
+
+	// Reconciling again must not flip Fired back to Active.
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	var updated v1alpha1.BoilerhouseTrigger
+	require.NoError(t, k8sClient.Get(ctx, req.NamespacedName, &updated))
+
+	assert.Equal(t, "Fired", updated.Status.Phase)
 }
 
 func TestTriggerController_MissingWorkloadBecomesError(t *testing.T) {
