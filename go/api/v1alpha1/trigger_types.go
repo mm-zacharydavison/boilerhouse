@@ -32,7 +32,7 @@ type TriggerGuard struct {
 // BoilerhouseTriggerSpec defines the desired state of a BoilerhouseTrigger.
 type BoilerhouseTriggerSpec struct {
 	// Type is the trigger type.
-	// +kubebuilder:validation:Enum=webhook;slack;telegram;cron
+	// +kubebuilder:validation:Enum=webhook;slack;telegram;cron;one-shot
 	Type string `json:"type"`
 	// WorkloadRef is the name of the BoilerhouseWorkload this trigger targets.
 	WorkloadRef string `json:"workloadRef"`
@@ -59,7 +59,7 @@ type BoilerhouseTriggerSpec struct {
 type BoilerhouseTriggerStatus struct {
 	// Phase is the current phase of the trigger.
 	// +optional
-	// +kubebuilder:validation:Enum=Active;Error
+	// +kubebuilder:validation:Enum=Active;Error;Fired
 	Phase string `json:"phase,omitempty"`
 	// Detail provides additional information about the current phase.
 	// +optional
