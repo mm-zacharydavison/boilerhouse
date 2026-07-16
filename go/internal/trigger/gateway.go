@@ -171,13 +171,17 @@ func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.Boilerhous
 		if err != nil {
 			return nil, fmt.Errorf("invalid runAt %q: %w", cfg.RunAt, err)
 		}
-		payloadBytes, _ := json.Marshal(cfg.Payload)
+		var payloadText string
+		if len(cfg.Payload) > 0 {
+			payloadBytes, _ := json.Marshal(cfg.Payload)
+			payloadText = string(payloadBytes)
+		}
 		name := trigger.Name
 		ns := trigger.Namespace
 		onFired := func(ctx context.Context) error {
 			return g.markTriggerFired(ctx, ns, name)
 		}
-		return NewOneShotAdapter(runAt, string(payloadBytes), onFired), nil
+		return NewOneShotAdapter(runAt, payloadText, onFired), nil
 	case "telegram":
 		rawMap := parseTelegramAdapterConfig(trigger)
 

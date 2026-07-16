@@ -119,8 +119,34 @@ func TestBuildAdapter_OneShot(t *testing.T) {
 
 	adapter, err := gw.buildAdapter(context.Background(), trig)
 	require.NoError(t, err)
-	_, ok := adapter.(*OneShotAdapter)
+	oa, ok := adapter.(*OneShotAdapter)
 	require.True(t, ok)
+	assert.JSONEq(t, `{"task":"check inbox"}`, oa.payload)
+}
+
+func TestBuildAdapter_OneShotEmptyPayloadYieldsEmptyString(t *testing.T) {
+	k8sClient := fake.NewClientBuilder().Build()
+	gw := NewGateway(k8sClient, "ns", nil)
+
+	cfgJSON, err := json.Marshal(map[string]any{
+		"runAt": time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+
+	trig := &v1alpha1.BoilerhouseTrigger{
+		ObjectMeta: metav1.ObjectMeta{Name: "t", Namespace: "ns"},
+		Spec: v1alpha1.BoilerhouseTriggerSpec{
+			Type:        "one-shot",
+			WorkloadRef: "wl",
+			Config:      &runtime.RawExtension{Raw: cfgJSON},
+		},
+	}
+
+	adapter, err := gw.buildAdapter(context.Background(), trig)
+	require.NoError(t, err)
+	oa, ok := adapter.(*OneShotAdapter)
+	require.True(t, ok)
+	assert.Equal(t, "", oa.payload, "empty payload must not become the literal string \"null\"")
 }
 
 func TestBuildAdapter_OneShotMissingRunAtErrors(t *testing.T) {
