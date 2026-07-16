@@ -22,3 +22,9 @@ const (
 
 // DataKey is the Secret.Data entry holding the hex-encoded token bytes.
 const DataKey = "token"
+
+// AnnotationOriginatingTrigger is set on a Claim when the trigger gateway's
+// ensureClaim creates (or reuses) the Claim in response to a trigger firing.
+// It records the name of the BoilerhouseTrigger that started the session so
+// the API can resolve the session's reply channel from it.
+const AnnotationOriginatingTrigger = "boilerhouse.dev/originating-trigger"

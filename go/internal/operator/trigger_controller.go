@@ -21,6 +21,7 @@ var validTriggerTypes = map[string]bool{
 	"slack":    true,
 	"telegram": true,
 	"cron":     true,
+	"one-shot": true,
 }
 
 // TriggerReconciler reconciles BoilerhouseTrigger objects.
@@ -63,12 +64,17 @@ func (r *TriggerReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		}
 	}
 
-	// 4. Validate trigger spec.
+	// 4. A fired one-shot is terminal — leave it alone so it never re-arms.
+	if trigger.Status.Phase == "Fired" {
+		return reconcile.Result{}, nil
+	}
+
+	// 5. Validate trigger spec.
 	if errs := validateTriggerSpec(trigger.Spec); len(errs) > 0 {
 		return r.setStatus(ctx, &trigger, "Error", strings.Join(errs, "; "))
 	}
 
-	// 5. Look up the referenced BoilerhouseWorkload.
+	// 6. Look up the referenced BoilerhouseWorkload.
 	var wl v1alpha1.BoilerhouseWorkload
 	wlKey := types.NamespacedName{
 		Name:      trigger.Spec.WorkloadRef,
@@ -82,7 +88,7 @@ func (r *TriggerReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		return reconcile.Result{}, err
 	}
 
-	// 6. Valid — set Active.
+	// 7. Valid — set Active.
 	return r.setStatus(ctx, &trigger, "Active", "")
 }
 
@@ -105,7 +111,7 @@ func validateTriggerSpec(spec v1alpha1.BoilerhouseTriggerSpec) []string {
 	}
 
 	if !validTriggerTypes[spec.Type] {
-		errs = append(errs, fmt.Sprintf("type %q is not valid; must be one of: webhook, slack, telegram, cron", spec.Type))
+		errs = append(errs, fmt.Sprintf("type %q is not valid; must be one of: webhook, slack, telegram, cron, one-shot", spec.Type))
 	}
 
 	if spec.Tenant != nil && spec.Tenant.Static == "" && spec.Tenant.From == "" {
