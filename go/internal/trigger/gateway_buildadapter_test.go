@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	v1alpha1 "github.com/zdavison/boilerhouse/go/api/v1alpha1"
+	"github.com/zdavison/boilerhouse/go/internal/claimtoken"
 )
 
 func TestBuildAdapter_ResolvesTelegramBotTokenSecretRef(t *testing.T) {
@@ -200,4 +201,34 @@ func TestMarkTriggerFired_MissingTriggerIsNoop(t *testing.T) {
 	gw := NewGateway(k8sClient, "ns", nil)
 
 	require.NoError(t, gw.markTriggerFired(context.Background(), "ns", "gone"))
+}
+
+func TestSetOriginatingTriggerAnnotation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	claim := &v1alpha1.BoilerhouseClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-tenant-a", Namespace: "ns"},
+		Spec:       v1alpha1.BoilerhouseClaimSpec{TenantId: "tenant-a", WorkloadRef: "wl"},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(claim).Build()
+	gw := NewGateway(k8sClient, "ns", nil)
+
+	require.NoError(t, gw.setOriginatingTriggerAnnotation(context.Background(), claim, "my-trigger"))
+
+	var got v1alpha1.BoilerhouseClaim
+	require.NoError(t, k8sClient.Get(context.Background(),
+		types.NamespacedName{Name: "claim-tenant-a", Namespace: "ns"}, &got))
+	assert.Equal(t, "my-trigger", got.Annotations[claimtoken.AnnotationOriginatingTrigger])
+
+	// Idempotent when already set to the same value.
+	require.NoError(t, gw.setOriginatingTriggerAnnotation(context.Background(), &got, "my-trigger"))
+
+	// Empty trigger name is a no-op.
+	require.NoError(t, gw.setOriginatingTriggerAnnotation(context.Background(), &got, ""))
+	var again v1alpha1.BoilerhouseClaim
+	require.NoError(t, k8sClient.Get(context.Background(),
+		types.NamespacedName{Name: "claim-tenant-a", Namespace: "ns"}, &again))
+	assert.Equal(t, "my-trigger", again.Annotations[claimtoken.AnnotationOriginatingTrigger])
 }
