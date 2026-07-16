@@ -161,6 +161,22 @@ func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.Boilerhous
 			return nil, fmt.Errorf("invalid cron interval %q: %w", cfg.Interval, err)
 		}
 		return NewCronAdapter(interval, cfg.Payload), nil
+	case "one-shot":
+		cfg, err := parseOneShotConfig(trigger)
+		if err != nil {
+			return nil, err
+		}
+		runAt, err := time.Parse(time.RFC3339, cfg.RunAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid runAt %q: %w", cfg.RunAt, err)
+		}
+		payloadBytes, _ := json.Marshal(cfg.Payload)
+		name := trigger.Name
+		ns := trigger.Namespace
+		onFired := func(ctx context.Context) error {
+			return g.markTriggerFired(ctx, ns, name)
+		}
+		return NewOneShotAdapter(runAt, string(payloadBytes), onFired), nil
 	case "telegram":
 		rawMap := parseTelegramAdapterConfig(trigger)
 
@@ -184,6 +200,25 @@ func (g *Gateway) buildAdapter(ctx context.Context, trigger *v1alpha1.Boilerhous
 	default:
 		return nil, fmt.Errorf("unsupported trigger type: %s", trigger.Spec.Type)
 	}
+}
+
+// markTriggerFired flips Status.Phase to "Fired" so the gateway's next sync
+// stops the adapter and a restart does not re-arm the one-shot. The trigger
+// CR is left in place; a separate cleanup reconciler GCs Fired triggers.
+func (g *Gateway) markTriggerFired(ctx context.Context, namespace, name string) error {
+	var trigger v1alpha1.BoilerhouseTrigger
+	key := types.NamespacedName{Name: name, Namespace: namespace}
+	if err := g.client.Get(ctx, key, &trigger); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get trigger %s for fired-update: %w", name, err)
+	}
+	trigger.Status.Phase = "Fired"
+	if err := g.client.Status().Update(ctx, &trigger); err != nil {
+		return fmt.Errorf("mark trigger %s fired: %w", name, err)
+	}
+	return nil
 }
 
 // resolveSecret fetches a value from a Kubernetes Secret in the gateway's
@@ -404,6 +439,25 @@ func parseCronConfig(trigger *v1alpha1.BoilerhouseTrigger) cronConfig {
 		_ = json.Unmarshal(trigger.Spec.Config.Raw, &cfg)
 	}
 	return cfg
+}
+
+type oneShotConfig struct {
+	RunAt   string         `json:"runAt"`
+	Payload map[string]any `json:"payload,omitempty"`
+}
+
+func parseOneShotConfig(trigger *v1alpha1.BoilerhouseTrigger) (oneShotConfig, error) {
+	cfg := oneShotConfig{}
+	if trigger.Spec.Config == nil || trigger.Spec.Config.Raw == nil {
+		return cfg, fmt.Errorf("one-shot trigger %q: spec.config is required", trigger.Name)
+	}
+	if err := json.Unmarshal(trigger.Spec.Config.Raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("one-shot trigger %q: parse config: %w", trigger.Name, err)
+	}
+	if cfg.RunAt == "" {
+		return cfg, fmt.Errorf("one-shot trigger %q: spec.config.runAt is required", trigger.Name)
+	}
+	return cfg, nil
 }
 
 // parseTelegramAdapterConfig extracts the telegram adapter config from a
